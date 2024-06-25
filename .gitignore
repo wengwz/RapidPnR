@@ -12,3 +12,7 @@
 /designs/
 interchange/schema/capnp/java.capnp
 *.orig
+
+benchmarks/
+result3/
+.vscode/

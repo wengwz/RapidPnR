@@ -14,17 +14,22 @@ import java.util.logging.LogRecord;
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.edif.EDIFNetlist;
 
-// final class CustomFormatter extends Formatter {
-//     @Override
-//     public String format(LogRecord record) {
-//         return record.getLevel() + ": " + record.getMessage() + "\n";
-//     }
-// }
+final class CustomFormatter extends Formatter {
+    @Override
+    public String format(LogRecord record) {
+        return record.getLevel() + ": " + record.getMessage() + "\n";
+    }
+}
 
 public class TestCircuitPartioner {
     public static void main(String[] args) {
-        String designName = "cnn13x2";
-        String resetPortName = "udp_reset";
+        // String designName = "cnn_13x2_direct_rst";
+        // String resetPortName = "ap_rst_n";
+        // String designName = "blue-udp-nocrc";
+        // String resetPortName = "udp_reset";
+        String designName = "blue-rdma";
+        String resetPortName = "RST_N";
+        String clockPortName = "ap_clk";
         // String designName = "blue-rdma-direct-rst";
         // String resetPortName = "ap_rst_n";
         Path outputPath = Paths.get("./result3", designName);
@@ -34,7 +39,7 @@ public class TestCircuitPartioner {
             System.out.println("Fail to Create Directory: " + e.getMessage());
         }
 
-        String designDcpPath = Paths.get("./benchmark", designName + ".dcp").toString();
+        String designDcpPath = Paths.get("./benchmarks", designName + ".dcp").toString();
         String logFilePath = Paths.get(outputPath.toString(), designName + ".log").toString();
         
         Logger logger = Logger.getLogger(designName);
@@ -61,6 +66,8 @@ public class TestCircuitPartioner {
         partioner.printHierNetlistInfo();
         partioner.printFlatNetlistInfo();
         partioner.printPartitionGroupsInfo();
+        partioner.printPartitionEdgesInfo();
+        partioner.printCellInstDistribution();
         partioner.printRegCtrlPortIncidentNets(Paths.get(outputPath.toString(), designName + "-reg-ctrl-nets.txt").toString());
         partioner.writeFlatNetlistDCP(Paths.get(outputPath.toString(), designName + "-flat.dcp").toString());
         partioner.writePartitionGroupsResult(Paths.get(outputPath.toString(), "partition-grp-results.txt").toString());

@@ -4,6 +4,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -20,6 +21,7 @@ import java.util.stream.Collectors;
 
 import org.python.antlr.ast.While;
 
+import com.esotericsoftware.kryo.serializers.DefaultArraySerializers.BooleanArraySerializer;
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.device.Part;
 import com.xilinx.rapidwright.device.PartNameTools;
@@ -38,7 +40,9 @@ import com.xilinx.rapidwright.edif.EDIFTools;
 
 public class CircuitPartioner {
 
-    public static final Set<String> regCellTypeNames = Set.of("FDSE", "FDRE", "FDCE");
+    public static final HashSet<String> regCellTypeNames = new HashSet<>(Arrays.asList("FDSE", "FDRE", "FDCE"));
+    public static final HashSet<String> lutCellTypeNames = new HashSet<>(Arrays.asList("LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6"));
+    public static final HashSet<String> srlCellTypeNames = new HashSet<>(Arrays.asList("SRL16E", "SRLC32E"));
     
     //
     private String partName;
@@ -49,8 +53,12 @@ public class CircuitPartioner {
     // Partition Resutls
     private List<List<EDIFCellInst>> partitionEdges;
     private List<List<EDIFCellInst>> partitionGroups;
-    private Map<EDIFCellInst, Integer> regCellInst2EdgeIdxMap;
+    private Map<EDIFCellInst, Integer> cellInst2EdgeIdxMap;
     private Map<EDIFCellInst, Integer> cellInst2GroupIdxMap;
+
+    Integer totalEdgeCellInstNum = 0;
+    Integer totalGroupCellInstNum = 0;
+    Integer totalGroupNonFuncCellInstNum = 0;
 
     // Connection Info
     private List<Set<Integer>> edge2SinkGroupsIdxMap;
@@ -58,8 +66,9 @@ public class CircuitPartioner {
     private List<List<Integer>> group2EdgesIdxMap;
 
     // Global Reset Info
-    private Set<EDIFCellInst> globalResetBridgeRegs;
+    private Set<EDIFCellInst> globalResetTreeCellInsts;
     private Set<EDIFNet> globalResetNets;
+    private Set<EDIFNet> constantVccGndNets;
 
     public CircuitPartioner(EDIFNetlist hierNetlist, String partName, String rstSrcInstName, Logger logger) {
         this.hierNetlist = hierNetlist;
@@ -70,14 +79,13 @@ public class CircuitPartioner {
         //Part part = PartNameTools.getPart(partName);
         //flatNetlist.collapseMacroUnisims(part.getSeries());
 
-        
-        //EDIFCellInst rstSourceCellInst = flatNetlist.getCellInstFromHierName(rstSrcInstName);
-        //traverseGlobalResetNetwork(rstSourceCellInst);
+        EDIFCellInst rstSourceCellInst = flatNetlist.getCellInstFromHierName(rstSrcInstName);
+        assert rstSourceCellInst != null: "Invalid Reset Source Instance Name: " + rstSrcInstName;
+        traverseGlobalResetNetwork(rstSourceCellInst);
+        traverseConstantVccGndNetwork();
+        //traverseGlobalClockNetwork();
         buildPartitionGroups();
-        //printCellInstOfType("IBUF");
-        //assert rstSourceCellInst != null: "Invalid Reset Source Instance Name: " + rstSrcInstName;
-        //traverseGlobalResetNetwork(rstSourceCellInst);
-        //buildPartitionEdges();
+        buildPartitionEdges();
     }
 
     public void printHierNetlistInfo() {
@@ -263,26 +271,44 @@ public class CircuitPartioner {
         
         // Initialize net visited tags
         for (EDIFNet net : flatNetlist.getTopCell().getNets()) {
-            Boolean netVisitedTag = net.isGND() || net.isVCC();
+            // Remove VCC, GND and Global Reset Nets
+            Boolean netVisitedTag = constantVccGndNets.contains(net) || globalResetNets.contains(net);
             if (netVisitedTag) {
                 logger.info("Constant Net " + net.getName() + " is visited");
             }
             netVisitedTags.put(net, netVisitedTag);
         }
 
+        //Set<EDIFNet> multiSinkRegInputNets = new HashSet<>();
         // Initialize inst visited tags
         for (EDIFCellInst cellInst : flatNetlist.getTopCell().getCellInsts()) {
-            EDIFCell cellType = cellInst.getCellType();
-            Boolean visitedTag = cellType.isStaticSource() || isRegisterCellInst(cellInst);
-            cellInstVisitedTags.put(cellInst, visitedTag);
+            cellInstVisitedTags.put(cellInst, !isFunctionalCellInst(cellInst));
 
-            if (isRegisterCellInst(cellInst)) {
+            if (isPartitionEdgeCellInst(cellInst)) {
+                // for (EDIFPortInst portInst : cellInst.getPortInsts()) {
+                //     EDIFNet incidentNet = portInst.getNet();
+                //     netVisitedTags.replace(incidentNet, true);
+                // }
+
                 for (EDIFPortInst portInst : cellInst.getPortInsts()) {
-                    EDIFNet incidentNet = portInst.getNet();
-                    netVisitedTags.replace(incidentNet, true);
+                    // if (portInst.isOutput()) {
+                    //     EDIFNet incidentNet = portInst.getNet();
+                    //     netVisitedTags.replace(incidentNet, true);
+                    // }
+                    if (portInst.isOutput() || isClockPortInst(portInst)) {
+                        EDIFNet incidentNet = portInst.getNet();
+                        netVisitedTags.replace(incidentNet, true);
+                    }
                 }
             }
         }
+        // logger.info("# Mutli-Sink Register Input Nets:");
+        // for (EDIFNet net : multiSinkRegInputNets) {
+        //     logger.info("  " + net.getName());
+        //     for (EDIFPortInst portInst : net.getPortInsts()) {
+        //         logger.info("    " + portInst.getCellInst().getName() + "("+ portInst.getCellInst().getCellName() + ")" + ": " + portInst.getName());
+        //     }
+        // }
 
         // Breadth-First-Search Based Cell Clustering
         logger.info("## Start breadth-first-search Partition");
@@ -316,7 +342,7 @@ public class CircuitPartioner {
                             Collection<EDIFPortInst> expandPortInsts = searchNet.getPortInsts();
                             for (EDIFPortInst portInst : expandPortInsts) {
                                 EDIFCellInst expandCellInst = portInst.getCellInst();
-                                if (expandCellInst == null) continue;
+                                if (expandCellInst == null) continue; // Top-Level Ports
 
                                 assert cellInstVisitedTags.containsKey(expandCellInst): expandCellInst.getName() + ": " + expandCellInst.getCellName();
                                 if (!cellInstVisitedTags.get(expandCellInst)) {
@@ -330,127 +356,126 @@ public class CircuitPartioner {
                             netVisitedTags.put(searchNet, true);
                         }
                     }
-
                 }
                 partitionGroups.add(partitionGroup);
                 group2EdgesIdxMap.add(new ArrayList<>());
+                totalGroupCellInstNum += partitionGroup.size();
             }
         }
-
     }
 
     private void buildPartitionEdges() {
         partitionEdges = new ArrayList<>();
-        regCellInst2EdgeIdxMap = new HashMap<>();
+        cellInst2EdgeIdxMap = new HashMap<>();
         edge2SinkGroupsIdxMap = new ArrayList<>();
         edge2SourceGroupIdxMap = new ArrayList<>();
 
         logger.info("# Start Building Partition Edges");
-        Set<EDIFCellInst> visitedRegCellInsts = new HashSet<>();
+        Integer totalSearchedEdgeNum = 0;
+        Integer intraGroupEdgeNum = 0;
+        Integer interGroupEdgeNum = 0;
+
+        Set<EDIFCellInst> visitedPartitionCellInsts = new HashSet<>();
+        Set<EDIFNet> visitedNets = new HashSet<>();
+        visitedNets.addAll(constantVccGndNets);
+        visitedNets.addAll(globalResetNets);
+        for (EDIFNet net : visitedNets) {
+            logger.info("# Visited Net: " + net.getName());
+        }
 
         for (EDIFCellInst cellInst : flatNetlist.getTopCell().getCellInsts()) {
-            // EDIFCell cellType = cellInst.getCellType();
-            if (!isRegisterCellInst(cellInst)) continue;
-            if (!visitedRegCellInsts.contains(cellInst) && !globalResetBridgeRegs.contains(cellInst)) {
-                List<EDIFCellInst> edgeRegCellInsts = new ArrayList<>();
+            if (!isPartitionEdgeCellInst(cellInst)) continue;
 
-                // Breadth-First Expansion
+            if (!visitedPartitionCellInsts.contains(cellInst)) {
+                Integer edgeIdx = partitionEdges.size();
+
+                List<EDIFCellInst> edgeCellInsts = new ArrayList<>();
+                Set<Integer> sinkGroupIdxSet = new HashSet<>();
+                Set<Integer> sourceGroupIdxSet = new HashSet<>();
+
                 Queue<EDIFCellInst> searchQueue = new LinkedList<>();
                 searchQueue.add(cellInst);
-                edgeRegCellInsts.add(cellInst);
-                visitedRegCellInsts.add(cellInst);
+                edgeCellInsts.add(cellInst);
+                //cellInst2EdgeIdxMap.put(cellInst, edgeIdx);
+                visitedPartitionCellInsts.add(cellInst);
 
+                logger.info("# Start Expanding Edge Group " + edgeIdx);
                 while (!searchQueue.isEmpty()) {
                     EDIFCellInst searchCellInst = searchQueue.poll();
+                    logger.info("## Expand Edge Cell Inst: " + searchCellInst.getName() + "(" + searchCellInst.getCellName() + ")");
 
                     for (EDIFPortInst portInst : searchCellInst.getPortInsts()) {
-                        String portName = portInst.getPort().getName();
-                        if (portName.equals("C")) continue;
-                        
+                        if (isClockPortInst(portInst)) continue;
                         EDIFNet searchNet = portInst.getNet();
-                        if (globalResetNets.contains(searchNet)) continue;
+                        if (visitedNets.contains(searchNet)) continue;
 
+                        logger.info("    Expand Net: " + searchNet.getName() + " from Port: " + portInst.getName());
+                        
                         for (EDIFPortInst expandPortInst : searchNet.getPortInsts()) {
                             EDIFCellInst expandCellInst = expandPortInst.getCellInst();
-                            if (isRegisterCellInst(expandCellInst) && !visitedRegCellInsts.contains(expandCellInst)) {
+                            if (isPartitionEdgeCellInst(expandCellInst)) {
+                                logger.info("     Visit Edge Cell Inst: " + expandCellInst.getName() + "(" + expandCellInst.getCellName() + ")");
+                                if (visitedPartitionCellInsts.contains(expandCellInst)) continue;
+                                
+                                edgeCellInsts.add(expandCellInst);
+                                visitedPartitionCellInsts.add(expandCellInst);
                                 searchQueue.add(expandCellInst);
-                                edgeRegCellInsts.add(expandCellInst);
-                                visitedRegCellInsts.add(expandCellInst);
-                            } else if (isFunctionalCellInst(expandCellInst)) {
-
+                            } else {
+                                assert isFunctionalCellInst(expandCellInst);
+                                assert cellInst2GroupIdxMap.containsKey(expandCellInst);
+                                Integer expandCellGroupIdx = cellInst2GroupIdxMap.get(expandCellInst);
+                                
+                                if (expandPortInst.isInput()) {
+                                    sinkGroupIdxSet.add(expandCellGroupIdx);
+                                } else {
+                                    sourceGroupIdxSet.add(expandCellGroupIdx);
+                                }
                             }
                         }
+                        visitedNets.add(searchNet);
                     }
                 }
 
-                // Set<Integer> sinkGroupIdxSet = new HashSet<>();
-                // Set<Integer> sourceGroupIdxSet = new HashSet<>();
+                Set<Integer> mergedGroupIdxSet = new HashSet<>(sinkGroupIdxSet);
+                mergedGroupIdxSet.addAll(sourceGroupIdxSet);
+                totalSearchedEdgeNum += 1;
+                if (mergedGroupIdxSet.size() == 1) {
+                    intraGroupEdgeNum += 1;
+                    Integer groupIdx = mergedGroupIdxSet.iterator().next();
+                    partitionGroups.get(groupIdx).addAll(edgeCellInsts);
+                    for (EDIFCellInst edgeCellInst : edgeCellInsts) {
+                        cellInst2GroupIdxMap.put(edgeCellInst, groupIdx);
+                    }
+                    totalGroupCellInstNum += edgeCellInsts.size();
+                    totalGroupNonFuncCellInstNum += edgeCellInsts.size();
+                } else {
+                    interGroupEdgeNum += 1;
+                    partitionEdges.add(edgeCellInsts);
+                    edge2SinkGroupsIdxMap.add(sinkGroupIdxSet);
+                    edge2SourceGroupIdxMap.add(sourceGroupIdxSet);
 
-                // for (EDIFCellInst edgeCellInst : edgeRegCellInsts) {
-
-                //     for (EDIFPortInst portInst : edgeCellInst.getPortInsts()) {
-
-                //     }
-                //     EDIFPortInst portInstQ = edgeCellInst.getPortInst("Q");
-                //     assert portInstQ != null;
-                //     for(EDIFPortInst sinkPortInst : portInstQ.getNet().getPortInsts()) {
-                //         EDIFCellInst sinkCellInst = sinkPortInst.getCellInst();
-                //         if (!isRegisterCellInst(sinkCellInst)) {
-                //             assert cellInst2GroupIdxMap.containsKey(sinkCellInst);
-                //             sinkGroupIdxSet.add(cellInst2GroupIdxMap.get(sinkCellInst));
-                //         }
-                //     }
-
-                //     EDIFPortInst portInstD = edgeCellInst.getPortInst("D");
-                //     assert portInstD != null;
-                //     for (EDIFPortInst sourcePortInst : portInstD.getNet().getPortInsts()) {
-                //         EDIFCellInst sourceCellInst = sourcePortInst.getCellInst();
-                //         if (sourcePortInst.isOutput() && !isRegisterCellInst(sourceCellInst)) {
-                //             assert cellInst2GroupIdxMap.containsKey(sourceCellInst);
-                //             if (sourceGroupIdx != -1 && sourceGroupIdx != cellInst2GroupIdxMap.get(sourceCellInst)) {
-                //                 for (EDIFCellInst testCellInst : edgeRegCellInsts) {
-                //                     logger.info(testCellInst.getName());
-                //                 }
-                //             }
-                //             assert sourceGroupIdx == -1 || sourceGroupIdx == cellInst2GroupIdxMap.get(sourceCellInst);
-                //             sourceGroupIdx = cellInst2GroupIdxMap.get(sourceCellInst);
-                //         }
-                //     }
-                // }
-                // if (sourceGroupIdx == -1) {
-                //     for (EDIFCellInst edgeCellInst : edgeRegCellInsts) {
-                //         logger.info(edgeCellInst.getName());
-                //     }
-                // }
-                // assert sourceGroupIdx != -1;
-                // assert sinkGroupIdxSet.size() > 0;
-            
-                // if (sinkGroupIdxSet.size() == 1 && sinkGroupIdxSet.contains(sourceGroupIdx)) {
-                //     // TODO:
-                // } else {
-                //     Integer edgeIdx = edge2SourceGroupIdxMap.size();
-                //     assert edgeIdx == edge2SinkGroupsIdxMap.size();
-                //     partitionEdges.add(edgeRegCellInsts);
-                //     for (EDIFCellInst edgeCellInst : edgeRegCellInsts) {
-                //         regCellInst2EdgeIdxMap.put(edgeCellInst, edgeIdx);
-                //     }
-
-                //     edge2SourceGroupIdxMap.add(sourceGroupIdx);
-                //     edge2SinkGroupsIdxMap.add(sinkGroupIdxSet);
-                    
-                //     group2EdgesIdxMap.get(sourceGroupIdx).add(edgeIdx);
-                //     for (Integer gIdx : sinkGroupIdxSet) {
-                //         group2EdgesIdxMap.get(gIdx).add(edgeIdx);
-                //     }
-                // }
+                    for (Integer groupIdx : mergedGroupIdxSet) {
+                        group2EdgesIdxMap.get(groupIdx).add(edgeIdx);
+                    }
+                    for (EDIFCellInst edgeCellInst : edgeCellInsts) {
+                        cellInst2EdgeIdxMap.put(edgeCellInst, edgeIdx);
+                    }
+                    totalEdgeCellInstNum += edgeCellInsts.size();
+                }
             }
         }
+
+        logger.info("## Total Number of Searched Partition Edges: " + totalSearchedEdgeNum);
+        logger.info("## Number of Intra-Group Edges: " + intraGroupEdgeNum + " " + (float)intraGroupEdgeNum / totalSearchedEdgeNum * 100 + "%");
+        logger.info("## Number of Inter-Group Edges: " + interGroupEdgeNum + " " + (float)interGroupEdgeNum / totalSearchedEdgeNum * 100 + "%");
     }
 
     private void traverseGlobalResetNetwork(EDIFCellInst rstSourceInst) {
         logger.info("# Start Traversing Global Reset Network:");
+        List<EDIFCellInst> nonRegResetSinkInsts = new ArrayList<>();
+        List<EDIFCellInst> nonRegLutResetSinkInsts = new ArrayList<>();
         globalResetNets = new HashSet<>();
-        globalResetBridgeRegs = new HashSet<>();
+        globalResetTreeCellInsts = new HashSet<>();
         assert rstSourceInst.getCellName().equals("IBUF"): "Global Reset Source Input Buffer: " + rstSourceInst.getCellName();
         
         Queue<EDIFCellInst> searchRstInsts = new LinkedList<>();
@@ -459,43 +484,141 @@ public class CircuitPartioner {
         while (!searchRstInsts.isEmpty()) {
             EDIFCellInst searchRstInst = searchRstInsts.poll();
             
-            List<EDIFPortInst> fanoutPortInsts = getOutputPorts(searchRstInst);
+            List<EDIFPortInst> fanoutPortInsts = getOutputPortsOfCellInst(searchRstInst);
             assert fanoutPortInsts.size() == 1;
             EDIFPortInst fanoutPortInst = fanoutPortInsts.get(0);
-            
             EDIFNet fanoutRstNet = fanoutPortInst.getNet();
+            
             assert !globalResetNets.contains(fanoutRstNet);
             globalResetNets.add(fanoutRstNet);
 
-            logger.info(searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
-            for (EDIFPortInst incidentPortInst : fanoutRstNet.getPortInsts()) {
-                if (incidentPortInst.isInput()) {
-                    EDIFCellInst incidentCellInst = incidentPortInst.getCellInst();
-                    logger.info("  " + incidentCellInst.getName() + ": " + incidentPortInst.getName());
-                    
-                    assert isRegisterCellInst(incidentCellInst);
+            logger.info("  " + searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
+            for (EDIFPortInst incidentPortInst : getSinkPortsOfNet(fanoutRstNet)) {
+                
+                EDIFCellInst incidentCellInst = incidentPortInst.getCellInst();
+                logger.info("    " + incidentCellInst.getName() + "(" + incidentCellInst.getCellName() + ")" + ": " + incidentPortInst.getName());
+                
+                //assert isRegisterCellInst(incidentCellInst): "Non-Register Instances on The Reset Tree";
+                // Reset Signals may connect to RAMB36E2 and DSP
+                //assert isRegisterCellInst(incidentCellInst) || isLutCellInst(incidentCellInst);         
+                if (isRegisterCellInst(incidentCellInst)) {
                     assert incidentPortInst.getName().equals("D") || incidentPortInst.getName().equals("S") || incidentPortInst.getName().equals("R");
-                    
                     if (incidentPortInst.getName().equals("D")) {
                         searchRstInsts.add(incidentCellInst);
-                        assert !globalResetBridgeRegs.contains(incidentCellInst);
-                        globalResetBridgeRegs.add(incidentCellInst);
+                        assert !globalResetTreeCellInsts.contains(incidentCellInst);
+                        globalResetTreeCellInsts.add(incidentCellInst);
                     }
+                } else if (isLutOneCellInst(incidentCellInst)) {
+                    assert !globalResetTreeCellInsts.contains(incidentCellInst);
+                    globalResetTreeCellInsts.add(incidentCellInst);
+                    searchRstInsts.add(incidentCellInst);
+                } else if (isLutCellInst(incidentCellInst)) {
+                    List<EDIFPortInst> incidentCellInstOutPorts = getOutputPortsOfCellInst(incidentCellInst);
+                    //assert incidentCellInstOutPorts.size() == 1;
+                    EDIFPortInst incidentCellInstOutPort = incidentCellInstOutPorts.get(0);
+                    for (EDIFPortInst portInst : getSinkPortsOfNet(incidentCellInstOutPort.getNet())) {
+                        if (!isRegisterCellInst(portInst.getCellInst())) {
+                            nonRegLutResetSinkInsts.add(portInst.getCellInst());
+                        } else {
+                            //assert incidentCellInstOutPort.getNet().getPortInsts().size() == 2;
+                        }
+                    }
+                    //assert netSinkPorts.size() == 1;
+                    //assert isRegisterCellInst(netSinkPorts.get(0).getCellInst()) && netSinkPorts.get(0).getName().equals("D");
+                    // LUTs incorporating reset logic may connect to multiple RAMB36E2
+                } else {
+                    nonRegResetSinkInsts.add(incidentCellInst);
+
                 }
+            }                
+            
+        }
+
+        logger.info("## Global Reset Signal Bridges Registers: ");
+        for (EDIFCellInst cellInst : globalResetTreeCellInsts) {
+            logger.info("    " + cellInst.getName());
+        }
+        logger.info("## Global Reset Signal Nets: ");
+        for (EDIFNet net : globalResetNets) {
+            logger.info("    " + net.getName());
+        }
+        logger.info("## Non-Register Reset Sink Cell Insts: ");
+        for (EDIFCellInst cellInst : nonRegResetSinkInsts) {
+            logger.info("    " + cellInst.getName() + "( " + cellInst.getCellName() + " )");
+        }
+        logger.info("## Non-Register LUT-Reset Cell Insts: ");
+        for (EDIFCellInst cellInst : nonRegLutResetSinkInsts) {
+            logger.info("    " + cellInst.getName() + "( " + cellInst.getCellName() + " )");
+        }
+    }
+
+    private void traverseGlobalClockNetwork() {
+        logger.info("# Start Traversing Global Clock Network:");
+        //List<EDIFCellInst> nonRegClockSinkInsts = new ArrayList<>();
+
+        // assert getOutputPortsOfCellInst(clkSourceInst).size() == 1;
+        // EDIFPortInst clkPortInst  = getOutputPortsOfCellInst(clkSourceInst).get(0);
+
+        logger.info("## Non-Register Clock Sink Cell Insts: ");
+        for (EDIFPortInst sinkPortInst : getSinkPortsOfNet(flatNetlist.getTopCell().getNet("ap_clk_IBUF_BUFG"))) {
+            EDIFCellInst sinkCellInst = sinkPortInst.getCellInst();
+            if (!(isRegisterCellInst(sinkCellInst) && sinkPortInst.getName().equals("C"))) {
+                logger.info("    " + sinkCellInst.getName() + "(" + sinkCellInst.getCellName() + ")" + ": " + sinkPortInst.getName());
             }
         }
 
     }
 
+    private void traverseConstantVccGndNetwork() {
+        logger.info("# Start Traversing Constant VCC&GND Network:");
+        constantVccGndNets = new HashSet<>();
+        for (EDIFNet net : flatNetlist.getTopCell().getNets()) {
+            if (net.isGND() || net.isVCC()) {
+                constantVccGndNets.add(net);
+            }
+        }
+        logger.info("## Constant VCC&GND Nets:");
+        for (EDIFNet net : constantVccGndNets) {
+            logger.info("   " + net.getName());
+        }
+    }
+
     private Boolean isRegisterCellInst(EDIFCellInst cellInst) {
         return regCellTypeNames.contains(cellInst.getCellType().getName());
     }
-
-    private Boolean isFunctionalCellInst(EDIFCellInst cellInst) {
-        return !cellInst.getCellType().isStaticSource() && !isRegisterCellInst(cellInst);
+    private Boolean isLutCellInst(EDIFCellInst cellInst) {
+        return lutCellTypeNames.contains(cellInst.getCellName());
+    }
+    private Boolean isLutOneCellInst(EDIFCellInst cellInst) {
+        return cellInst.getCellName().equals("LUT1");
+    }
+    private Boolean isSRLCellInst(EDIFCellInst  cellInst) {
+        return srlCellTypeNames.contains(cellInst.getCellType().getName());
     }
 
-    private List<EDIFPortInst> getOutputPorts(EDIFCellInst cellInst) {
+    private Boolean isVccGndCellInst(EDIFCellInst cellInst) {
+        return cellInst.getCellType().isStaticSource();
+    }
+    private Boolean isGlobalResetTreeCellInst(EDIFCellInst cellInst) {
+        return globalResetTreeCellInsts.contains(cellInst);
+    }
+    private Boolean isPartitionEdgeCellInst(EDIFCellInst cellInst) {
+        return (isRegisterCellInst(cellInst) || isSRLCellInst(cellInst)) && !isGlobalResetTreeCellInst(cellInst);
+    }
+    private Boolean isFunctionalCellInst(EDIFCellInst cellInst) {
+        return !isVccGndCellInst(cellInst) && !isPartitionEdgeCellInst(cellInst) && !isGlobalResetTreeCellInst(cellInst);
+    }
+
+    private List<EDIFPortInst> getSinkPortsOfNet(EDIFNet net) {
+        List<EDIFPortInst> sinkPortInsts = new ArrayList<>();
+        for (EDIFPortInst portInst : net.getPortInsts()) {
+            if (portInst.isInput()) {
+                sinkPortInsts.add(portInst);
+            }
+        }
+        return sinkPortInsts;
+    }
+    private List<EDIFPortInst> getOutputPortsOfCellInst(EDIFCellInst cellInst) {
         List<EDIFPortInst> outputPortInsts = new ArrayList<>();
         for (EDIFPortInst portInst : cellInst.getPortInsts()) {
             if (portInst.isOutput()) {
@@ -506,34 +629,62 @@ public class CircuitPartioner {
     }
 
     private boolean isClockPortInst(EDIFPortInst portInst) {
-        return isRegisterCellInst(portInst.getCellInst()) && portInst.getName() == "D";
+        Boolean isRegisterClkPort = isRegisterCellInst(portInst.getCellInst()) && portInst.getName().equals("C");
+        Boolean isSRLClkPort = isSRLCellInst(portInst.getCellInst()) && portInst.getName().equals("CLK");
+        return isRegisterClkPort || isSRLClkPort;
     }
 
     public void printPartitionEdgesInfo() {
         logger.info("# Partition Edge Info:");
-        logger.info("## Total Number of Partition Groups: " + partitionEdges.size());
+        logger.info("## Total Number of Partition Edges: " + partitionEdges.size());
 
-        long totalRegCellInstNum = flatNetlist.getTopCell().getCellInsts()
-                                              .stream().filter(cellInst -> isRegisterCellInst(cellInst)).count();
+        
 
         Map<Integer, Integer> size2AmountMap = new HashMap<>();
+        Map<Integer, Integer> degree2AmountMap = new HashMap<>();
+
         size2AmountMap.clear();
-        for (List<EDIFCellInst> partitionEdge : partitionEdges) {
+        for (int i = 0; i < partitionEdges.size(); i++) {
+            List<EDIFCellInst> partitionEdge = partitionEdges.get(i);
+            Set<Integer> sinkGroupIdxSet = edge2SinkGroupsIdxMap.get(i);
+            Set<Integer> sourceGroupIdxSet = edge2SourceGroupIdxMap.get(i);
+            Set<Integer> mergedGroupIdxSet = new HashSet<>(sinkGroupIdxSet);
+            mergedGroupIdxSet.addAll(sourceGroupIdxSet);
+
             Integer edgeSize = partitionEdge.size();
+            Integer edgeDegree = mergedGroupIdxSet.size();
+
             if (size2AmountMap.containsKey(edgeSize)) {
                 Integer amount = size2AmountMap.get(edgeSize);
                 size2AmountMap.replace(edgeSize, amount + 1);
             } else {
                 size2AmountMap.put(edgeSize, 1);
             }
+
+            if (degree2AmountMap.containsKey(edgeDegree)) {
+                Integer amount = degree2AmountMap.get(edgeDegree);
+                degree2AmountMap.replace(edgeDegree, amount + 1);
+            } else {
+                degree2AmountMap.put(edgeDegree, 1);
+            }
+            
         }
 
+        logger.info("## Edge Size Distribution:");
         List<Map.Entry<Integer, Integer>>sortedEntryList = new ArrayList<>(size2AmountMap.entrySet());
         Collections.sort(sortedEntryList, Map.Entry.comparingByKey());
         for (Map.Entry<Integer, Integer> entry : sortedEntryList) {
-            float singleGroupRatio = (float)entry.getKey() / totalRegCellInstNum * 100;
-            float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalRegCellInstNum * 100;
+            float singleGroupRatio = (float)entry.getKey() / totalEdgeCellInstNum * 100;
+            float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalEdgeCellInstNum * 100;
             logger.info(String.format("## Number of edge with %d cells(%f): %d (%f)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
+        }
+
+        logger.info("## Edge Degree Distribution:");
+        sortedEntryList = new ArrayList<>(degree2AmountMap.entrySet());
+        Collections.sort(sortedEntryList, Map.Entry.comparingByKey());
+        for (Map.Entry<Integer, Integer> entry : sortedEntryList) {
+            float edgeNumRatio = (float)entry.getValue() / partitionEdges.size() * 100;
+            logger.info(String.format("## Number of edge with %d degrees: %d (%f)", entry.getKey(), entry.getValue(), edgeNumRatio));
         }
     }
 
@@ -544,10 +695,15 @@ public class CircuitPartioner {
 
         Collection<EDIFCellInst> cellInstCls = flatNetlist.getTopCell().getCellInsts();
         long totalFuncCellInstNum = cellInstCls.stream().filter(cellInst -> isFunctionalCellInst(cellInst)).count();
+        long totalCellCount = cellInstCls.size();
 
         Map<Integer, Integer> size2AmountMap = new HashMap<>();
+        Map<Integer, Integer> degree2AmountMap = new HashMap<>();
+
         long partitionGroupsCellCount = 0;
-        for (List<EDIFCellInst> partitionGroup : partitionGroups) {
+        for (int i = 0; i < partitionGroups.size(); i++){
+            List<EDIFCellInst> partitionGroup = partitionGroups.get(i);
+            
             Integer groupSize = partitionGroup.size();
             partitionGroupsCellCount += groupSize;
             if (size2AmountMap.containsKey(groupSize)) {
@@ -556,16 +712,49 @@ public class CircuitPartioner {
             } else {
                 size2AmountMap.put(groupSize, 1);
             }
-        }
-        assert partitionGroupsCellCount == totalFuncCellInstNum;
 
+            List<Integer> groupIncidentEdgeIdx = group2EdgesIdxMap.get(i);
+            Integer groupDegree = groupIncidentEdgeIdx.size();
+            if (degree2AmountMap.containsKey(groupDegree)) {
+                Integer amount = degree2AmountMap.get(groupDegree);
+                degree2AmountMap.replace(groupDegree, amount + 1);
+            } else {
+                degree2AmountMap.put(groupDegree, 1);
+            }
+
+        }
+        assert partitionGroupsCellCount == totalGroupCellInstNum;
+        assert totalGroupCellInstNum == totalGroupNonFuncCellInstNum + totalFuncCellInstNum;
+
+        logger.info("## Group Size Distribution:");
         List<Map.Entry<Integer, Integer>> sortedEntryList = new ArrayList<>(size2AmountMap.entrySet());
         Collections.sort(sortedEntryList, Map.Entry.comparingByKey());
         for (Map.Entry<Integer, Integer> entry : sortedEntryList) {
-            float singleGroupRatio = (float)entry.getKey() / totalFuncCellInstNum * 100;
-            float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalFuncCellInstNum * 100;
+            float singleGroupRatio = (float)entry.getKey() / totalCellCount * 100;
+            float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalCellCount * 100;
             logger.info(String.format("## Number of Group with %d cells(%f): %d (%f)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
         }
+
+        logger.info("## Group Degree Distribution:");
+        sortedEntryList = new ArrayList<>(degree2AmountMap.entrySet());
+        Collections.sort(sortedEntryList, Map.Entry.comparingByKey());
+        for (Map.Entry<Integer, Integer> entry : sortedEntryList) {
+            float groupNumRatio = (float)entry.getValue() / partitionGroups.size() * 100;
+            logger.info(String.format("## Number of Group with %d degrees: %d (%f)", entry.getKey(), entry.getValue(), groupNumRatio));
+        }
+    }
+
+    public void printCellInstDistribution() {
+        long totalVccGndCellInstNum = flatNetlist.getTopCell().getCellInsts().stream().filter(cellInst -> cellInst.getCellType().isStaticSource()).count();
+        Integer totalCellInstNum = flatNetlist.getTopCell().getCellInsts().size();
+        Integer resetTreeCellInstNum = globalResetTreeCellInsts.size();
+        logger.info("# Cell Instance Distribution:");
+        logger.info("## Total Number of Cell Instances: " + totalCellInstNum);
+        logger.info("## Total Number of VCC&GND Cell Instances: " + totalVccGndCellInstNum + " " + (float)totalVccGndCellInstNum / totalCellInstNum * 100 + "%");
+        logger.info("## Total Number of Reset Tree Cell Instances: " + resetTreeCellInstNum + " " + (float)resetTreeCellInstNum / totalCellInstNum * 100 + "%");
+        logger.info("## Total Number of Partition Group Cell Instances: " + totalGroupCellInstNum + " " + (float)totalGroupCellInstNum / totalCellInstNum * 100 + "%");
+        logger.info("## Total Number of Partition Edge Cell Instances: " + totalEdgeCellInstNum + " " + (float)totalEdgeCellInstNum / totalCellInstNum * 100 + "%");
+        assert totalCellInstNum == totalGroupCellInstNum + totalEdgeCellInstNum + totalVccGndCellInstNum + resetTreeCellInstNum;
     }
 
     public void writeFlatNetlistDCP(String dcpPath) {
@@ -619,6 +808,11 @@ public class CircuitPartioner {
         logger.info("# Finish Generating Register Edges Removed Flat Netlist");
     }
 
+    public void writePartitionNetlist(String dcpPath) {
+        logger.info("# Generate Partition Netlist");
+        
+    }
+
     public void printRegCtrlPortIncidentNets(String outputPath) {
         try {
             FileWriter regCtrlPortNetWriter = new FileWriter(outputPath);
@@ -667,46 +861,6 @@ public class CircuitPartioner {
         }
         logger.info("Total number of CellInsts of Type " + cellTypeName + ": " + cellInstCount);
     }
+
 }
 
-// // Backward Expansion
-// EDIFCellInst backwardExpandCellInst = cellInst;
-// while (sourceGroupIdx == -1) {
-//     visitedRegCellInsts.add(backwardExpandCellInst);
-//     edgeRegCellInsts.add(backwardExpandCellInst);
-    
-//     EDIFPortInst portInstD = backwardExpandCellInst.getPortInst("D");
-//     for (EDIFPortInst expandPortInst : portInstD.getNet().getPortInsts()) {
-//         if (expandPortInst.isOutput()) {
-//             EDIFCellInst expandCellInst = expandPortInst.getCellInst();
-//             if (isRegisterCellInst(expandCellInst)) {
-//                 assert !visitedRegCellInsts.contains(expandCellInst): 
-//                 backwardExpandCellInst.getName() + ":" + backwardExpandCellInst.getCellName() + "->" + 
-//                 expandCellInst.getName() + ":" + expandCellInst.getCellName();
-//                 backwardExpandCellInst = expandCellInst;
-//             } else {
-//                 assert cellInst2GroupIdxMap.containsKey(expandCellInst);
-//                 sourceGroupIdx = cellInst2GroupIdxMap.get(expandCellInst);
-//             }
-//         }
-//     } 
-// }
-// // Forward Expansion
-// forwardSearchQueue.add(cellInst);
-// while (!forwardSearchQueue.isEmpty()) {
-//     EDIFCellInst searchCellInst = forwardSearchQueue.poll();
-//     EDIFPortInst searchPortInstQ = searchCellInst.getPortInst("Q");
-//     for (EDIFPortInst expandPortInst : searchPortInstQ.getNet().getPortInsts()) {
-//         if (expandPortInst  == searchPortInstQ) continue;
-//         EDIFCellInst expandCellInst = expandPortInst.getCellInst();
-//         if (isRegisterCellInst(expandCellInst)) {
-//             assert !visitedRegCellInsts.contains(expandCellInst);
-//             forwardSearchQueue.add(expandCellInst);
-//             visitedRegCellInsts.add(expandCellInst);
-//             edgeRegCellInsts.add(expandCellInst);
-//         } else {
-//             assert cellInst2GroupIdxMap.containsKey(expandCellInst);
-//             sinkGroupIdxSet.add(cellInst2GroupIdxMap.get(expandCellInst));
-//         }
-//     }
-// }
