@@ -19,14 +19,16 @@ import java.util.Set;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
 
-import org.python.antlr.ast.While;
+import com.xilinx.rapidwright.examples.PartitionResultsJson;
+import com.xilinx.rapidwright.examples.PartitionGroupJson;
+import com.xilinx.rapidwright.examples.PartitionEdgeJson;
 
-import com.esotericsoftware.kryo.serializers.DefaultArraySerializers.BooleanArraySerializer;
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.device.Part;
 import com.xilinx.rapidwright.device.PartNameTools;
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
+import com.xilinx.rapidwright.edif.EDIFDirection;
 import com.xilinx.rapidwright.edif.EDIFHierCellInst;
 import com.xilinx.rapidwright.edif.EDIFHierNet;
 import com.xilinx.rapidwright.edif.EDIFHierPortInst;
@@ -37,13 +39,57 @@ import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.edif.EDIFTools;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 public class CircuitPartioner {
 
     public static final HashSet<String> regCellTypeNames = new HashSet<>(Arrays.asList("FDSE", "FDRE", "FDCE"));
     public static final HashSet<String> lutCellTypeNames = new HashSet<>(Arrays.asList("LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6"));
     public static final HashSet<String> srlCellTypeNames = new HashSet<>(Arrays.asList("SRL16E", "SRLC32E"));
-    
+
+    public static final HashSet<String> resourceTypeNames = new HashSet<>(Arrays.asList("LUT", "FF", "CARRY", "DSP", "BRAM", "IO", "MISCS"));
+    public static final HashMap<String, String> cellType2ResourceMap = new HashMap<String, String>() {
+        {
+            // LUT
+            put("LUT1", "LUT");
+            put("LUT2", "LUT");
+            put("LUT3", "LUT");
+            put("LUT4", "LUT");
+            put("LUT5", "LUT");
+            put("LUT6", "LUT");
+            put("RAMD32", "LUT");
+            put("RAMS32", "LUT");
+            put("SRL16E", "LUT");
+            put("SRLC32E", "LUT");
+
+            // CARRY
+            put("CARRY8", "CARRY");
+
+            // FF
+            put("FDSE", "FF");
+            put("FDRE", "FF");
+            put("FDCE", "FF");
+            // BRAM
+            put("RAMB36E2", "BRAM");
+            put("RAMB18E2", "BRAM");
+
+            // IO
+            put("OBUF", "IO");
+            put("INBUF", "IO");
+            put("IBUFCTRL", "IO");
+            put("BUFGCE", "IO");
+
+            // MISCS
+            put("MUXF7", "MISCS");
+            put("MUXF8", "MISCS");
+            put("INV", "MISCS");
+            put("VCC", "MISCS");
+            put("GND", "MISCS");
+
+        }
+    };
+
     //
     private String partName;
     private EDIFNetlist hierNetlist;
@@ -61,9 +107,12 @@ public class CircuitPartioner {
     Integer totalGroupNonFuncCellInstNum = 0;
 
     // Connection Info
+    private List<Set<Integer>> edge2GroupIdxMap;
     private List<Set<Integer>> edge2SinkGroupsIdxMap;
     private List<Set<Integer>> edge2SourceGroupIdxMap;
     private List<List<Integer>> group2EdgesIdxMap;
+
+    private Map<Set<Integer>, List<Integer>> incidentGroupSet2EdgeIdxMap;
 
     // Global Reset Info
     private Set<EDIFCellInst> globalResetTreeCellInsts;
@@ -221,16 +270,27 @@ public class CircuitPartioner {
                 nonLeafCellInstAmount += 1;
             }
         }
-        logger.info("### Total Number of Cells: " +  allCellInsts.size());
+        logger.info("### Total Number of Unisim Cells: " +  allCellInsts.size());
         logger.info("### Non-Leaf Cell Amount: " + nonLeafCellInstAmount);
         logger.info("### Leaf Cell Amount: " + leafCellInstAmount);
         logger.info("    Register Cell Amount: " + regCellInstAmount);
         logger.info("    VCC&GND Cell Amount: " + vccGndCellInstAmount);
         logger.info("    Other Cell Amount: " + otherCellInstAmount);
 
-        logger.info("### Utilizaiton of Each HDI Primitive:");
+        logger.info("### Utilizaiton of Each Unisim Cells:");
         for (Map.Entry<EDIFCell, Integer> entry : edifCell2AmountMap.entrySet()) {
-            logger.info("    " + entry.getKey() + ": " + entry.getValue());
+            float cellUtilization = (float)entry.getValue() / allCellInsts.size() * 100;
+            logger.info("    " + entry.getKey() + ": " + entry.getValue() + " (" + cellUtilization + "%)");
+        }
+
+        Map<String, Integer> primCellUtilMap = new HashMap<>();
+        getPrimitiveCellUtilization(flatNetlist.getTopCellInst(), primCellUtilMap);
+        long totalPrimCellCount = primCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
+        logger.info("### Total Number of Primitive Cells:" + totalPrimCellCount);
+        logger.info("### Utilization of Primitive Cells:");
+        for (Map.Entry<String, Integer> entry : primCellUtilMap.entrySet()) {
+            float cellUtilization = (float)entry.getValue() / totalPrimCellCount * 100;
+            logger.info("    " + entry.getKey() + ": " + entry.getValue() + " (" + cellUtilization + "%)");
         }
 
         logger.info("");
@@ -367,8 +427,10 @@ public class CircuitPartioner {
     private void buildPartitionEdges() {
         partitionEdges = new ArrayList<>();
         cellInst2EdgeIdxMap = new HashMap<>();
+        edge2GroupIdxMap = new ArrayList<>();
         edge2SinkGroupsIdxMap = new ArrayList<>();
         edge2SourceGroupIdxMap = new ArrayList<>();
+        incidentGroupSet2EdgeIdxMap = new HashMap<>();
 
         logger.info("# Start Building Partition Edges");
         Integer totalSearchedEdgeNum = 0;
@@ -415,8 +477,9 @@ public class CircuitPartioner {
                             EDIFCellInst expandCellInst = expandPortInst.getCellInst();
                             if (isPartitionEdgeCellInst(expandCellInst)) {
                                 logger.info("     Visit Edge Cell Inst: " + expandCellInst.getName() + "(" + expandCellInst.getCellName() + ")");
-                                if (visitedPartitionCellInsts.contains(expandCellInst)) continue;
-                                
+                                if (visitedPartitionCellInsts.contains(expandCellInst) || (portInst.isInput()&&expandPortInst.isInput())) continue;
+                                //if (visitedPartitionCellInsts.contains(expandCellInst)) continue;
+
                                 edgeCellInsts.add(expandCellInst);
                                 visitedPartitionCellInsts.add(expandCellInst);
                                 searchQueue.add(expandCellInst);
@@ -453,6 +516,7 @@ public class CircuitPartioner {
                     partitionEdges.add(edgeCellInsts);
                     edge2SinkGroupsIdxMap.add(sinkGroupIdxSet);
                     edge2SourceGroupIdxMap.add(sourceGroupIdxSet);
+                    edge2GroupIdxMap.add(mergedGroupIdxSet);
 
                     for (Integer groupIdx : mergedGroupIdxSet) {
                         group2EdgesIdxMap.get(groupIdx).add(edgeIdx);
@@ -461,6 +525,14 @@ public class CircuitPartioner {
                         cellInst2EdgeIdxMap.put(edgeCellInst, edgeIdx);
                     }
                     totalEdgeCellInstNum += edgeCellInsts.size();
+
+                    if (incidentGroupSet2EdgeIdxMap.containsKey(mergedGroupIdxSet)) {
+                        incidentGroupSet2EdgeIdxMap.get(mergedGroupIdxSet).add(edgeIdx);
+                    } else {
+                        List<Integer> edgeIdxList = new ArrayList<>();
+                        edgeIdxList.add(edgeIdx);
+                        incidentGroupSet2EdgeIdxMap.put(mergedGroupIdxSet, edgeIdxList);
+                    }
                 }
             }
         }
@@ -603,7 +675,8 @@ public class CircuitPartioner {
         return globalResetTreeCellInsts.contains(cellInst);
     }
     private Boolean isPartitionEdgeCellInst(EDIFCellInst cellInst) {
-        return (isRegisterCellInst(cellInst) || isSRLCellInst(cellInst)) && !isGlobalResetTreeCellInst(cellInst);
+        //return (isRegisterCellInst(cellInst) || isSRLCellInst(cellInst)) && !isGlobalResetTreeCellInst(cellInst);
+        return isRegisterCellInst(cellInst) && !isGlobalResetTreeCellInst(cellInst);
     }
     private Boolean isFunctionalCellInst(EDIFCellInst cellInst) {
         return !isVccGndCellInst(cellInst) && !isPartitionEdgeCellInst(cellInst) && !isGlobalResetTreeCellInst(cellInst);
@@ -628,6 +701,41 @@ public class CircuitPartioner {
         return outputPortInsts;
     }
 
+    private void getPrimitiveCellUtilization(EDIFCellInst cellInst, Map<String, Integer> cellUtils) {
+        if (cellInst.getCellType().isPrimitive()) {
+            String cellTypeName = cellInst.getCellType().getName();
+            if (cellUtils.containsKey(cellTypeName)) {
+                Integer amount = cellUtils.get(cellTypeName);
+                cellUtils.replace(cellTypeName, amount + 1);
+            } else {
+                cellUtils.put(cellTypeName, 1);
+            }
+        } else {
+            for (EDIFCellInst childCellInst : cellInst.getCellType().getCellInsts()) {
+                getPrimitiveCellUtilization(childCellInst, cellUtils);
+            }
+        }
+    }
+
+    private void getResourceTyepUtilization(EDIFCellInst cellInst, Map<String, Integer> resourceTypeUtils) {
+        if (cellInst.getCellType().isPrimitive()) {
+            String cellTypeName = cellInst.getCellType().getName();
+            assert cellType2ResourceMap.containsKey(cellTypeName): "Fail to find the resource type of " + cellTypeName;
+            
+            String resourceTypeName = cellType2ResourceMap.get(cellTypeName);
+            if (resourceTypeUtils.containsKey(resourceTypeName)) {
+                Integer amount = resourceTypeUtils.get(resourceTypeName);
+                resourceTypeUtils.replace(resourceTypeName, amount + 1);
+            } else {
+                resourceTypeUtils.put(resourceTypeName, 1);
+            }
+        } else {
+            for (EDIFCellInst childCellInst : cellInst.getCellType().getCellInsts()) {
+                getResourceTyepUtilization(childCellInst, resourceTypeUtils);
+            }
+        }
+    }
+
     private boolean isClockPortInst(EDIFPortInst portInst) {
         Boolean isRegisterClkPort = isRegisterCellInst(portInst.getCellInst()) && portInst.getName().equals("C");
         Boolean isSRLClkPort = isSRLCellInst(portInst.getCellInst()) && portInst.getName().equals("CLK");
@@ -638,18 +746,13 @@ public class CircuitPartioner {
         logger.info("# Partition Edge Info:");
         logger.info("## Total Number of Partition Edges: " + partitionEdges.size());
 
-        
-
         Map<Integer, Integer> size2AmountMap = new HashMap<>();
         Map<Integer, Integer> degree2AmountMap = new HashMap<>();
 
         size2AmountMap.clear();
         for (int i = 0; i < partitionEdges.size(); i++) {
             List<EDIFCellInst> partitionEdge = partitionEdges.get(i);
-            Set<Integer> sinkGroupIdxSet = edge2SinkGroupsIdxMap.get(i);
-            Set<Integer> sourceGroupIdxSet = edge2SourceGroupIdxMap.get(i);
-            Set<Integer> mergedGroupIdxSet = new HashSet<>(sinkGroupIdxSet);
-            mergedGroupIdxSet.addAll(sourceGroupIdxSet);
+            Set<Integer> mergedGroupIdxSet = edge2GroupIdxMap.get(i);
 
             Integer edgeSize = partitionEdge.size();
             Integer edgeDegree = mergedGroupIdxSet.size();
@@ -686,6 +789,14 @@ public class CircuitPartioner {
             float edgeNumRatio = (float)entry.getValue() / partitionEdges.size() * 100;
             logger.info(String.format("## Number of edge with %d degrees: %d (%f)", entry.getKey(), entry.getValue(), edgeNumRatio));
         }
+
+        logger.info("## Total Number of Heterogeneous Partition Edges: " + incidentGroupSet2EdgeIdxMap.size());
+        for (Map.Entry<Set<Integer>, List<Integer>> groupSet2EdgeIdxEntry : incidentGroupSet2EdgeIdxMap.entrySet()) {
+            Set<Integer> incidentGroupSet = groupSet2EdgeIdxEntry.getKey();
+            List<Integer> incidentEdgeIdxs = groupSet2EdgeIdxEntry.getValue();
+            logger.info("### Incident Group Set Size: " + incidentGroupSet.size() + " Incident Edge Num: " + incidentEdgeIdxs.size());
+        }
+
     }
 
     public void printPartitionGroupsInfo() {
@@ -695,10 +806,11 @@ public class CircuitPartioner {
 
         Collection<EDIFCellInst> cellInstCls = flatNetlist.getTopCell().getCellInsts();
         long totalFuncCellInstNum = cellInstCls.stream().filter(cellInst -> isFunctionalCellInst(cellInst)).count();
-        long totalCellCount = cellInstCls.size();
+        long totalUnisimCellCount = cellInstCls.size();
 
         Map<Integer, Integer> size2AmountMap = new HashMap<>();
-        Map<Integer, Integer> degree2AmountMap = new HashMap<>();
+        Map<Integer, Integer> incidentEdgeNum2AmountMap = new HashMap<>();
+        Map<Integer, Integer> incidentGrpNum2AmountMap = new HashMap<>();
 
         long partitionGroupsCellCount = 0;
         for (int i = 0; i < partitionGroups.size(); i++){
@@ -713,13 +825,33 @@ public class CircuitPartioner {
                 size2AmountMap.put(groupSize, 1);
             }
 
-            List<Integer> groupIncidentEdgeIdx = group2EdgesIdxMap.get(i);
-            Integer groupDegree = groupIncidentEdgeIdx.size();
-            if (degree2AmountMap.containsKey(groupDegree)) {
-                Integer amount = degree2AmountMap.get(groupDegree);
-                degree2AmountMap.replace(groupDegree, amount + 1);
+            List<Integer> incidentEdgesIdx = group2EdgesIdxMap.get(i);
+            Set<Integer> groupIncidentGroups = new HashSet<>();
+            for (Integer edgeIdx : incidentEdgesIdx) {
+                groupIncidentGroups.addAll(edge2GroupIdxMap.get(edgeIdx));
+            }
+            
+            Integer incidentEdgeNum = incidentEdgesIdx.size();
+            Integer incidentGroupNum = groupIncidentGroups.size();
+            if (incidentEdgeNum2AmountMap.containsKey(incidentEdgeNum)) {
+                Integer amount = incidentEdgeNum2AmountMap.get(incidentEdgeNum);
+                incidentEdgeNum2AmountMap.replace(incidentEdgeNum, amount + 1);
             } else {
-                degree2AmountMap.put(groupDegree, 1);
+                incidentEdgeNum2AmountMap.put(incidentEdgeNum, 1);
+            }
+
+            if (incidentEdgeNum == 0) {
+                logger.info("Zero-Incident Partition Group-: " + i);
+                for (EDIFCellInst cellInst : partitionGroup) {
+                    logger.info("    " + cellInst.getName() + "(" + cellInst.getCellName() + ")");
+                }
+            }
+
+            if (incidentGrpNum2AmountMap.containsKey(incidentGroupNum)) {
+                Integer amount = incidentGrpNum2AmountMap.get(incidentGroupNum);
+                incidentGrpNum2AmountMap.replace(incidentGroupNum, amount + 1);
+            } else {
+                incidentGrpNum2AmountMap.put(incidentGroupNum, 1);
             }
 
         }
@@ -730,17 +862,27 @@ public class CircuitPartioner {
         List<Map.Entry<Integer, Integer>> sortedEntryList = new ArrayList<>(size2AmountMap.entrySet());
         Collections.sort(sortedEntryList, Map.Entry.comparingByKey());
         for (Map.Entry<Integer, Integer> entry : sortedEntryList) {
-            float singleGroupRatio = (float)entry.getKey() / totalCellCount * 100;
-            float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalCellCount * 100;
+            float singleGroupRatio = (float)entry.getKey() / totalUnisimCellCount * 100;
+            float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalUnisimCellCount * 100;
             logger.info(String.format("## Number of Group with %d cells(%f): %d (%f)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
         }
 
-        logger.info("## Group Degree Distribution:");
-        sortedEntryList = new ArrayList<>(degree2AmountMap.entrySet());
+        logger.info("## Group Incident Edge Num Distribution:");
+        sortedEntryList = new ArrayList<>(incidentEdgeNum2AmountMap.entrySet());
         Collections.sort(sortedEntryList, Map.Entry.comparingByKey());
         for (Map.Entry<Integer, Integer> entry : sortedEntryList) {
+            float edgeNumRatio = (float)entry.getKey() / partitionEdges.size() * 100;
             float groupNumRatio = (float)entry.getValue() / partitionGroups.size() * 100;
-            logger.info(String.format("## Number of Group with %d degrees: %d (%f)", entry.getKey(), entry.getValue(), groupNumRatio));
+            logger.info(String.format("## Number of Groups Incident with %d(%f) Edges: %d (%f)", entry.getKey(), edgeNumRatio, entry.getValue(), groupNumRatio));
+        }
+
+        logger.info("## Group Incident Group Num Distribution:");
+        sortedEntryList = new ArrayList<>(incidentGrpNum2AmountMap.entrySet());
+        Collections.sort(sortedEntryList, Map.Entry.comparingByKey());
+        for (Map.Entry<Integer, Integer> entry : sortedEntryList) {
+            float incidentGroupNumRatio = (float)entry.getKey() / partitionGroups.size() * 100;
+            float groupNumRatio = (float)entry.getValue() / partitionGroups.size() * 100;
+            logger.info(String.format("## Number of Groups Incident to %d(%f) groups: %d (%f)", entry.getKey(), incidentGroupNumRatio, entry.getValue(), groupNumRatio));
         }
     }
 
@@ -810,7 +952,59 @@ public class CircuitPartioner {
 
     public void writePartitionNetlist(String dcpPath) {
         logger.info("# Generate Partition Netlist");
-        
+        Design partitionDesgin = new Design(flatNetlist.getName() + "-partition", partName);
+        EDIFNetlist partitionNetlist = partitionDesgin.getNetlist();
+        EDIFCell topCell = partitionNetlist.getTopCell();
+        EDIFLibrary workLib = partitionNetlist.getWorkLibrary();
+
+        for (int i = 0; i < partitionGroups.size(); i++) {
+            Integer groupSize = partitionGroups.get(i).size();
+            String groupCellName = "group-" + i + "-" + groupSize;
+            EDIFCell groupCell = new EDIFCell(workLib, groupCellName);
+
+            EDIFCellInst partitionGroupInst = groupCell.createCellInst(groupCellName + "_inst", topCell);
+            //logger.info("## Add EDIFCellInst " + groupCellInstName);
+        }
+
+        logger.info("## Add " + partitionGroups.size() + " Partition Group Cell Instances");
+
+        for (int i = 0; i < edge2SinkGroupsIdxMap.size(); i++) {
+            Set<Integer> edgeSinkGroupsIdx = edge2SinkGroupsIdxMap.get(i);
+            Set<Integer> edgeSourceGroupsIdx = edge2SourceGroupIdxMap.get(i);
+            
+            String edgeNetName = "edge-" + i;
+            EDIFNet edgeNet = topCell.createNet(edgeNetName);
+
+            for (Integer sinkGroupIdx : edgeSinkGroupsIdx) {
+
+                String groupCellName = "group-" + sinkGroupIdx + "-" + partitionGroups.get(sinkGroupIdx).size();
+                EDIFCell groupCell = workLib.getCell(groupCellName);
+                String sinkPortName = groupCellName + "-" + edgeNetName + "-i";
+                groupCell.createPort(sinkPortName, EDIFDirection.INPUT, 1);
+                
+                EDIFCellInst groupCellInst = topCell.getCellInst(groupCellName + "_inst");
+                assert groupCellInst != null: "Can't find EDIFCellInst " + groupCellInst + "_inst"+ " in the top cell inst";
+
+                EDIFPortInst sinkPortInst = groupCellInst.getOrCreatePortInst(sinkPortName);
+                edgeNet.addPortInst(sinkPortInst);
+            }
+
+            for (Integer sourceGroupIdx : edgeSourceGroupsIdx) {
+                String groupCellName = "group-" + sourceGroupIdx + "-" + partitionGroups.get(sourceGroupIdx).size();
+                EDIFCell groupCell = workLib.getCell(groupCellName);
+                
+                String sourcePortName = groupCellName + "-" + edgeNetName + "-o";
+                groupCell.createPort(sourcePortName, EDIFDirection.OUTPUT, 1);
+                
+                EDIFCellInst groupCellInst = topCell.getCellInst(groupCellName + "_inst");
+                assert groupCellInst != null: "Can't find EDIFCellInst " + groupCellInst + "_inst"+ " in the top cell inst";
+
+                EDIFPortInst sinkPortInst = groupCellInst.getOrCreatePortInst(sourcePortName);
+                edgeNet.addPortInst(sinkPortInst);
+            }
+        }
+
+        partitionDesgin.writeCheckpoint(dcpPath);        
     }
 
     public void printRegCtrlPortIncidentNets(String outputPath) {
@@ -848,6 +1042,77 @@ public class CircuitPartioner {
         } catch (IOException e) {
             logger.info("Error occurred while saving partition results: " + e.getMessage());
         }
+    }
+
+    public void writePartitionResutlJson(String jsonFileName) {
+        logger.info("# Start Writing Partition Resutls in JSON Format");
+        Gson gson = new GsonBuilder().setPrettyPrinting().create();
+
+        PartitionResultsJson partitionResultsJson = new PartitionResultsJson();
+
+        Map<String, Integer> resourceTypeUtil = new HashMap<>();
+        getResourceTyepUtilization(flatNetlist.getTopCellInst(), resourceTypeUtil);
+        partitionResultsJson.totalPrimCellNum = resourceTypeUtil.values().stream().mapToInt(Integer::intValue).sum();
+        partitionResultsJson.resourceTypeUtil = resourceTypeUtil;
+        partitionResultsJson.totalGroupNum = partitionGroups.size();
+        //partitionResultsJson.totalEdgeNum = partitionEdges.size();
+        partitionResultsJson.totalEdgeNum = incidentGroupSet2EdgeIdxMap.size();
+
+        List<PartitionGroupJson> partitionGroupJsons = new ArrayList<>();
+        for (int i = 0; i < partitionGroups.size(); i++) {
+            PartitionGroupJson partitionGroupJson = new PartitionGroupJson();
+            Map<String, Integer> groupResTypeUtil = new HashMap<>();
+            partitionGroupJson.id = i;
+
+            for (EDIFCellInst cellInst : partitionGroups.get(i)) {
+                getResourceTyepUtilization(cellInst, groupResTypeUtil);
+            }
+            partitionGroupJson.primCellNum = groupResTypeUtil.values().stream().mapToInt(Integer::intValue).sum();
+            partitionGroupJson.resourceTypeUtil = groupResTypeUtil;
+
+            partitionGroupJsons.add(partitionGroupJson);
+        }
+
+        partitionResultsJson.partitionGroups = partitionGroupJsons;
+        
+        List<PartitionEdgeJson> partitionEdgeJsons = new ArrayList<>();
+        // Write All Partition Edges
+        // for (int i = 0; i < partitionEdges.size(); i++) {
+        //     PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
+        //     partitionEdgeJson.id = i;
+        //     partitionEdgeJson.primCellNum = partitionEdges.get(i).size();
+        //     partitionEdgeJson.incidentPrimCellIds = new ArrayList<>();
+        //     partitionEdgeJson.degree = edge2GroupIdxMap.get(i).size();
+        //     partitionEdgeJson.incidentPrimCellIds.addAll(edge2GroupIdxMap.get(i));
+
+        //     partitionEdgeJsons.add(partitionEdgeJson);
+        // }
+
+        // Write Heterogeneous Partition Edges
+        for (Map.Entry<Set<Integer>, List<Integer>> groupSet2EdgeIdxEntry : incidentGroupSet2EdgeIdxMap.entrySet()) {
+            PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
+            Set<Integer> incidentGroupSet = groupSet2EdgeIdxEntry.getKey();
+            List<Integer> edgeIdxs = groupSet2EdgeIdxEntry.getValue();
+            partitionEdgeJson.id = partitionEdgeJsons.size();
+            partitionEdgeJson.primCellNum = edgeIdxs.stream().mapToInt(edgeIdx -> partitionEdges.get(edgeIdx).size()).sum();
+            partitionEdgeJson.weight = edgeIdxs.size();
+
+            partitionEdgeJson.degree = incidentGroupSet.size();
+            partitionEdgeJson.incidentPrimCellIds = new ArrayList<>();
+            partitionEdgeJson.incidentPrimCellIds.addAll(incidentGroupSet);
+            partitionEdgeJsons.add(partitionEdgeJson);
+        }
+        partitionResultsJson.partitionEdges = partitionEdgeJsons;
+
+        try {
+            String jsonString = gson.toJson(partitionResultsJson);
+            FileWriter jsonFileWriter = new FileWriter(jsonFileName);
+            jsonFileWriter.write(jsonString);
+            jsonFileWriter.close();
+        } catch (IOException e) {
+            logger.info("Error occurred while saving partition results: " + e.getMessage());
+        }
+        logger.info("# Finish Writing Partition Resutls in JSON Format");
     }
 
     public void printCellInstOfType(String cellTypeName) {
