@@ -22,6 +22,7 @@ import java.util.stream.Collectors;
 import com.xilinx.rapidwright.examples.PartitionResultsJson;
 import com.xilinx.rapidwright.examples.PartitionGroupJson;
 import com.xilinx.rapidwright.examples.PartitionEdgeJson;
+import com.xilinx.rapidwright.examples.IOConstraints;
 
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.device.Part;
@@ -45,6 +46,7 @@ import com.google.gson.GsonBuilder;
 public class CircuitPartioner {
 
     public static final HashSet<String> regCellTypeNames = new HashSet<>(Arrays.asList("FDSE", "FDRE", "FDCE"));
+    public static final HashSet<String> ioCellTypeNames = new HashSet<>(Arrays.asList("OBUF", "IBUFCTRL", "INBUF", "IBUF"));
     public static final HashSet<String> lutCellTypeNames = new HashSet<>(Arrays.asList("LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6"));
     public static final HashSet<String> srlCellTypeNames = new HashSet<>(Arrays.asList("SRL16E", "SRLC32E"));
 
@@ -60,6 +62,7 @@ public class CircuitPartioner {
             put("LUT6", "LUT");
             put("RAMD32", "LUT");
             put("RAMS32", "LUT");
+            put("RAMD64E", "LUT");
             put("SRL16E", "LUT");
             put("SRLC32E", "LUT");
 
@@ -137,6 +140,15 @@ public class CircuitPartioner {
         buildPartitionEdges();
     }
 
+    public void printIOInstInfo() {
+        logger.info("# IO Instances Information:");
+        for (EDIFCellInst cellInst : flatNetlist.getTopCell().getCellInsts()) {
+            if (isIOCellInst(cellInst)) {
+                logger.info("  " + cellInst.getName() + "(" + cellInst.getCellName() + ")");
+            }
+        }
+    }
+    
     public void printHierNetlistInfo() {
         logger.info("# Origianl Hierarchy Netlist Information:");
 
@@ -667,6 +679,9 @@ public class CircuitPartioner {
     private Boolean isSRLCellInst(EDIFCellInst  cellInst) {
         return srlCellTypeNames.contains(cellInst.getCellType().getName());
     }
+    private Boolean isIOCellInst(EDIFCellInst cellInst) {
+        return ioCellTypeNames.contains(cellInst.getCellType().getName());
+    }
 
     private Boolean isVccGndCellInst(EDIFCellInst cellInst) {
         return cellInst.getCellType().isStaticSource();
@@ -1069,6 +1084,29 @@ public class CircuitPartioner {
             }
             partitionGroupJson.primCellNum = groupResTypeUtil.values().stream().mapToInt(Integer::intValue).sum();
             partitionGroupJson.resourceTypeUtil = groupResTypeUtil;
+
+            // Check IO constraints
+            List<Integer> constrLoc = null;
+            HashMap<String, List<Integer>> ioInstLocConstraints = IOConstraints.udpConstraints;
+            if (hierNetlist.getName().contains("udp")) {
+                ioInstLocConstraints = IOConstraints.udpConstraints;
+            } else if(hierNetlist.getName().contains("rdma")) {
+                ioInstLocConstraints = IOConstraints.rdmaConstraints;
+            }
+            assert ioInstLocConstraints != null: "IO Constraints Not Found";
+            
+            
+            for (Map.Entry<String, List<Integer>> entry : ioInstLocConstraints.entrySet()) {
+                String ioInstName = entry.getKey();
+                Boolean hasConstrIOInst = partitionGroups.get(i).stream().anyMatch(cellInst -> isIOCellInst(cellInst) && cellInst.getName().contains(ioInstName));
+                if (hasConstrIOInst) {
+                    assert constrLoc == null: "Multiple IO Constraints in One Partition Group";
+                    constrLoc = entry.getValue();
+                }
+            }                
+
+
+            partitionGroupJson.loc = constrLoc;
 
             partitionGroupJsons.add(partitionGroupJson);
         }

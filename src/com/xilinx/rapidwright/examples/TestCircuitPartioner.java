@@ -90,6 +90,8 @@ public class TestCircuitPartioner {
         //partioner.writeFlatNetlistDCP(Paths.get(outputPath.toString(), designName + "-flat.dcp").toString());
         partioner.writePartitionGroupsResult(Paths.get(outputPath.toString(), "partition-grp-results.txt").toString());
         partioner.writePartitionResutlJson(Paths.get(outputPath.toString(), designName + ".json").toString());
+
+        partioner.printIOInstInfo();
         //partioner.writeRegEdgesRemovedFlatNetlist(Paths.get(outputPath.toString(), designName + "-edge-removed.dcp").toString());
     }
 }

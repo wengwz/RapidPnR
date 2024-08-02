@@ -8,6 +8,7 @@ final class PartitionGroupJson {
     public Integer id;
     public Integer primCellNum;
     public Map<String, Integer> resourceTypeUtil;
+    public List<Integer> loc;
 }
 
 final class PartitionEdgeJson {
