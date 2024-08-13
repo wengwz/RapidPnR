@@ -3,6 +3,7 @@ package com.xilinx.rapidwright.examples;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.security.KeyStore.Entry;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -99,6 +100,9 @@ public class CircuitPartioner {
     private EDIFNetlist flatNetlist;
     private Logger logger;
 
+    private String clkPortName;
+    private String rstPortName;
+
     // Partition Resutls
     private List<List<EDIFCellInst>> partitionEdges;
     private List<List<EDIFCellInst>> partitionGroups;
@@ -122,18 +126,21 @@ public class CircuitPartioner {
     private Set<EDIFNet> globalResetNets;
     private Set<EDIFNet> constantVccGndNets;
 
-    public CircuitPartioner(EDIFNetlist hierNetlist, String partName, String rstSrcInstName, Logger logger) {
+    public CircuitPartioner(EDIFNetlist hierNetlist, String partName, String rstPortName, String clkPortName, Logger logger) {
         this.hierNetlist = hierNetlist;
         this.partName = partName;
         this.logger = logger;
         flatNetlist = EDIFTools.createFlatNetlist(hierNetlist, partName);
 
+        this.rstPortName = rstPortName;
+        this.clkPortName = clkPortName;
+
         //Part part = PartNameTools.getPart(partName);
         //flatNetlist.collapseMacroUnisims(part.getSeries());
 
-        EDIFCellInst rstSourceCellInst = flatNetlist.getCellInstFromHierName(rstSrcInstName);
-        assert rstSourceCellInst != null: "Invalid Reset Source Instance Name: " + rstSrcInstName;
-        traverseGlobalResetNetwork(rstSourceCellInst);
+        //EDIFCellInst rstSourceCellInst = flatNetlist.getCellInstFromHierName(rstSrcInstName);
+        //assert rstSourceCellInst != null: "Invalid Reset Source Instance Name: " + rstSrcInstName;
+        traverseGlobalResetNetwork(rstPortName);
         traverseConstantVccGndNetwork();
         //traverseGlobalClockNetwork();
         buildPartitionGroups();
@@ -146,6 +153,16 @@ public class CircuitPartioner {
             if (isIOCellInst(cellInst)) {
                 logger.info("  " + cellInst.getName() + "(" + cellInst.getCellName() + ")");
             }
+        }
+    }
+
+    public void printTopLevelPorts() {
+        logger.info("# Top Level Ports: ");
+        for (EDIFPort port : flatNetlist.getTopCell().getPorts()) {
+            if (port.getName().contains("s_axis") || port.getName().contains("m_axis")) {
+                logger.info("  " + port.getName());
+            }
+            //logger.info("  " + port.getName());
         }
     }
     
@@ -324,8 +341,8 @@ public class CircuitPartioner {
 
         logger.info("### Number of VCC&GND nets: " + vccGndNetAmount);
         logger.info("### Number of other nets: " + net2FanoutMap.size());
-        logger.info("### Top 20 Fanout Nets:");
-        for (int i = 0; i < 20; i++) {
+        logger.info("### Top 30 Fanout Nets:");
+        for (int i = 0; i < 30; i++) {
             EDIFNet hierNet = sortedNets.get(i).getKey();
             Integer fanoutNum = sortedNets.get(i).getValue();
             logger.info("    " + hierNet.getName() + ": " + fanoutNum);
@@ -487,10 +504,11 @@ public class CircuitPartioner {
                         
                         for (EDIFPortInst expandPortInst : searchNet.getPortInsts()) {
                             EDIFCellInst expandCellInst = expandPortInst.getCellInst();
+                            if (expandCellInst == null) continue; // special case for top-Level Ports
                             if (isPartitionEdgeCellInst(expandCellInst)) {
                                 logger.info("     Visit Edge Cell Inst: " + expandCellInst.getName() + "(" + expandCellInst.getCellName() + ")");
-                                if (visitedPartitionCellInsts.contains(expandCellInst) || (portInst.isInput()&&expandPortInst.isInput())) continue;
-                                //if (visitedPartitionCellInsts.contains(expandCellInst)) continue;
+                                //if (visitedPartitionCellInsts.contains(expandCellInst) || (portInst.isInput()&&expandPortInst.isInput())) continue;
+                                if (visitedPartitionCellInsts.contains(expandCellInst)) continue;
 
                                 edgeCellInsts.add(expandCellInst);
                                 visitedPartitionCellInsts.add(expandCellInst);
@@ -554,39 +572,48 @@ public class CircuitPartioner {
         logger.info("## Number of Inter-Group Edges: " + interGroupEdgeNum + " " + (float)interGroupEdgeNum / totalSearchedEdgeNum * 100 + "%");
     }
 
-    private void traverseGlobalResetNetwork(EDIFCellInst rstSourceInst) {
+    private void traverseGlobalResetNetwork(String resetPortName) {
         logger.info("# Start Traversing Global Reset Network:");
         List<EDIFCellInst> nonRegResetSinkInsts = new ArrayList<>();
         List<EDIFCellInst> nonRegLutResetSinkInsts = new ArrayList<>();
-        globalResetNets = new HashSet<>();
-        globalResetTreeCellInsts = new HashSet<>();
-        assert rstSourceInst.getCellName().equals("IBUF"): "Global Reset Source Input Buffer: " + rstSourceInst.getCellName();
-        
-        Queue<EDIFCellInst> searchRstInsts = new LinkedList<>();
-        searchRstInsts.add(rstSourceInst);
 
-        while (!searchRstInsts.isEmpty()) {
-            EDIFCellInst searchRstInst = searchRstInsts.poll();
-            
-            List<EDIFPortInst> fanoutPortInsts = getOutputPortsOfCellInst(searchRstInst);
-            assert fanoutPortInsts.size() == 1;
-            EDIFPortInst fanoutPortInst = fanoutPortInsts.get(0);
-            EDIFNet fanoutRstNet = fanoutPortInst.getNet();
+        EDIFNet originResetNet = flatNetlist.getTopCell().getNet(resetPortName);
+        assert originResetNet != null: "Invalid Reset Port Name: " + resetPortName;
+
+
+        globalResetNets = new HashSet<>();
+        globalResetTreeCellInsts = new HashSet<>();        
+        Queue<EDIFCellInst> searchRstInsts = new LinkedList<>();
+
+        while (!searchRstInsts.isEmpty() || !globalResetNets.contains(originResetNet)) {
+            EDIFNet fanoutRstNet;
+            if (searchRstInsts.isEmpty()) {
+                fanoutRstNet = originResetNet;
+                logger.info("  Toplevel Reset Port "+ resetPortName + "->" + originResetNet.getName() + ":");
+            } else {
+                EDIFCellInst searchRstInst = searchRstInsts.poll();
+                List<EDIFPortInst> fanoutPortInsts = getOutputPortsOfCellInst(searchRstInst);
+                assert fanoutPortInsts.size() == 1;
+                EDIFPortInst fanoutPortInst = fanoutPortInsts.get(0);
+                fanoutRstNet = fanoutPortInst.getNet();
+                logger.info("  " + searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
+            }
             
             assert !globalResetNets.contains(fanoutRstNet);
             globalResetNets.add(fanoutRstNet);
 
-            logger.info("  " + searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
             for (EDIFPortInst incidentPortInst : getSinkPortsOfNet(fanoutRstNet)) {
                 
                 EDIFCellInst incidentCellInst = incidentPortInst.getCellInst();
+                if (incidentCellInst == null) continue; // Special case for toplevel reset ports
                 logger.info("    " + incidentCellInst.getName() + "(" + incidentCellInst.getCellName() + ")" + ": " + incidentPortInst.getName());
                 
                 //assert isRegisterCellInst(incidentCellInst): "Non-Register Instances on The Reset Tree";
                 // Reset Signals may connect to RAMB36E2 and DSP
                 //assert isRegisterCellInst(incidentCellInst) || isLutCellInst(incidentCellInst);         
                 if (isRegisterCellInst(incidentCellInst)) {
-                    assert incidentPortInst.getName().equals("D") || incidentPortInst.getName().equals("S") || incidentPortInst.getName().equals("R");
+                    assert incidentPortInst.getName().equals("D") || incidentPortInst.getName().equals("S") || incidentPortInst.getName().equals("R"): 
+                    "Invalid Reset Port Name: " + incidentPortInst.getName();
                     if (incidentPortInst.getName().equals("D")) {
                         searchRstInsts.add(incidentCellInst);
                         assert !globalResetTreeCellInsts.contains(incidentCellInst);
@@ -618,9 +645,9 @@ public class CircuitPartioner {
             
         }
 
-        logger.info("## Global Reset Signal Bridges Registers: ");
+        logger.info("## Global Reset Signal Bridges CellInsts: ");
         for (EDIFCellInst cellInst : globalResetTreeCellInsts) {
-            logger.info("    " + cellInst.getName());
+            logger.info("    " + cellInst.getName() + "(" + cellInst.getCellName() + ")");
         }
         logger.info("## Global Reset Signal Nets: ");
         for (EDIFNet net : globalResetNets) {
@@ -917,6 +944,7 @@ public class CircuitPartioner {
     public void writeFlatNetlistDCP(String dcpPath) {
         Design flatNetlistDesign = new Design(flatNetlist.getName(), partName);
         flatNetlistDesign.setNetlist(flatNetlist);
+        flatNetlistDesign.setAutoIOBuffers(false);
         flatNetlistDesign.writeCheckpoint(dcpPath);
     }
 
@@ -1059,7 +1087,7 @@ public class CircuitPartioner {
         }
     }
 
-    public void writePartitionResutlJson(String jsonFileName) {
+    public void writePartitionResultJson(String jsonFileName, Boolean outputCellName, Boolean outputAllEdge, Map<String,List<Integer>> ioConstraints) {
         logger.info("# Start Writing Partition Resutls in JSON Format");
         Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
@@ -1070,8 +1098,11 @@ public class CircuitPartioner {
         partitionResultsJson.totalPrimCellNum = resourceTypeUtil.values().stream().mapToInt(Integer::intValue).sum();
         partitionResultsJson.resourceTypeUtil = resourceTypeUtil;
         partitionResultsJson.totalGroupNum = partitionGroups.size();
-        //partitionResultsJson.totalEdgeNum = partitionEdges.size();
-        partitionResultsJson.totalEdgeNum = incidentGroupSet2EdgeIdxMap.size();
+        if (outputAllEdge) {
+            partitionResultsJson.totalEdgeNum = partitionEdges.size();
+        } else {
+            partitionResultsJson.totalEdgeNum = incidentGroupSet2EdgeIdxMap.size();
+        }
 
         List<PartitionGroupJson> partitionGroupJsons = new ArrayList<>();
         for (int i = 0; i < partitionGroups.size(); i++) {
@@ -1086,61 +1117,109 @@ public class CircuitPartioner {
             partitionGroupJson.resourceTypeUtil = groupResTypeUtil;
 
             // Check IO constraints
-            List<Integer> constrLoc = null;
-            HashMap<String, List<Integer>> ioInstLocConstraints = IOConstraints.udpConstraints;
-            if (hierNetlist.getName().contains("udp")) {
-                ioInstLocConstraints = IOConstraints.udpConstraints;
-            } else if(hierNetlist.getName().contains("rdma")) {
-                ioInstLocConstraints = IOConstraints.rdmaConstraints;
+            // List<Integer> constrLoc = null;
+            // HashMap<String, List<Integer>> ioInstLocConstraints = IOConstraints.udpConstraints;
+            // if (hierNetlist.getName().contains("udp")) {
+            //     ioInstLocConstraints = IOConstraints.udpConstraints;
+            // } else if(hierNetlist.getName().contains("rdma")) {
+            //     ioInstLocConstraints = IOConstraints.rdmaConstraints;
+            // }
+            // assert ioInstLocConstraints != null: "IO Constraints Not Found";
+            
+            
+            // for (Map.Entry<String, List<Integer>> entry : ioInstLocConstraints.entrySet()) {
+            //     String ioInstName = entry.getKey();
+            //     Boolean hasConstrIOInst = partitionGroups.get(i).stream().anyMatch(cellInst -> isIOCellInst(cellInst) && cellInst.getName().contains(ioInstName));
+            //     if (hasConstrIOInst) {
+            //         assert constrLoc == null: "Multiple IO Constraints in One Partition Group";
+            //         constrLoc = entry.getValue();
+            //     }
+            // }
+            // partitionGroupJson.loc = constrLoc;
+
+            if (outputCellName) {
+                partitionGroupJson.groupCellNames = partitionGroups.get(i).stream().map(cellInst -> cellInst.getName()).collect(Collectors.toList());
             }
-            assert ioInstLocConstraints != null: "IO Constraints Not Found";
-            
-            
-            for (Map.Entry<String, List<Integer>> entry : ioInstLocConstraints.entrySet()) {
-                String ioInstName = entry.getKey();
-                Boolean hasConstrIOInst = partitionGroups.get(i).stream().anyMatch(cellInst -> isIOCellInst(cellInst) && cellInst.getName().contains(ioInstName));
-                if (hasConstrIOInst) {
-                    assert constrLoc == null: "Multiple IO Constraints in One Partition Group";
-                    constrLoc = entry.getValue();
-                }
-            }                
-
-
-            partitionGroupJson.loc = constrLoc;
-
             partitionGroupJsons.add(partitionGroupJson);
         }
+
+        // Add IO Constraints
+        Map<Integer, List<Integer>> grpIdx2LocConstrMap = new HashMap<>();
+        if (ioConstraints != null) {
+            for (EDIFPort port : flatNetlist.getTopCell().getPorts()) {
+                String portName = port.getName();
+                if (!ioConstraints.containsKey(portName)) continue;
+                List<Integer> constrLoc = ioConstraints.get(portName);
+                
+                List<EDIFNet> internalNets = port.getInternalNets();
+                for (EDIFNet net : internalNets) {
+                    if (net == null || net.isGND() || net.isVCC() || globalResetNets.contains(net)) continue;
+                    for (EDIFPortInst portInst : net.getPortInsts()) {
+                        EDIFCellInst cellInst = portInst.getCellInst();
+                        if (portInst.getCellInst() == null || !cellInst2GroupIdxMap.containsKey(cellInst)) continue;
+                        Integer incidentGrpIdx = cellInst2GroupIdxMap.get(cellInst);
+                        
+                        if (grpIdx2LocConstrMap.containsKey(incidentGrpIdx)) {
+                            if (!grpIdx2LocConstrMap.get(incidentGrpIdx).equals(constrLoc)) {
+                                logger.info(String.format("Multi-IO Constraints on Group %d through cell %s by port %s", incidentGrpIdx, cellInst.getName(), portName));
+                            }
+                        } else {
+                            grpIdx2LocConstrMap.put(incidentGrpIdx, constrLoc);
+                            logger.info(String.format("Set constraint on group %d through cell %s by port %s", incidentGrpIdx, cellInst.getName(), portName));
+                        }
+                    }
+                }
+            }
+        }
+        for (Map.Entry<Integer, List<Integer>> entry : grpIdx2LocConstrMap.entrySet()) {
+            partitionGroupJsons.get(entry.getKey()).loc = entry.getValue();
+        }
+
 
         partitionResultsJson.partitionGroups = partitionGroupJsons;
         
         List<PartitionEdgeJson> partitionEdgeJsons = new ArrayList<>();
-        // Write All Partition Edges
-        // for (int i = 0; i < partitionEdges.size(); i++) {
-        //     PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
-        //     partitionEdgeJson.id = i;
-        //     partitionEdgeJson.primCellNum = partitionEdges.get(i).size();
-        //     partitionEdgeJson.incidentPrimCellIds = new ArrayList<>();
-        //     partitionEdgeJson.degree = edge2GroupIdxMap.get(i).size();
-        //     partitionEdgeJson.incidentPrimCellIds.addAll(edge2GroupIdxMap.get(i));
+        //Write Partition Edges
+        if (outputAllEdge) {
+            // Write all partition edges
+            for (int i = 0; i < partitionEdges.size(); i++) {
+                PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
+                partitionEdgeJson.id = i;
+                partitionEdgeJson.primCellNum = partitionEdges.get(i).size();
+                partitionEdgeJson.incidentGroupIds = new ArrayList<>();
+                partitionEdgeJson.degree = edge2GroupIdxMap.get(i).size();
+                partitionEdgeJson.incidentGroupIds.addAll(edge2GroupIdxMap.get(i));
 
-        //     partitionEdgeJsons.add(partitionEdgeJson);
-        // }
+                if (outputCellName) {
+                    partitionEdgeJson.edgeCellNames = partitionEdges.get(i).stream().map(cellInst -> cellInst.getName()).collect(Collectors.toList());
+                }
+                partitionEdgeJsons.add(partitionEdgeJson);
+            }
+        } else {
+            // Only write heterogeneous partition edges
+            for (Map.Entry<Set<Integer>, List<Integer>> groupSet2EdgeIdxEntry : incidentGroupSet2EdgeIdxMap.entrySet()) {
+                PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
+                Set<Integer> incidentGroupSet = groupSet2EdgeIdxEntry.getKey();
+                List<Integer> edgeIdxs = groupSet2EdgeIdxEntry.getValue();
+                partitionEdgeJson.id = partitionEdgeJsons.size();
+                partitionEdgeJson.primCellNum = edgeIdxs.stream().mapToInt(edgeIdx -> partitionEdges.get(edgeIdx).size()).sum();
+                partitionEdgeJson.weight = edgeIdxs.size();
 
-        // Write Heterogeneous Partition Edges
-        for (Map.Entry<Set<Integer>, List<Integer>> groupSet2EdgeIdxEntry : incidentGroupSet2EdgeIdxMap.entrySet()) {
-            PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
-            Set<Integer> incidentGroupSet = groupSet2EdgeIdxEntry.getKey();
-            List<Integer> edgeIdxs = groupSet2EdgeIdxEntry.getValue();
-            partitionEdgeJson.id = partitionEdgeJsons.size();
-            partitionEdgeJson.primCellNum = edgeIdxs.stream().mapToInt(edgeIdx -> partitionEdges.get(edgeIdx).size()).sum();
-            partitionEdgeJson.weight = edgeIdxs.size();
-
-            partitionEdgeJson.degree = incidentGroupSet.size();
-            partitionEdgeJson.incidentPrimCellIds = new ArrayList<>();
-            partitionEdgeJson.incidentPrimCellIds.addAll(incidentGroupSet);
-            partitionEdgeJsons.add(partitionEdgeJson);
+                partitionEdgeJson.degree = incidentGroupSet.size();
+                partitionEdgeJson.incidentGroupIds = new ArrayList<>();
+                partitionEdgeJson.incidentGroupIds.addAll(incidentGroupSet);
+                partitionEdgeJsons.add(partitionEdgeJson);
+            }
         }
         partitionResultsJson.partitionEdges = partitionEdgeJsons;
+
+        // Save Reset and Clock Info
+        List<String> resetCellNames = globalResetTreeCellInsts.stream().map(cellInst -> cellInst.getName()).collect(Collectors.toList());
+        List<String> resetNetNames = globalResetNets.stream().map(net -> net.getName()).collect(Collectors.toList());
+        partitionResultsJson.resetTreeCellNames = resetCellNames;
+        partitionResultsJson.rstPortName = rstPortName;
+        partitionResultsJson.clkPortName = clkPortName;
+        partitionResultsJson.resetNetNames = resetNetNames;
 
         try {
             String jsonString = gson.toJson(partitionResultsJson);

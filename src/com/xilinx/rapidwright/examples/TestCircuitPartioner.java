@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
+import java.util.Map;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
@@ -40,15 +42,28 @@ public class TestCircuitPartioner {
         // String designName = "fft";
         // String resetPortName = "i_reset";
 
-        String designName = "blue-udp-nocrc-direct-rst";
+        // String designName = "blue-udp-nocrc-direct-rst";
+        // String resetPortName = "udp_reset";
+
+        // String designName = "blue-udp-ooc";
+        // String resetPortName = "udp_reset";
+
+        // String designName = "blue-udp-ooc-retiming";
+        // String resetPortName = "udp_reset";
+
+        String designName = "blue-udp-direct-rst-ooc";
         String resetPortName = "udp_reset";
+        String clockPortName = "udp_clk";
+        Map<String, List<Integer>> ioConstraints = IOConstraints.udpConstraints;
+
         // String designName = "blue-rdma";
         // String resetPortName = "RST_N";
 
         // String designName = "blue-rdma-direct-rst";
         // String resetPortName = "RST_N";
         
-        Path outputPath = Paths.get("./result3", designName);
+
+        Path outputPath = Paths.get("./result2", designName);
         try {
             Files.createDirectories(outputPath);
         } catch (IOException e) {
@@ -78,7 +93,7 @@ public class TestCircuitPartioner {
         EDIFNetlist logicalNetlist = circuitDesign.getNetlist();
 
 
-        CircuitPartioner partioner = new CircuitPartioner(logicalNetlist, circuitDesign.getPartName(), resetPortName + "_IBUF_inst", logger);
+        CircuitPartioner partioner = new CircuitPartioner(logicalNetlist, circuitDesign.getPartName(), resetPortName, clockPortName, logger);
         partioner.printHierNetlistInfo();
         partioner.printFlatNetlistInfo();
         
@@ -89,9 +104,11 @@ public class TestCircuitPartioner {
         //partioner.writePartitionNetlist(Paths.get(outputPath.toString(), designName + "-partiton.dcp").toString());
         //partioner.writeFlatNetlistDCP(Paths.get(outputPath.toString(), designName + "-flat.dcp").toString());
         partioner.writePartitionGroupsResult(Paths.get(outputPath.toString(), "partition-grp-results.txt").toString());
-        partioner.writePartitionResutlJson(Paths.get(outputPath.toString(), designName + ".json").toString());
+        String resultJsonFile = Paths.get(outputPath.toString(), designName + ".json").toString();
+        partioner.writePartitionResultJson(resultJsonFile, false, false, ioConstraints);
 
         partioner.printIOInstInfo();
+        partioner.printTopLevelPorts();
         //partioner.writeRegEdgesRemovedFlatNetlist(Paths.get(outputPath.toString(), designName + "-edge-removed.dcp").toString());
     }
 }

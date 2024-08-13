@@ -17,7 +17,10 @@ public class TestDesignAPI {
 // Test Goal-2: how the logical netlist is mapped to the physical netlist
 // 
     public static void main(String[] args) {
-        String designName = "blue-rdma";
+        // String designName = "blue-udp-direct-rst-ooc-flat";
+        // String designDcpPath = Paths.get("./result2/blue-udp-direct-rst-ooc/", designName + ".dcp").toString();
+
+        String designName = "blue-udp-direct-rst-ooc";
         String designDcpPath = Paths.get("./benchmarks", designName + ".dcp").toString();
         Design circuitDesign = Design.readCheckpoint(designDcpPath);
 
@@ -36,6 +39,7 @@ public class TestDesignAPI {
 
         EDIFCellInst topCellInst = topNetlist.getTopCellInst();
 
+        System.out.println("Design Name: " + circuitDesign.getName());
         System.out.println("Top cell instance name: " + topCellInst.getName());
         for (EDIFPortInst portInst : topCellInst.getPortInsts()) {
             System.out.println(portInst.getName());
@@ -46,7 +50,7 @@ public class TestDesignAPI {
             System.out.println(port.getName());
         }
 
-        EDIFNet resetNet = topCell.getNet("RST_N");
+        EDIFNet resetNet = topCell.getNet("udp_reset");
 
         for (EDIFPortInst portInst : resetNet.getPortInsts()) {
             if (portInst.getCellInst() == null) {
@@ -58,8 +62,16 @@ public class TestDesignAPI {
             }
         }
 
-        
-
+        for (EDIFPort port : topCell.getPorts()) {
+            System.out.println("Port: " + port.getName());
+            for (EDIFNet net : port.getInternalNets()) {
+                if (net == null) {
+                    System.out.println("Net is null.");
+                } else {
+                    System.out.println("  Net: " + net.getName());
+                }
+            }
+        }
     }
     
 }
