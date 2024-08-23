@@ -33,12 +33,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import com.xilinx.rapidwright.examples.PartitionResultsJson;
-
-
-final class IslandPlaceResultJson {
-    public List<Integer> gridDimension;
-    public List<List<Integer>> partitionGroupLocs;
-}
+import com.xilinx.rapidwright.examples.IslandPlaceResultJson;
 
 enum NetSourceType {
     INSIDE_ISLAND,
@@ -817,8 +812,8 @@ public class ParallelIslandPnR {
             }
         }
 
-        for (int x = 0; x < 1; x++) {
-            for (int y = 0; y < 1; y++) {
+        for (int x = 0; x < gridDimension.get(0); x++) {
+            for (int y = 0; y < gridDimension.get(1); y++) {
                 String islandDesignName = String.format("island_placed_%d_%d", x, y);
                 Design islandDesign = Design.readCheckpoint("./pr_result/" + islandDesignName + ".dcp");
 
@@ -829,7 +824,7 @@ public class ParallelIslandPnR {
                     }
                 }
 
-                if (x < gridDimension.get(0)) {
+                if (x < gridDimension.get(0) - 1) {
                     List<EDIFCellInst> rightAnchorCells = vertAnchorRegion2CellMap[x][y];
                     if (rightAnchorCells.size() != 0) {
                         syncAnchorCellToIslandDCP(islandDesign, vertAnchorDesigns[x][y], rightAnchorCells);
@@ -843,17 +838,15 @@ public class ParallelIslandPnR {
                     }
                 }
 
-                if (y < gridDimension.get(1)) {
+                if (y < gridDimension.get(1) - 1) {
                     List<EDIFCellInst> upAnchorCells = horiAnchorRegion2CellMap[x][y];
                     if (upAnchorCells.size() != 0) {
                         syncAnchorCellToIslandDCP(islandDesign, horiAnchorDesigns[x][y], upAnchorCells);
                     }
                 }
-                islandDesign.writeCheckpoint("./pr_resutls/" + islandDesignName + "_updated" + ".dcp");
+                islandDesign.writeCheckpoint("./pr_result/" + islandDesignName + ".dcp");
             }
         }
-
-
     }
 
     private Design syncIslandCellToAnchorDCP(Design anchorDesign, Design[] islandDesigns, List<EDIFCellInst> anchorIncidentIslandCells) {

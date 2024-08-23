@@ -193,7 +193,7 @@ public class CircuitPartioner {
         }
 
         logger.info("");
-        logger.info("## Resource Utilization:");
+        logger.info("## Cell Instances Info:");
         Integer regHierCellInstAmount = 0;
         Integer vccGndHierCellInstAmount = 0;
         Integer otherHierCellInstAmount = 0;
@@ -641,8 +641,7 @@ public class CircuitPartioner {
                     nonRegResetSinkInsts.add(incidentCellInst);
 
                 }
-            }                
-            
+            }
         }
 
         logger.info("## Global Reset Signal Bridges CellInsts: ");

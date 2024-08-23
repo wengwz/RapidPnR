@@ -9,8 +9,9 @@ public class TestParallelPnR {
         String placeJsonPath = "./benchmarks/blue-udp-ooc/legalized_result.json";
 
         ParallelIslandPnR pnr = new ParallelIslandPnR(designFilePath, partitionJsonPath, placeJsonPath);
-        pnr.separateDesignAndCreateDCPs();
+        //pnr.separateDesignAndCreateDCPs();
         //pnr.syncIslandCellToAnchorDCPs();
-        //pnr.syncAnchorCellToIslandDCPs();
+        pnr.syncAnchorCellToIslandDCPs();
+
     }
 }

@@ -3,16 +3,15 @@ package com.xilinx.rapidwright.examples;
 import java.util.List;
 import java.util.Map;
 
-
-final class PartitionGroupJson {
+final class GroupJson {
     public Integer id;
-    public Integer primCellNum;
-    public Map<String, Integer> resourceTypeUtil;
+    public Integer weight;
+    public Map<String, Integer> resTypeUtil;
     public List<Integer> loc;
-    public List<String> groupCellNames;
+    public List<String> grpCellNames;
 }
 
-final class PartitionEdgeJson {
+final class EdgeJson {
     public Integer id;
     public Integer primCellNum;
     public Integer weight; // Number of Partition Edges
@@ -21,8 +20,10 @@ final class PartitionEdgeJson {
     public List<String> edgeCellNames;
 }
 
-public class PartitionResultsJson {
+public class AbstractNetlistJson {
     public Integer totalPrimCellNum;
+    public String rstPortName;
+    public String clkPortName;
     public Map<String, Integer> resourceTypeUtil;
     
     public Integer totalGroupNum;
@@ -34,11 +35,6 @@ public class PartitionResultsJson {
     public List<PartitionGroupJson> partitionGroups;
     public List<PartitionEdgeJson> partitionEdges;
 
-    public String rstPortName;
-    public String clkPortName;
     public List<String> resetTreeCellNames;
     public List<String> resetNetNames;
-    public List<String> clkNetNames;
-    public List<String> ignoreNetNames;
 }
-
