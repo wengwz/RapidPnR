@@ -32,6 +32,7 @@ import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.edif.EDIFTools;
 import com.xilinx.rapidwright.design.Net;
 import com.xilinx.rapidwright.device.Tile;
+import com.xilinx.rapidwright.examples.CustomDesignMerger;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -691,7 +692,7 @@ public class ParallelIterativePnR {
         }
 
         // Unroute Inter-Island Nets
-        logger.info("## Unroute inter-island nets");
+        logger.info("## Sync name of inter-island nets");
         // for (int i = 0; i < gridDimension.get(0) - 1; i++) {
         //     for (int j = 0; j < gridDimension.get(1); j++) {
         //         logger.info("## Unroute vertical boundary: " + i + ", " + j);
@@ -712,47 +713,43 @@ public class ParallelIterativePnR {
         //     }
         // }
 
-        // for (int i = 0; i < gridDimension.get(0); i++) {
-        //     for (int j = 0; j < gridDimension.get(1) - 1; j++) {
-        //         logger.info("## Unroute horizontal boundary: " + i + ", " + j);
-        //         Set<EDIFNet> boundaryNets = horiBoundary2NetMap[i][j];
-        //         List<Integer> upIslandLoc = getUpIslandLocOfHoriBoundary(Arrays.asList(i, j));
-        //         List<Integer> downIslandLoc = getDownIslandLocOfHoriBoundary(Arrays.asList(i, j));
-        //         Design upIslandDesign = routedIslandDesigns[upIslandLoc.get(0)][upIslandLoc.get(1)];
-        //         Design downIslandDesign = routedIslandDesigns[downIslandLoc.get(0)][downIslandLoc.get(1)];
-        //         for (EDIFNet net : boundaryNets) {
-        //             String netName = net.getName();
-        //             logger.info("### Unroute net: " + netName);
-        //             Net upIslandNet = upIslandDesign.getNet(netName);
-        //             Net downIslandNet = downIslandDesign.getNet(netName);
-        //             assert upIslandNet != null || downIslandNet != null;
-        //             if (upIslandNet == null) {
-        //                 EDIFHierNet hierNet = flatTopNetlist.getHierNetFromName(netName);
-        //                 EDIFHierNet parentNet = flatTopNetlist.getParentNet(hierNet);
-        //                 upIslandNet = upIslandDesign.getNet(parentNet.getHierarchicalNetName());
-        //                 downIslandNet.setName(parentNet.getHierarchicalNetName());
-        //                 //logger.info("#### HierParentNet: " + parentNet.getHierarchicalNetName());
-        //             }
-        //             if (downIslandNet == null) {
-        //                 EDIFHierNet hierNet = flatTopNetlist.getHierNetFromName(netName);
-        //                 EDIFHierNet parentNet = flatTopNetlist.getParentNet(hierNet);
-        //                 downIslandNet = downIslandDesign.getNet(parentNet.getHierarchicalNetName());
-        //                 //logger.info("#### HierParentNet: " + parentNet.getHierarchicalNetName());
-        //                 upIslandNet.setName(parentNet.getHierarchicalNetName());
-                        
-        //             }
-        //             upIslandNet.unroute();
-        //             downIslandNet.unroute();
-        //             //assert upIslandNet != null && downIslandNet != null;
-        //         }
-        //     }
-        // }
+        for (int i = 0; i < gridDimension.get(0); i++) {
+            for (int j = 0; j < gridDimension.get(1) - 1; j++) {
+                logger.info("## Sync net name for horizontal boundary: " + i + ", " + j);
+                Set<EDIFNet> boundaryNets = horiBoundary2NetMap[i][j];
+                List<Integer> upIslandLoc = getUpIslandLocOfHoriBoundary(Arrays.asList(i, j));
+                List<Integer> downIslandLoc = getDownIslandLocOfHoriBoundary(Arrays.asList(i, j));
+                Design upIslandDesign = routedIslandDesigns[upIslandLoc.get(0)][upIslandLoc.get(1)];
+                Design downIslandDesign = routedIslandDesigns[downIslandLoc.get(0)][downIslandLoc.get(1)];
+                
+                for (EDIFNet net : boundaryNets) {
+                    String netName = net.getName();
+                    logger.info("### Sync name of net: " + netName);
+                    Net upIslandNet = upIslandDesign.getNet(netName);
+                    Net downIslandNet = downIslandDesign.getNet(netName);
+                    assert upIslandNet != null || downIslandNet != null;
+                    if (upIslandNet == null) {
+                        EDIFHierNet hierNet = flatTopNetlist.getHierNetFromName(netName);
+                        EDIFHierNet parentNet = flatTopNetlist.getParentNet(hierNet);
+                        upIslandNet = upIslandDesign.getNet(parentNet.getHierarchicalNetName());
+                        downIslandNet.setName(parentNet.getHierarchicalNetName());
+                    }
+                    if (downIslandNet == null) {
+                        EDIFHierNet hierNet = flatTopNetlist.getHierNetFromName(netName);
+                        EDIFHierNet parentNet = flatTopNetlist.getParentNet(hierNet);
+                        downIslandNet = downIslandDesign.getNet(parentNet.getHierarchicalNetName());
+                        upIslandNet.setName(parentNet.getHierarchicalNetName());
+                    }
+                    assert upIslandNet != null && downIslandNet != null;
+                }
+            }
+        }
 
         Design mergedDesign = new Design("island_merged", originDesign.getPartName());
         for (int i = 0; i < gridDimension.get(0); i++) {
             for (int j = 0; j < gridDimension.get(1); j++) {
                 logger.info(String.format("## Merge island (%d, %d)", i, j));
-                MergeDesigns.mergeDesigns(mergedDesign, routedIslandDesigns[i][j]);
+                MergeDesigns.mergeDesigns(()->new CustomDesignMerger(), mergedDesign, routedIslandDesigns[i][j]);
             }
         }
 

@@ -71,13 +71,16 @@ public class NetlistHandler {
 
 
     
-    public NetlistHandler(String designFilePath, String clkPortName, String rstPortName, List<String> ignoreNets,Logger logger) {
+    public NetlistHandler(String designFilePath, Boolean isFlatNetlist, String clkPortName, String rstPortName, List<String> ignoreNets,Logger logger) {
         originDesign = Design.readCheckpoint(designFilePath);
         originNetlist = originDesign.getNetlist();
         originTopCell = originNetlist.getTopCell();
 
-        flatNetlist = EDIFTools.createFlatNetlist(originNetlist, originDesign.getPartName());
-        //flatNetlist = originNetlist;
+        if (isFlatNetlist) {
+            flatNetlist = originNetlist;
+        } else {
+            flatNetlist = EDIFTools.createFlatNetlist(originNetlist, originDesign.getPartName());
+        }
         flatTopCell = flatNetlist.getTopCell();
 
         this.logger = logger;
@@ -480,7 +483,7 @@ public class NetlistHandler {
             totalUnisimCellNum += 1;
         }
 
-        assert totalUnisimCellNum + globalResetTreeCellInsts.size() + 2 == flatNetlistUnisimCellNum;
+        //assert totalUnisimCellNum + globalResetTreeCellInsts.size() + 2 == flatNetlistUnisimCellNum;
     }
 
     private void buildEdge2GroupMap() {

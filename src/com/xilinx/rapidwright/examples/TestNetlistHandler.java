@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -27,13 +28,19 @@ public class TestNetlistHandler {
         // String resetPortName = null;
         // String clockPortName = "clk";
 
-        String designName = "fft-16";
-        HashMap<String, List<Integer>> ioConstrs = IOConstraints.fftConstraints;
-        String resetPortName = "i_reset";
-        String clockPortName = "i_clk";
-        List<String> ignoreNets = Arrays.asList("i_ce");
+        // String designName = "fft-16";
+        // HashMap<String, List<Integer>> ioConstrs = IOConstraints.fftConstraints;
+        // String resetPortName = "i_reset";
+        // String clockPortName = "i_clk";
+        // List<String> ignoreNets = Arrays.asList("i_ce");
 
+        String designName = "ispd16-fpga01";
+        Boolean isFlat = true;
+        String resetPortName = null;
+        String clockPortName = "clk1";
+        List<String> ignoreNets = new ArrayList<>();
         Path outputPath = Paths.get("./results", designName);
+
         try {
             Files.createDirectories(outputPath);
         } catch (IOException e) {
@@ -59,16 +66,16 @@ public class TestNetlistHandler {
         }
         logger.setLevel(Level.INFO);
 
-        NetlistHandler netlistHandler = new NetlistHandler(designDcpPath, clockPortName, resetPortName, ignoreNets, logger);
+        NetlistHandler netlistHandler = new NetlistHandler(designDcpPath, isFlat, clockPortName, resetPortName, ignoreNets, logger);
         netlistHandler.printFlatNetlistInfo();
         netlistHandler.printToplevelPorts();
         netlistHandler.printAbstractGroupsInfo();
         netlistHandler.printAbstractEdgesInfo();
 
-        String netlistJsonPath = Paths.get(outputPath.toString(), designName + ".json").toString();
-        netlistHandler.writeProcessedNetlistJson(netlistJsonPath, ioConstrs);
+        //String netlistJsonPath = Paths.get(outputPath.toString(), designName + ".json").toString();
+        //netlistHandler.writeProcessedNetlistJson(netlistJsonPath, ioConstrs);
 
-        String flatDcpPath = Paths.get(outputPath.toString(), designName + "-flat.dcp").toString();
-        netlistHandler.writeFlatNetlistDCP(flatDcpPath);
+        //String flatDcpPath = Paths.get(outputPath.toString(), designName + "-flat.dcp").toString();
+        //netlistHandler.writeFlatNetlistDCP(flatDcpPath);
     }
 }

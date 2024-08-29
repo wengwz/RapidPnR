@@ -14,5 +14,9 @@ interchange/schema/capnp/java.capnp
 *.orig
 
 benchmarks/
+results
+result2/
 result3/
 .vscode/
+pr_result
+pr_result2
