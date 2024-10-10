@@ -87,9 +87,9 @@ public class IOConstraints {
     public static final HashMap<String, List<Integer>> fftConstraints= new HashMap<String, List<Integer>>() {
         {
             put("i_sample[5:0]", Arrays.asList(0,0));
-            put("i_sample[11:6]", Arrays.asList(0,2));
-            put("o_result[8:0]", Arrays.asList(2,0));
-            put("o_result[17:9]", Arrays.asList(2,2));
+            put("i_sample[11:6]", Arrays.asList(0,1));
+            put("o_result[8:0]", Arrays.asList(1,0));
+            put("o_result[17:9]", Arrays.asList(1,1));
         }
     };
 }

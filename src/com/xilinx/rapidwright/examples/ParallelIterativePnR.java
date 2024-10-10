@@ -2,6 +2,9 @@ package com.xilinx.rapidwright.examples;
 
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -11,12 +14,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Random;
+import java.util.logging.ConsoleHandler;
+import java.util.logging.FileHandler;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import com.xilinx.rapidwright.design.Cell;
 import com.xilinx.rapidwright.design.ConstraintGroup;
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.design.NetType;
+import com.xilinx.rapidwright.device.PIP;
 import com.xilinx.rapidwright.design.merge.MergeDesigns;
 import com.xilinx.rapidwright.device.Device;
 import com.xilinx.rapidwright.edif.EDIFCell;
@@ -50,8 +57,8 @@ public class ParallelIterativePnR {
     private Device targetDevice;
 
     // Abstracted Netlist Info
-    private String resetPortName;
-    private String clockPortName;
+    private List<String> resetPortNames;
+    private List<String> clockPortNames;
     private Set<EDIFNet> clockNets;
     private Set<EDIFNet> resetNets;
     private Set<EDIFNet> ignoreNets;
@@ -74,9 +81,14 @@ public class ParallelIterativePnR {
     private Map<EDIFNet, List<Integer>> net2vertBoundaryLocMap;
     private Map<EDIFNet, List<Integer>> net2horiBoundaryLocMap;
 
+    // Configuration Parameters
+    private Integer maxPartPinFanout;
+    private Map<String, Double> clk2PeriodMap = new HashMap<>();
+    private Double partPin2RegDelay;
+
     private static String[][] islandPBlockRanges;
     static {
-        islandPBlockRanges = new String[][]{
+        islandPBlockRanges = new String[][] {
             // {
             //     "SLICE_X55Y120:SLICE_X72Y149 DSP48E2_X8Y48:DSP48E2_X8Y59 RAMB18_X4Y48:RAMB18_X4Y59 RAMB36_X4Y24:RAMB36_X4Y29 URAM288_X1Y32:URAM288_X1Y39",
             //     "SLICE_X55Y150:SLICE_X72Y179 DSP48E2_X8Y60:DSP48E2_X8Y71 RAMB18_X4Y60:RAMB18_X4Y71 RAMB36_X4Y30:RAMB36_X4Y35 URAM288_X1Y40:URAM288_X1Y47"
@@ -85,28 +97,87 @@ public class ParallelIterativePnR {
             //     "SLICE_X73Y120:SLICE_X89Y149 DSP48E2_X9Y48:DSP48E2_X10Y59 RAMB18_X5Y48:RAMB18_X6Y59 RAMB36_X5Y24:RAMB36_X6Y29",
             //     "SLICE_X73Y150:SLICE_X89Y179 DSP48E2_X9Y60:DSP48E2_X10Y71 RAMB18_X5Y60:RAMB18_X6Y71 RAMB36_X5Y30:RAMB36_X6Y35"
             // }
+
+            // FFT
+            // {
+            //     "URAM288_X1Y36:URAM288_X1Y39 DSP48E2_X8Y54:DSP48E2_X8Y59 SLICE_X58Y131:SLICE_X71Y149",
+            //     "URAM288_X1Y40:URAM288_X1Y43 DSP48E2_X8Y60:DSP48E2_X8Y65 SLICE_X58Y150:SLICE_X71Y168"
+            // },
+            // {
+            //     "RAMB36_X5Y27:RAMB36_X6Y29 RAMB18_X5Y54:RAMB18_X6Y59 DSP48E2_X9Y54:DSP48E2_X9Y59 SLICE_X72Y131:SLICE_X86Y149",
+            //     "RAMB36_X5Y30:RAMB36_X6Y32 RAMB18_X5Y60:RAMB18_X6Y65 DSP48E2_X9Y60:DSP48E2_X9Y65 SLICE_X72Y150:SLICE_X86Y168"
+            // }
+
+            // FPGA01
+            // {
+            //     "RAMB36_X7Y12:RAMB36_X12Y29 RAMB18_X7Y24:RAMB18_X12Y59 DSP48E2_X2Y24:DSP48E2_X2Y59 SLICE_X56Y60:SLICE_X100Y149",
+            //     "RAMB36_X7Y30:RAMB36_X12Y47 RAMB18_X7Y60:RAMB18_X12Y95 DSP48E2_X2Y60:DSP48E2_X2Y95 SLICE_X56Y150:SLICE_X100Y239"
+            // },
+            // {
+            //     "RAMB36_X13Y12:RAMB36_X17Y29 RAMB18_X13Y24:RAMB18_X17Y59 DSP48E2_X3Y24:DSP48E2_X3Y59 SLICE_X101Y60:SLICE_X139Y149",
+            //     "RAMB36_X13Y30:RAMB36_X17Y47 RAMB18_X13Y60:RAMB18_X17Y95 DSP48E2_X3Y60:DSP48E2_X3Y95 SLICE_X101Y150:SLICE_X139Y239"
+            // }
+
+            // blue-rdma
+            // {
+            //     "URAM288_X0Y80:URAM288_X1Y119 RAMB36_X0Y60:RAMB36_X4Y89 RAMB18_X0Y120:RAMB18_X4Y179 DSP48E2_X0Y120:DSP48E2_X8Y179 CMACE4_X0Y3:CMACE4_X0Y3 BUFG_GT_SYNC_X0Y75:BUFG_GT_SYNC_X0Y104 BUFG_GT_X0Y120:BUFG_GT_X0Y167 SLICE_X63Y300:SLICE_X73Y449 SLICE_X62Y360:SLICE_X62Y449 SLICE_X48Y300:SLICE_X61Y449 SLICE_X47Y360:SLICE_X47Y449 SLICE_X34Y300:SLICE_X46Y449 SLICE_X33Y360:SLICE_X33Y449 SLICE_X20Y300:SLICE_X32Y449 SLICE_X19Y360:SLICE_X19Y449 SLICE_X9Y300:SLICE_X18Y449 SLICE_X8Y360:SLICE_X8Y449 SLICE_X0Y300:SLICE_X7Y449", 
+            //     "URAM288_X0Y120:URAM288_X1Y159 RAMB36_X0Y90:RAMB36_X4Y119 RAMB18_X0Y180:RAMB18_X4Y239 DSP48E2_X0Y180:DSP48E2_X8Y239 CMACE4_X0Y5:CMACE4_X0Y5 BUFG_GT_SYNC_X0Y120:BUFG_GT_SYNC_X0Y149 BUFG_GT_X0Y192:BUFG_GT_X0Y239 SLICE_X63Y450:SLICE_X73Y599 SLICE_X62Y450:SLICE_X62Y539 SLICE_X48Y450:SLICE_X61Y599 SLICE_X47Y450:SLICE_X47Y539 SLICE_X34Y450:SLICE_X46Y599 SLICE_X33Y450:SLICE_X33Y539 SLICE_X20Y450:SLICE_X32Y599 SLICE_X19Y450:SLICE_X19Y539 SLICE_X9Y450:SLICE_X18Y599 SLICE_X8Y450:SLICE_X8Y539 SLICE_X0Y450:SLICE_X7Y599"
+            // },
+            // {
+            //     "URAM288_X2Y80:URAM288_X3Y119 RAMB36_X5Y60:RAMB36_X9Y89 RAMB18_X5Y120:RAMB18_X9Y179 DSP48E2_X9Y120:DSP48E2_X16Y179 SLICE_X74Y360:SLICE_X141Y449 SLICE_X136Y300:SLICE_X141Y359 SLICE_X120Y300:SLICE_X134Y359 SLICE_X105Y300:SLICE_X118Y359 SLICE_X91Y300:SLICE_X103Y359 SLICE_X79Y300:SLICE_X89Y359 SLICE_X74Y300:SLICE_X77Y359",
+            //     "URAM288_X2Y120:URAM288_X3Y159 RAMB36_X5Y90:RAMB36_X9Y119 RAMB18_X5Y180:RAMB18_X9Y239 LAGUNA_X10Y360:LAGUNA_X19Y479 DSP48E2_X9Y180:DSP48E2_X16Y239 SLICE_X136Y450:SLICE_X141Y599 SLICE_X135Y450:SLICE_X135Y539 SLICE_X120Y450:SLICE_X134Y599 SLICE_X119Y450:SLICE_X119Y539 SLICE_X105Y450:SLICE_X118Y599 SLICE_X104Y450:SLICE_X104Y539 SLICE_X91Y450:SLICE_X103Y599 SLICE_X90Y450:SLICE_X90Y539 SLICE_X79Y450:SLICE_X89Y599 SLICE_X78Y450:SLICE_X78Y539 SLICE_X74Y450:SLICE_X77Y599"
+            // }
+
+            // blue-rdma-resized
+            // {
+            //     "URAM288_X0Y80:URAM288_X1Y119 RAMB36_X0Y60:RAMB36_X6Y89 RAMB18_X0Y120:RAMB18_X6Y179 DSP48E2_X0Y120:DSP48E2_X10Y179 CMACE4_X0Y3:CMACE4_X0Y3 BUFG_GT_SYNC_X0Y75:BUFG_GT_SYNC_X0Y104 BUFG_GT_X0Y120:BUFG_GT_X0Y167 SLICE_X79Y300:SLICE_X87Y449 SLICE_X78Y360:SLICE_X78Y449 SLICE_X63Y300:SLICE_X77Y449 SLICE_X62Y360:SLICE_X62Y449 SLICE_X48Y300:SLICE_X61Y449 SLICE_X47Y360:SLICE_X47Y449 SLICE_X34Y300:SLICE_X46Y449 SLICE_X33Y360:SLICE_X33Y449 SLICE_X20Y300:SLICE_X32Y449 SLICE_X19Y360:SLICE_X19Y449 SLICE_X9Y300:SLICE_X18Y449 SLICE_X8Y360:SLICE_X8Y449 SLICE_X0Y300:SLICE_X7Y449",
+            //     "URAM288_X0Y120:URAM288_X0Y159 RAMB36_X0Y90:RAMB36_X3Y119 RAMB18_X0Y180:RAMB18_X3Y239 DSP48E2_X0Y180:DSP48E2_X7Y239 CMACE4_X0Y5:CMACE4_X0Y5 BUFG_GT_SYNC_X0Y120:BUFG_GT_SYNC_X0Y149 BUFG_GT_X0Y192:BUFG_GT_X0Y239 SLICE_X48Y450:SLICE_X54Y599 SLICE_X47Y450:SLICE_X47Y539 SLICE_X34Y450:SLICE_X46Y599 SLICE_X33Y450:SLICE_X33Y539 SLICE_X20Y450:SLICE_X32Y599 SLICE_X19Y450:SLICE_X19Y539 SLICE_X9Y450:SLICE_X18Y599 SLICE_X8Y450:SLICE_X8Y539 SLICE_X0Y450:SLICE_X7Y599"
+            // },
+            // {
+            //     "URAM288_X2Y80:URAM288_X3Y119 RAMB36_X7Y60:RAMB36_X9Y89 RAMB18_X7Y120:RAMB18_X9Y179 DSP48E2_X11Y120:DSP48E2_X16Y179 SLICE_X136Y300:SLICE_X141Y449 SLICE_X135Y360:SLICE_X135Y449 SLICE_X120Y300:SLICE_X134Y449 SLICE_X119Y360:SLICE_X119Y449 SLICE_X105Y300:SLICE_X118Y449 SLICE_X104Y360:SLICE_X104Y449 SLICE_X91Y300:SLICE_X103Y449 SLICE_X90Y360:SLICE_X90Y449 SLICE_X88Y300:SLICE_X89Y449",
+            //     "URAM288_X1Y120:URAM288_X3Y159 RAMB36_X4Y90:RAMB36_X9Y119 RAMB18_X4Y180:RAMB18_X9Y239 DSP48E2_X8Y180:DSP48E2_X16Y239 SLICE_X136Y450:SLICE_X141Y599 SLICE_X135Y450:SLICE_X135Y539 SLICE_X120Y450:SLICE_X134Y599 SLICE_X119Y450:SLICE_X119Y539 SLICE_X105Y450:SLICE_X118Y599 SLICE_X104Y450:SLICE_X104Y539 SLICE_X91Y450:SLICE_X103Y599 SLICE_X90Y450:SLICE_X90Y539 SLICE_X79Y450:SLICE_X89Y599 SLICE_X78Y450:SLICE_X78Y539 SLICE_X63Y450:SLICE_X77Y599 SLICE_X62Y450:SLICE_X62Y539 SLICE_X55Y450:SLICE_X61Y599"
+            // }
             {
-                "URAM288_X1Y36:URAM288_X1Y39 DSP48E2_X8Y54:DSP48E2_X8Y59 SLICE_X58Y131:SLICE_X71Y149",
-                "URAM288_X1Y40:URAM288_X1Y43 DSP48E2_X8Y60:DSP48E2_X8Y65 SLICE_X58Y150:SLICE_X71Y168"
+                "URAM288_X0Y80:URAM288_X1Y119 RAMB36_X0Y60:RAMB36_X6Y89 RAMB18_X0Y120:RAMB18_X6Y179 DSP48E2_X0Y120:DSP48E2_X10Y179 CMACE4_X0Y3:CMACE4_X0Y3 BUFG_GT_SYNC_X0Y75:BUFG_GT_SYNC_X0Y104 BUFG_GT_X0Y120:BUFG_GT_X0Y167 SLICE_X79Y300:SLICE_X87Y449 SLICE_X78Y360:SLICE_X78Y449 SLICE_X63Y300:SLICE_X77Y449 SLICE_X62Y360:SLICE_X62Y449 SLICE_X48Y300:SLICE_X61Y449 SLICE_X47Y360:SLICE_X47Y449 SLICE_X34Y300:SLICE_X46Y449 SLICE_X33Y360:SLICE_X33Y449 SLICE_X20Y300:SLICE_X32Y449 SLICE_X19Y360:SLICE_X19Y449 SLICE_X9Y300:SLICE_X18Y449 SLICE_X8Y360:SLICE_X8Y449 SLICE_X0Y300:SLICE_X7Y449",
+                "URAM288_X0Y120:URAM288_X1Y159 RAMB36_X3Y90:RAMB36_X6Y119 RAMB18_X3Y180:RAMB18_X6Y239 DSP48E2_X5Y180:DSP48E2_X10Y239 SLICE_X79Y450:SLICE_X87Y599 SLICE_X78Y450:SLICE_X78Y539 SLICE_X63Y450:SLICE_X77Y599 SLICE_X62Y450:SLICE_X62Y539 SLICE_X48Y450:SLICE_X61Y599 SLICE_X47Y450:SLICE_X47Y539 SLICE_X34Y450:SLICE_X46Y599 SLICE_X33Y450:SLICE_X33Y539 SLICE_X31Y450:SLICE_X32Y599"
             },
             {
-                "RAMB36_X5Y27:RAMB36_X6Y29 RAMB18_X5Y54:RAMB18_X6Y59 DSP48E2_X9Y54:DSP48E2_X9Y59 SLICE_X72Y131:SLICE_X86Y149",
-                "RAMB36_X5Y30:RAMB36_X6Y32 RAMB18_X5Y60:RAMB18_X6Y65 DSP48E2_X9Y60:DSP48E2_X9Y65 SLICE_X72Y150:SLICE_X86Y168"
+                "URAM288_X2Y80:URAM288_X3Y119 RAMB36_X7Y60:RAMB36_X11Y89 RAMB18_X7Y120:RAMB18_X11Y179 DSP48E2_X11Y120:DSP48E2_X18Y179 SLICE_X162Y300:SLICE_X168Y449 SLICE_X161Y360:SLICE_X161Y449 SLICE_X151Y300:SLICE_X160Y449 SLICE_X150Y360:SLICE_X150Y449 SLICE_X136Y300:SLICE_X149Y449 SLICE_X135Y360:SLICE_X135Y449 SLICE_X120Y300:SLICE_X134Y449 SLICE_X119Y360:SLICE_X119Y449 SLICE_X105Y300:SLICE_X118Y449 SLICE_X104Y360:SLICE_X104Y449 SLICE_X91Y300:SLICE_X103Y449 SLICE_X90Y360:SLICE_X90Y449 SLICE_X88Y300:SLICE_X89Y449",
+                "URAM288_X2Y120:URAM288_X3Y159 RAMB36_X7Y90:RAMB36_X11Y119 RAMB18_X7Y180:RAMB18_X11Y239 DSP48E2_X11Y180:DSP48E2_X18Y239 SLICE_X162Y450:SLICE_X168Y599 SLICE_X161Y450:SLICE_X161Y539 SLICE_X151Y450:SLICE_X160Y599 SLICE_X150Y450:SLICE_X150Y539 SLICE_X136Y450:SLICE_X149Y599 SLICE_X135Y450:SLICE_X135Y539 SLICE_X120Y450:SLICE_X134Y599 SLICE_X119Y450:SLICE_X119Y539 SLICE_X105Y450:SLICE_X118Y599 SLICE_X104Y450:SLICE_X104Y539 SLICE_X91Y450:SLICE_X103Y599 SLICE_X90Y450:SLICE_X90Y539 SLICE_X88Y450:SLICE_X89Y599"
             }
+
         };
     }
 
     // Island boundary to INT Tile Map
-    private static int[] vertBoundaryX2IntTileXMap = {46};
-    private static int[] horiBoundaryY2IntTileYMap = {149};
+    // private static int[] vertBoundaryX2IntTileXMap = {46};
+    // private static int[] horiBoundaryY2IntTileYMap = {149};
+    // private static int[][] vertBoundaryY2IntTileYRangeMap = {
+    //     {131, 149}, {150, 168}
+    // };
+    // private static int[][] horiBoundaryX2IntTileXMap = {
+    //     {39, 46}, {48, 55}
+    // };
+
+    // private static int[] vertBoundaryX2IntTileXMap = {60};
+    // private static int[] horiBoundaryY2IntTileYMap = {149};
+    // private static int[][] vertBoundaryY2IntTileYRangeMap = {
+    //     {60, 149}, {150, 239}
+    // };
+    // private static int[][] horiBoundaryX2IntTileXMap = {
+    //     {35, 60}, {61, 83}
+    // };
+
+    private static int[] vertBoundaryX2IntTileXMap = {47};
+    private static int[] horiBoundaryY2IntTileYMap = {449};
     private static int[][] vertBoundaryY2IntTileYRangeMap = {
-        {131, 149}, {150, 168}
+        {300, 449}, {450, 599}
     };
     private static int[][] horiBoundaryX2IntTileXMap = {
-        {39, 46}, {48, 55}
+        {0, 47}, {48, 90}
     };
 
-    public ParallelIterativePnR(String designFile, String netlistJsonFile, String placeJsonFile, Logger logger) {
+    public ParallelIterativePnR(String designFile, String netlistJsonFile, String placeJsonFile, Boolean isFlat, Logger logger) {
         this.logger = logger;
 
         originDesign = Design.readCheckpoint(designFile);
@@ -114,18 +185,34 @@ public class ParallelIterativePnR {
         originTopCell = originTopNetlist.getTopCell();
         targetDevice = Device.getDevice(originDesign.getPartName());
 
-        flatTopNetlist = EDIFTools.createFlatNetlist(originTopNetlist, originDesign.getPartName());
-        flatTopCell = flatTopNetlist.getTopCell();
+        if (isFlat) {
+            flatTopNetlist = originTopNetlist;
+            flatTopCell = originTopCell;
+        } else {
+            flatTopNetlist = EDIFTools.createFlatNetlist(originTopNetlist, originDesign.getPartName());
+            flatTopCell = flatTopNetlist.getTopCell();
+        }
 
         // Read abstracted netlist info in JSON format
         readAbstractNetlistJson(netlistJsonFile);
         readIslandPlaceJson(placeJsonFile);
+
+        // Setup configuration parameters
+        maxPartPinFanout = 50;
+        partPin2RegDelay = 0.2;
+        for (String clkPortName : clockPortNames) {
+            clk2PeriodMap.put(clkPortName, 4.0);
+        }
 
         // Build cellInsts to island map
         buildCellInst2IslandMap();
 
         // Build net to boundary map
         buildNet2BoundaryMap();
+
+        // register replication/transfer for high-fanout partition nets
+        Integer fanOutThreshold = 50;
+        regReplicationForBoundaryNet(fanOutThreshold);
     }
 
     private void readAbstractNetlistJson(String jsonFilePath) {
@@ -134,8 +221,8 @@ public class ParallelIterativePnR {
         Gson gson = new GsonBuilder().create();
         try (FileReader reader = new FileReader(jsonFilePath)) {
             PartitionResultsJson partitionResults = gson.fromJson(reader, PartitionResultsJson.class);
-            clockPortName = partitionResults.clkPortName;
-            resetPortName = partitionResults.rstPortName;
+            clockPortNames = partitionResults.clkPortNames;
+            resetPortNames = partitionResults.rstPortNames;
 
             clockNets = new HashSet<>();
             for (String clockNetName : partitionResults.clkNetNames) {
@@ -156,7 +243,8 @@ public class ParallelIterativePnR {
             ignoreNets = new HashSet<>();
             for (String ignoreNetName : partitionResults.ignoreNetNames) {
                 EDIFNet ignoreNet = flatTopCell.getNet(ignoreNetName);
-                assert ignoreNet != null: "Invalid name of ignore net in JSON file: " + ignoreNetName;
+                if (ignoreNet == null) continue;
+                //assert ignoreNet != null: "Invalid name of ignore net in JSON file: " + ignoreNetName;
                 assert !ignoreNets.contains(ignoreNet): "Duplicated ignore net in JSON file: " + ignoreNetName;
                 ignoreNets.add(ignoreNet);
             }
@@ -307,7 +395,159 @@ public class ParallelIterativePnR {
         logger.info("# Complete building net to boundary map");
     }
 
-    private Design generateIslandDCP(Integer x, Integer y, String outputDir) {
+    private void regReplicationForBoundaryNet(Integer threshold) {
+        // TODO: to be refined
+        logger.info("# Start register replication to reduce fanout of boundary nets");
+
+        // Register replication for vertical boundary nets
+        for (int x = 0; x < gridDimension.get(0) - 1; x++) {
+            for (int y = 0; y < gridDimension.get(1); y++) {
+                Set<EDIFNet> boundaryNets = new HashSet<>(vertBoundary2NetMap[x][y]);
+                for (EDIFNet net : boundaryNets) {
+                    List<EDIFPortInst>[] island2PortInsts = new List[2];
+                    island2PortInsts[0] = new ArrayList<>();
+                    island2PortInsts[1] = new ArrayList<>();
+
+                    Integer srcIslandOffset = -1;
+                    EDIFCellInst srcCellInst = null;
+
+                    for (EDIFPortInst portInst : net.getPortInsts()) {
+                        EDIFCellInst cellInst = portInst.getCellInst();
+                        assert cellInst != null;
+                        assert cellInst2IslandMap.containsKey(cellInst);
+                        List<Integer> loc = cellInst2IslandMap.get(cellInst);
+
+                        Integer portOffset = loc.get(0) - x;
+                        if (portInst.isOutput()) {
+                            assert srcCellInst == null;
+                            assert srcIslandOffset == -1;
+                            assert NetlistUtils.isRegisterCellInst(cellInst);
+
+                            srcCellInst = cellInst;
+                            srcIslandOffset = portOffset;
+                        }
+                        island2PortInsts[portOffset].add(portInst);
+                    }
+
+                    assert srcIslandOffset != -1;
+                    Integer dstIslandOffset = 1 - srcIslandOffset;
+                    Integer dstIslandPortNum = island2PortInsts[dstIslandOffset].size();
+                    if (dstIslandPortNum >= threshold) {
+                        logger.info(String.format("Find high-fanout net %s driven by partition pin", net.getName()));
+                        Integer dstIslandX = x + dstIslandOffset;
+                        Integer srcIslandX = x + srcIslandOffset;
+                        if (dstIslandPortNum == net.getPortInsts().size() - 1) {
+                            logger.info(String.format("Move cellInst %s from island (%d, %d) to island (%d, %d)", srcCellInst.getName(), srcIslandX, y, dstIslandX, y));
+                            // No replication if all sink ports are in the same island
+                            cellInst2IslandMap.replace(srcCellInst, Arrays.asList(dstIslandX, y));
+                            island2CellInstMap[srcIslandX][y].remove(srcCellInst);
+                            island2CellInstMap[dstIslandX][y].add(srcCellInst);
+                        } else {
+                            logger.info(String.format("Replicate cellInst %s from island (%d, %d) to island (%d, %d)", srcCellInst.getName(), srcIslandX, y, dstIslandX, y));
+                            String repCellInstName = srcCellInst.getName() + String.format("_island_%d_%d", dstIslandX, y);
+                            EDIFCellInst repCellInst = NetlistUtils.registerReplication(srcCellInst, repCellInstName, island2PortInsts[dstIslandOffset]);
+
+                            cellInst2IslandMap.put(repCellInst, Arrays.asList(dstIslandX, y));
+                            island2CellInstMap[dstIslandX][y].add(repCellInst);
+                        }
+
+                        // update net2boundary map
+                        for (EDIFPortInst portInst : NetlistUtils.getOutPortInstsOf(srcCellInst)) {
+                            EDIFNet fanoutNet = portInst.getNet();
+                            logger.info(String.format(" Remove net %s from vertical boundary (%d, %d)", fanoutNet.getName(), x, y));
+                            net2vertBoundaryLocMap.remove(fanoutNet);
+                            vertBoundary2NetMap[x][y].remove(fanoutNet);
+                        }
+
+                        for (EDIFPortInst portInst : NetlistUtils.getInPortInstsOf(srcCellInst)) {
+                            EDIFNet faninNet = portInst.getNet();
+                            if (faninNet.isGND() || faninNet.isVCC()) continue;
+                            if (resetNets.contains(faninNet)) continue;
+                            if (clockNets.contains(faninNet)) continue;
+
+                            logger.info(String.format(" Add net %s to vertical boundary (%d, %d)", faninNet.getName(), x, y));
+                            net2vertBoundaryLocMap.put(faninNet, Arrays.asList(x, y));
+                            vertBoundary2NetMap[x][y].add(faninNet);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Register replication for horizontal boundary nets
+        for (int x = 0; x < gridDimension.get(0); x++) {
+            for (int y = 0; y < gridDimension.get(1) - 1; y++) {
+                Set<EDIFNet> boundaryNets = new HashSet<>(horiBoundary2NetMap[x][y]);
+                for (EDIFNet net : boundaryNets) {
+                    List<EDIFPortInst>[] island2PortInsts = new List[2];
+                    island2PortInsts[0] = new ArrayList<>();
+                    island2PortInsts[1] = new ArrayList<>();
+
+                    Integer srcIslandOffset = -1;
+                    EDIFCellInst srcCellInst = null;
+
+                    for (EDIFPortInst portInst : net.getPortInsts()) {
+                        EDIFCellInst cellInst = portInst.getCellInst();
+                        assert cellInst2IslandMap.containsKey(cellInst);
+                        List<Integer> loc = cellInst2IslandMap.get(cellInst);
+
+                        Integer portOffset = loc.get(1) - y;
+                        if (portInst.isOutput()) {
+                            assert srcCellInst == null;
+                            assert srcIslandOffset == -1;
+                            assert NetlistUtils.isRegisterCellInst(cellInst);
+
+                            srcCellInst = cellInst;
+                            srcIslandOffset = portOffset;
+                        }
+                        island2PortInsts[portOffset].add(portInst);
+                    }
+
+                    assert srcIslandOffset != -1;
+                    Integer dstIslandOffset = 1 - srcIslandOffset;
+                    Integer dstIslandPortNum = island2PortInsts[dstIslandOffset].size();
+                    if (dstIslandPortNum >= threshold) {
+                        Integer dstIslandY = y + dstIslandOffset;
+                        Integer srcIslandY = y + srcIslandOffset;
+                        if (dstIslandPortNum == net.getPortInsts().size() - 1) {
+                            // No replication if all sink ports are in the same island
+                            cellInst2IslandMap.replace(srcCellInst, Arrays.asList(x, dstIslandY));
+                            island2CellInstMap[x][srcIslandY].remove(srcCellInst);
+                            island2CellInstMap[x][dstIslandY].add(srcCellInst);
+                        } else {
+                            String repCellInstName = srcCellInst.getName() + String.format("_island_%d_%d", x, dstIslandY);
+                            EDIFCellInst repCellInst = NetlistUtils.registerReplication(srcCellInst, repCellInstName, island2PortInsts[dstIslandOffset]);
+
+                            cellInst2IslandMap.put(repCellInst, Arrays.asList(x, dstIslandY));
+                            island2CellInstMap[x][dstIslandY].add(repCellInst);
+                        }
+
+                        // update net2boundary and boundary2net map
+                        for (EDIFPortInst portInst : NetlistUtils.getOutPortInstsOf(srcCellInst)) {
+                            EDIFNet fanoutNet = portInst.getNet();
+                            logger.info(String.format(" Remove net %s from vertical boundary (%d, %d)", fanoutNet.getName(), x, y));
+                            net2horiBoundaryLocMap.remove(fanoutNet);
+                            horiBoundary2NetMap[x][y].remove(fanoutNet);
+                        }
+
+                        for (EDIFPortInst portInst : NetlistUtils.getInPortInstsOf(srcCellInst)) {
+                            EDIFNet faninNet = portInst.getNet();
+                            if (faninNet.isGND() || faninNet.isVCC()) continue;
+                            if (resetNets.contains(faninNet)) continue;
+                            if (clockNets.contains(faninNet)) continue;
+
+                            logger.info(String.format(" Add net %s to vertical boundary (%d, %d)", faninNet.getName(), x, y));
+                            net2horiBoundaryLocMap.put(faninNet, Arrays.asList(x, y));
+                            horiBoundary2NetMap[x][y].add(faninNet);
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+
+    private Design generateIslandDCP(Integer x, Integer y) {
         logger.info(String.format("# Start generating DCP of island (%d, %d)", x, y));
         String designName = String.format("island_%d_%d", x, y);
         String partName = originDesign.getPartName();
@@ -320,13 +560,14 @@ public class ParallelIterativePnR {
         List<EDIFPort> islandRightPortInsts = new ArrayList<>();
         List<EDIFPort> islandUpPortInsts = new ArrayList<>();
         List<EDIFPort> islandDownPortInsts = new ArrayList<>();
+        Map<EDIFPort, Double> port2ExternalDelayMap = new HashMap<>();
 
         // Copy Netlist
         //// Copy CellInsts
         logger.info("## Island Basic Info:");
         logger.info("## The number of cellInsts: " + island2CellInstMap[x][y].size());
         for (EDIFCellInst cellInst : island2CellInstMap[x][y]) {
-            copyCellInstToNewDesign(cellInst, islandDesign);
+            copyCellInstToNewCell(cellInst, islandTopCell);
         }
         
         //// Copy Nets
@@ -362,11 +603,12 @@ public class ParallelIterativePnR {
                 continue;
             }
 
-            EDIFNet newNet = copyNetToNewCell(net, islandTopCell);
+            EDIFNet newNet = copyNetToNewCell(net, islandTopCell, true);
             if (newNet != null && !clockNets.contains(net)) {
                 // check if the net has out of island portInsts
+                Set<EDIFPortInst> outOfIslandPortInsts = new HashSet<>();
                 Set<List<Integer>> outOfIslandPortInstLoc = new HashSet<>();
-                Boolean isNetSrcPortOutOfIsland = false;
+                Boolean isSrcPortOutOfIsland = false;
                 
                 for (EDIFPortInst portInst : net.getPortInsts()) {
                     EDIFCellInst cellInst = portInst.getCellInst();
@@ -375,9 +617,10 @@ public class ParallelIterativePnR {
                     if (islandTopCell.getCellInst(cellInst.getName()) == null) {
                         List<Integer> loc = cellInst2IslandMap.get(cellInst);
                         outOfIslandPortInstLoc.add(loc);
+                        outOfIslandPortInsts.add(portInst);
 
                         if (portInst.isOutput()) {
-                            isNetSrcPortOutOfIsland = true;
+                            isSrcPortOutOfIsland = true;
                         }
                     }
                 }
@@ -389,7 +632,7 @@ public class ParallelIterativePnR {
                     Integer yDistance = y - loc.get(1);
                     assert Math.abs(xDistance) + Math.abs(yDistance) == 1;
 
-                    EDIFDirection dir = isNetSrcPortOutOfIsland ? EDIFDirection.INPUT : EDIFDirection.OUTPUT;
+                    EDIFDirection dir = isSrcPortOutOfIsland ? EDIFDirection.INPUT : EDIFDirection.OUTPUT;
                     String partPinName = getPartitionPinNameFromNet(newNet);
                     EDIFPort newPort = islandTopCell.createPort(partPinName, dir, 1);
                     newNet.createPortInst(newPort);
@@ -405,6 +648,29 @@ public class ParallelIterativePnR {
                     } else if (yDistance == -1) {
                         islandUpPortInsts.add(newPort);
                     }
+
+                    // Predict external delay for partition pin
+                    Double clkPeriod = clk2PeriodMap.get(clockPortNames.get(0));
+                    if (NetlistUtils.isRegFanoutNet(net)) {
+                        if (isSrcPortOutOfIsland) {
+                            port2ExternalDelayMap.put(newPort, partPin2RegDelay);
+                        } else {
+                            port2ExternalDelayMap.put(newPort, clkPeriod - partPin2RegDelay);
+                        }
+                    } else {
+                        if (isSrcPortOutOfIsland) {
+                            //List<EDIFCellInst> incidentCellInsts = NetlistUtils.getCellInstsOfNet(newNet);
+                            //assert incidentCellInsts.size() == 1;
+                            //assert NetlistUtils.isRegisterCellInst(incidentCellInsts.get(0));
+                            port2ExternalDelayMap.put(newPort, clkPeriod - partPin2RegDelay);
+                        } else {
+                            //assert outOfIslandPortInsts.size() == 1: net.getName();
+                            //EDIFPortInst outOfIslandPortInst = outOfIslandPortInsts.iterator().next();
+                            //assert NetlistUtils.isRegisterCellInst(outOfIslandPortInst.getCellInst());
+                            port2ExternalDelayMap.put(newPort, partPin2RegDelay);
+                        }
+                    }
+                    
                 }
             }
         }
@@ -424,80 +690,18 @@ public class ParallelIterativePnR {
 
         //// Add Timing Constraints
         logger.info("## Add Timing Constraints: ");
-        Double clockPeriod = 2.0;
-        addClockConstraint(islandDesign, clockPortName, clockPeriod);
+        addClockConstraint(islandDesign, clockPortNames.get(0), clk2PeriodMap.get(clockPortNames.get(0)));
         List<EDIFPort> allPortInsts = new ArrayList<>();
         allPortInsts.addAll(islandUpPortInsts);
         allPortInsts.addAll(islandDownPortInsts);
         allPortInsts.addAll(islandLeftPortInsts);
         allPortInsts.addAll(islandRightPortInsts);
         for (EDIFPort portInst : allPortInsts) {
-            addIODelayConstraint(islandDesign, portInst, clockPortName, clockPeriod / 2);
+            assert port2ExternalDelayMap.containsKey(portInst);
+            Double delay = port2ExternalDelayMap.get(portInst);
+            addIODelayConstraint(islandDesign, portInst, clockPortNames.get(0), delay);
         }
-        
-        //// Add Initial IO Constraints
-        // logger.info("## Add Initial IO Constraints: ");
-        // List<Integer> upBoundaryLoc = getUpBoundaryLocOfIsland(x, y);
-        // if (upBoundaryLoc != null && !islandUpPortInsts.isEmpty()) {
-        //     logger.info("### Add Up Boundary Constraints: ");
-        //     List<List<Integer>> upBoundaryIntLocs = getIntTilesLocOfHoriBoundary(upBoundaryLoc);
-        //     // List<Integer> midIntLoc = upBoundaryIntLocs.get(upBoundaryIntLocs.size() / 2);
-        //     // for (EDIFPort port : islandUpPortInsts) {
-        //     //     addPartitionPinLocConstraint(islandDesign, port, midIntLoc);
-        //     // }
-        //     Map<EDIFPort, List<Integer>> port2LocMap = randomPartPinAssignment(islandUpPortInsts, upBoundaryIntLocs, 15);
-        //     for (EDIFPort port : port2LocMap.keySet()) {
-        //         addPartitionPinLocConstraint(islandDesign, port, port2LocMap.get(port));
-        //     }
 
-        // }
-
-        // List<Integer> downBoundaryLoc = getDownBoundaryLocOfIsland(x, y);
-        // if (downBoundaryLoc != null && !islandDownPortInsts.isEmpty()) {
-        //     logger.info("### Add Down Boundary Constraints: ");
-        //     List<List<Integer>> downBoundaryIntLocs = getIntTilesLocOfHoriBoundary(downBoundaryLoc);
-        //     // List<Integer> midIntLoc = downBoundaryIntLocs.get(downBoundaryIntLocs.size() / 2);
-        //     // for (EDIFPort port : islandDownPortInsts) {
-        //     //     addPartitionPinLocConstraint(islandDesign, port, midIntLoc);
-        //     // }
-        //     Map<EDIFPort, List<Integer>> port2LocMap = randomPartPinAssignment(islandDownPortInsts, downBoundaryIntLocs, 15);
-        //     for (EDIFPort port : port2LocMap.keySet()) {
-        //         addPartitionPinLocConstraint(islandDesign, port, port2LocMap.get(port));
-        //     }
-        // }
-
-        // List<Integer> leftBoundaryLoc = getLeftBoundaryLocOfIsland(x, y);
-        // if (leftBoundaryLoc != null && !islandLeftPortInsts.isEmpty()) {
-        //     logger.info("### Add Left Boundary Constraints: ");
-        //     List<List<Integer>> leftBoundaryIntLocs = getIntTilesLocOfVertBoundary(leftBoundaryLoc);
-        //     // List<Integer> midIntLoc = leftBoundaryIntLocs.get(leftBoundaryIntLocs.size() / 2);
-        //     // for (EDIFPort port : islandLeftPortInsts) {
-        //     //     addPartitionPinLocConstraint(islandDesign, port, midIntLoc);
-        //     // }
-        //     Map<EDIFPort, List<Integer>> port2LocMap = randomPartPinAssignment(islandLeftPortInsts, leftBoundaryIntLocs, 15);
-        //     for (EDIFPort port : port2LocMap.keySet()) {
-        //         addPartitionPinLocConstraint(islandDesign, port, port2LocMap.get(port));
-        //     }
-        // }
-
-        // List<Integer> rightBoundaryLoc = getRightBoundaryLocOfIsland(x, y);
-        // if (rightBoundaryLoc != null && !islandRightPortInsts.isEmpty()) {
-        //     logger.info("### Add Right Boundary Constraints: ");
-        //     List<List<Integer>> rightBoundaryIntLocs = getIntTilesLocOfVertBoundary(rightBoundaryLoc);
-        //     // List<Integer> midIntLoc = rightBoundaryIntLocs.get(rightBoundaryIntLocs.size() / 2);
-        //     // for (EDIFPort port : islandRightPortInsts) {
-        //     //     addPartitionPinLocConstraint(islandDesign, port, midIntLoc);
-        //     // }
-        //     Map<EDIFPort, List<Integer>> port2LocMap = randomPartPinAssignment(islandRightPortInsts, rightBoundaryIntLocs, 15);
-        //     for (EDIFPort port : port2LocMap.keySet()) {
-        //         addPartitionPinLocConstraint(islandDesign, port, port2LocMap.get(port));
-        //     }
-        // }
-
-        // Write design checkpoint
-        // islandDesign.setAutoIOBuffers(false);
-        // islandDesign.setDesignOutOfContext(true);
-        // islandDesign.writeCheckpoint(String.format("%s/island_%d_%d.dcp", outputDir, x, y));
         logger.info(String.format("# Complete generating DCP of island (%d, %d)", x, y));
         return islandDesign;
     }
@@ -507,7 +711,19 @@ public class ParallelIterativePnR {
         Design[][] islandDesigns = new Design[gridDimension.get(0)][gridDimension.get(1)];
         for (int i = 0; i < gridDimension.get(0); i++) {
             for (int j = 0; j < gridDimension.get(1); j++) {
-               islandDesigns[i][j] = generateIslandDCP(i, j, outputDir);
+               islandDesigns[i][j] = generateIslandDCP(i, j);
+            }
+        }
+
+        // Get location of part pin from floorplanned and routed design
+        Map<EDIFNet, List<Integer>> partPin2IntTileLocMap = extractPartPinLocs(String.format("%s/flat-floorplan-routed.dcp", outputDir));
+
+        // TODO: Adjust partition pin locations for special cases (To be removed)
+        for (List<Integer> loc : partPin2IntTileLocMap.values()) {
+            if (loc.get(1) == 449) {
+                if (loc.get(0) >= 41 && loc.get(0) <= 58) {
+                    loc.set(0, loc.get(0) - 2);
+                }
             }
         }
 
@@ -523,16 +739,23 @@ public class ParallelIterativePnR {
                 List<Integer> rightIslandLoc = getRightIslandLocOfVertBoundary(Arrays.asList(x, y));
                 Design leftIslandDesign = islandDesigns[leftIslandLoc.get(0)][leftIslandLoc.get(1)];
                 Design rightIslandDesign = islandDesigns[rightIslandLoc.get(0)][rightIslandLoc.get(1)];
-                Map<EDIFNet, List<Integer>> net2IntLocMap = randomPartPinAssignment(boundaryNets, intTileLocs, 10);
+                //Map<EDIFNet, List<Integer>> net2IntLocMap = randomPartPinAssignment(boundaryNets, intTileLocs, 20);
+                Map<EDIFNet, List<Integer>> net2IntLocMap = new HashMap<>();
+                for (EDIFNet net : boundaryNets) {
+                    assert partPin2IntTileLocMap.containsKey(net): net.getName();
+                    net2IntLocMap.put(net, partPin2IntTileLocMap.get(net));
+                }
+                
                 setPartPinLocConstraint(net2IntLocMap, leftIslandDesign);
 
-                for (List<Integer> tileLoc : intTileLocs) {
+                for (List<Integer> tileLoc : net2IntLocMap.values()) {
                     tileLoc.set(0, tileLoc.get(0) + 1);
                 }
                 setPartPinLocConstraint(net2IntLocMap, rightIslandDesign);
                 // updatePartPinPosOfBoundary(boundaryNets, intTileDeviceLocs, leftIslandDesign, rightIslandDesign);
             }
         }
+
         //// Add Horizontal Partition Pin Position Constraints
         for (int x = 0; x < gridDimension.get(0); x++) {
             for (int y = 0; y < gridDimension.get(1) - 1; y++) {
@@ -544,10 +767,15 @@ public class ParallelIterativePnR {
                 Design upIslandDesign = islandDesigns[upIslandLoc.get(0)][upIslandLoc.get(1)];
                 Design downIslandDesign = islandDesigns[downIslandLoc.get(0)][downIslandLoc.get(1)];
                 
-                Map<EDIFNet, List<Integer>> net2IntLocMap = randomPartPinAssignment(boundaryNets, intTileLocs, 15);
+                //Map<EDIFNet, List<Integer>> net2IntLocMap = randomPartPinAssignment(boundaryNets, intTileLocs, 15);
+                Map<EDIFNet, List<Integer>> net2IntLocMap = new HashMap<>();
+                for (EDIFNet net : boundaryNets) {
+                    assert partPin2IntTileLocMap.containsKey(net);
+                    net2IntLocMap.put(net, partPin2IntTileLocMap.get(net));
+                }
                 setPartPinLocConstraint(net2IntLocMap, downIslandDesign);
 
-                for (List<Integer> tileLoc : intTileLocs) {
+                for (List<Integer> tileLoc : net2IntLocMap.values()) {
                     tileLoc.set(1, tileLoc.get(1) + 1);
                 }
                 setPartPinLocConstraint(net2IntLocMap, upIslandDesign);
@@ -562,6 +790,231 @@ public class ParallelIterativePnR {
             }
         }
         logger.info("# Complete writing DCPs of all islands");
+    }
+
+    public EDIFCell createIslandCell(Design design, Integer x, Integer y) {
+        logger.info(String.format("# Start creating cell of island (%d, %d)", x, y));
+        String cellName = String.format("island_%d_%d", x, y);
+        EDIFLibrary workLib = design.getNetlist().getWorkLibrary();
+        EDIFCell islandCell = new EDIFCell(workLib, cellName);
+
+        // Copy Netlist
+        //// Copy CellInsts
+        logger.info("## Island Basic Info:");
+        logger.info("## The number of cellInsts: " + island2CellInstMap[x][y].size());
+        for (EDIFCellInst cellInst : island2CellInstMap[x][y]) {
+            copyCellInstToNewCell(cellInst, islandCell);
+        }
+        
+        //// Copy Nets
+        for (EDIFNet net : flatTopCell.getNets()) {
+            if (net.isGND() || net.isVCC()) {
+                copyStaticNetToNewCell(net, islandCell);
+                continue;
+            }
+
+            if (resetNets.contains(net)) { // TODO:
+                EDIFNet gndNet = EDIFTools.getStaticNet(NetType.GND, islandCell, design.getNetlist());
+                for (EDIFPortInst portInst : net.getPortInsts()) {
+                    EDIFCellInst cellInst = portInst.getCellInst();
+                    if (cellInst == null) continue; // Skip top-level port
+                    EDIFCellInst newCellInst = islandCell.getCellInst(cellInst.getName());
+                    if (newCellInst != null && NetlistUtils.isLutCellInst(cellInst)) {
+                        gndNet.createPortInst(portInst.getName(), newCellInst);
+                    }
+                }
+                continue;
+            }
+
+            EDIFNet newNet = copyNetToNewCell(net, islandCell, false);
+            if (newNet != null && !clockNets.contains(net)) {
+                // check if the net has out of island portInsts
+                Boolean hasOutOfIslandPortInst = false;
+                Boolean isNetSrcPortOutOfIsland = false;
+                
+                for (EDIFPortInst portInst : net.getPortInsts()) {
+                    EDIFCellInst cellInst = portInst.getCellInst();
+                    if (cellInst == null) continue; // Skip top-level port
+
+                    if (islandCell.getCellInst(cellInst.getName()) == null) {
+                        hasOutOfIslandPortInst = true;
+                        if (portInst.isOutput()) {
+                            isNetSrcPortOutOfIsland = true;
+                        }
+                    }
+                }
+
+                if (hasOutOfIslandPortInst) {
+                    EDIFDirection dir = isNetSrcPortOutOfIsland ? EDIFDirection.INPUT : EDIFDirection.OUTPUT;
+                    String partPinName = getPartitionPinNameFromNet(newNet);
+                    EDIFPort newPort = islandCell.createPort(partPinName, dir, 1);
+                    newNet.createPortInst(newPort);
+                }
+            }
+        }
+
+        return islandCell;
+    }
+
+    public void generateFloorplanDCP(String outputDir) {
+        logger.info("# Generate checkpoint with floorplan through pblock");
+        Design flatFloorplanDesign = new Design(flatTopNetlist.getName(), originDesign.getPartName());
+        EDIFNetlist flatFloorplanNetlist = flatFloorplanDesign.getNetlist();
+        EDIFCell flatFloorplanTopCell = flatFloorplanNetlist.getTopCell();
+
+        // Create Cell and CellInst for each island
+        logger.info("## Start creating cell and cellInst for each island");
+        EDIFCellInst[][] islandCellInsts = new EDIFCellInst[gridDimension.get(0)][gridDimension.get(1)];
+        for (int i = 0; i < gridDimension.get(0); i++) {
+            for (int j = 0; j < gridDimension.get(1); j++) {
+                EDIFCell islandCell  = createIslandCell(flatFloorplanDesign, i, j);
+                String cellInstName = String.format("island_%d_%d_inst", i, j);
+                islandCellInsts[i][j] = islandCell.createCellInst(cellInstName, flatFloorplanTopCell);
+            }
+        }
+
+        // copy Toplevel Ports
+        logger.info("## Start copying top-level ports");
+        for (EDIFPort port : flatTopCell.getPorts()) {
+            flatFloorplanTopCell.createPort(port);
+        }
+
+        // copy internal nets
+        logger.info("## Start copying internal nets");
+        for (EDIFPort port : flatTopCell.getPorts()) {
+            logger.info(String.format("### Copying internal nets of port %s", port.getName()));
+
+            List<String> portInstNames = new ArrayList<>();
+            if (port.isBus()) {
+                for (int i = 0; i < port.getWidth(); i++) {
+                    portInstNames.add(port.getPortInstNameFromPort(i));
+                }
+            } else {
+                portInstNames.add(port.getName());
+            }
+
+            for (int index = 0; index < portInstNames.size(); index++) {
+                String portInstName = portInstNames.get(index);
+                EDIFNet internalNet = flatTopCell.getInternalNet(portInstName);
+                if (internalNet == null) continue;
+                if (resetNets.contains(internalNet)) continue; // TODO:
+                if (internalNet.isVCC() || internalNet.isGND()) {
+                    NetType staticNetType = internalNet.isVCC() ? NetType.VCC : NetType.GND;
+                    EDIFNet staticNet = EDIFTools.getStaticNet(staticNetType, flatFloorplanTopCell, flatFloorplanNetlist);
+                    if (port.isBus()) {
+                        staticNet.createPortInst(port, index);
+                    } else {
+                        staticNet.createPortInst(port);
+                    }
+                    continue;
+                }
+
+                String islandPortName = portInstName;
+                if (port.isBus()) {
+                    Integer nameIdx = EDIFTools.getPortIndexFromName(portInstName);
+                    islandPortName = String.format("%s_%d", port.getBusName(), nameIdx);
+                }
+
+                List<EDIFPort> incidentPorts = new ArrayList<>();
+                List<EDIFCellInst> incidentCellInsts = new ArrayList<>();
+                for (int x = 0; x < gridDimension.get(0); x++) {
+                    for (int y = 0; y < gridDimension.get(1); y++) {
+                        EDIFCellInst islandCellInst = islandCellInsts[x][y];
+                        EDIFPort islandPort = islandCellInst.getCellType().getPort(islandPortName);
+                        if (islandPort != null) {
+                            incidentPorts.add(islandPort);
+                            incidentCellInsts.add(islandCellInst);
+                        }
+                    }
+                }
+                assert !incidentPorts.isEmpty(): String.format("No port %s found on island cells", portInstName);
+                if (incidentPorts.size() > 1) {
+                    logger.info(String.format("### Internal net %s has %d island ports", internalNet.getName(), incidentPorts.size()));
+                }
+
+                EDIFNet newInternalNet;
+                if (port.isInput()) {
+                    newInternalNet = flatFloorplanTopCell.createNet(internalNet.getName());
+                } else {
+                    newInternalNet = flatFloorplanTopCell.createNet(islandPortName);
+                }
+                EDIFPort newPort = flatFloorplanTopCell.getPort(port.getBusName());
+                assert newPort != null;
+
+                if (newPort.isBus()) {
+                    newInternalNet.createPortInst(newPort, index);
+                } else {
+                    newInternalNet.createPortInst(newPort);
+                }
+
+                for (int i = 0; i < incidentPorts.size(); i++) {
+                    EDIFPort islandPort = incidentPorts.get(i);
+                    EDIFCellInst islandCellInst = incidentCellInsts.get(i);
+                    newInternalNet.createPortInst(islandPort, islandCellInst);
+                }
+            }
+        }
+
+        // create net connecting partition pins
+        for (int i = 0; i < gridDimension.get(0); i++) {
+            for (int j = 0; j < gridDimension.get(1) - 1; j++) {
+                for (EDIFNet net : horiBoundary2NetMap[i][j]) {
+                    EDIFCellInst downCellInst = islandCellInsts[i][j];
+                    EDIFCellInst upCellInst = islandCellInsts[i][j + 1];
+
+                    String islandPortName = getPartitionPinNameFromNet(net);
+
+                    EDIFPort downPort = downCellInst.getCellType().getPort(islandPortName);
+                    EDIFPort upPort = upCellInst.getCellType().getPort(islandPortName);
+                    assert downPort != null && upPort != null;
+
+                    EDIFNet newNet = flatFloorplanTopCell.createNet(net.getName());
+                    newNet.createPortInst(upPort, upCellInst);
+                    newNet.createPortInst(downPort, downCellInst);
+                }
+            }
+        }
+
+        for (int i = 0; i < gridDimension.get(0) - 1; ++i) {
+            for (int j = 0; j < gridDimension.get(1); ++j) {
+                for (EDIFNet net : vertBoundary2NetMap[i][j]) {
+                    EDIFCellInst leftCellInst = islandCellInsts[i][j];
+                    EDIFCellInst rightCellInst = islandCellInsts[i + 1][j];
+
+                    String islandPortName = getPartitionPinNameFromNet(net);
+
+                    EDIFPort leftPort = leftCellInst.getCellType().getPort(islandPortName);
+                    EDIFPort rightPort = rightCellInst.getCellType().getPort(islandPortName);
+                    assert leftPort != null: String.format("Port %s not found on left island cell", islandPortName);
+                    assert rightPort != null: String.format("Port %s not found on right island cell", islandPortName);
+
+                    EDIFNet newNet = flatFloorplanTopCell.createNet(net.getName());
+                    newNet.createPortInst(leftPort, leftCellInst);
+                    newNet.createPortInst(rightPort, rightCellInst);
+                }
+            }
+        }
+
+        // Floorplan design through Pblock constraints
+        for (int i = 0; i < gridDimension.get(0); i++) {
+            for (int j = 0; j < gridDimension.get(1); j++) {
+                String pblockName = String.format("island_%d_%d", i, j);
+                String pblockRange = islandPBlockRanges[i][j];
+                EDIFCellInst islandCellInst = islandCellInsts[i][j];
+                drawPblock(flatFloorplanDesign, pblockName, pblockRange);
+                setPblockProperties(flatFloorplanDesign, pblockName, false, true, true);
+                addCellToPblock(flatFloorplanDesign, pblockName, islandCellInst.getName());
+            }
+        }
+
+        // Add clock constraints
+        Double clockPeriod = 4.0;
+        addClockConstraint(flatFloorplanDesign, clockPortNames.get(0), clockPeriod);
+
+        //
+        flatFloorplanDesign.setAutoIOBuffers(false);
+        flatFloorplanDesign.setDesignOutOfContext(true);
+        flatFloorplanDesign.writeCheckpoint(String.format("%s/flat-floorplan.dcp", outputDir));
     }
 
     private void setPartPinLocConstraint(Map<EDIFNet, List<Integer>> net2LocMap, Design design) {
@@ -761,7 +1214,7 @@ public class ParallelIterativePnR {
         }
 
         Double clockPeriod = 2.0;
-        addClockConstraint(mergedDesign, clockPortName, clockPeriod);
+        addClockConstraint(mergedDesign, clockPortNames.get(0), clockPeriod);
         // Write Checkpoint
         mergedDesign.setAutoIOBuffers(false);
         mergedDesign.setDesignOutOfContext(true);
@@ -851,6 +1304,7 @@ public class ParallelIterativePnR {
         }
 
     }
+
     private List<Integer> getBestIntTileDeviceLoc(List<List<Integer>> intTileLocs, List<List<Integer>> cellLocs) {
         Integer minTotalWL = Integer.MAX_VALUE;
         List<Integer> bestIntTileLoc = null;
@@ -872,14 +1326,17 @@ public class ParallelIterativePnR {
         return bestIntTileLoc;
     }
 
-    private void copyCellInstToNewDesign(EDIFCellInst cellInst, Design newDesign) {
-        EDIFNetlist newNetlist = newDesign.getNetlist();
-        EDIFCell newTopCell = newNetlist.getTopCell();
+    private void copyCellInstToNewCell(EDIFCellInst cellInst, EDIFCell newCell) {
+
+        EDIFNetlist newNetlist = newCell.getLibrary().getNetlist();
+        //EDIFNetlist newNetlist = newDesign.getNetlist();
+        //EDIFCell newTopCell = newNetlist.getTopCell();
         EDIFLibrary newPrimLib = newNetlist.getHDIPrimitivesLibrary();
         EDIFLibrary newWorkLib = newNetlist.getWorkLibrary();
 
         EDIFCell cellType = cellInst.getCellType();
         assert !cellType.isStaticSource();
+        
         EDIFLibrary cellLib = cellType.getLibrary();
         assert cellLib.getNetlist() != newNetlist;
 
@@ -889,7 +1346,7 @@ public class ParallelIterativePnR {
             newCellType = new EDIFCell(targetLib, cellType, cellType.getName());
         }
 
-        EDIFCellInst newCellInst = newTopCell.createChildCellInst(cellInst.getName(), newCellType);
+        EDIFCellInst newCellInst = newCell.createChildCellInst(cellInst.getName(), newCellType);
         newCellInst.setPropertiesMap(cellInst.createDuplicatePropertiesMap());
     }
 
@@ -912,7 +1369,7 @@ public class ParallelIterativePnR {
         }
     }
 
-    private EDIFNet copyNetToNewCell(EDIFNet srcNet, EDIFCell newCell) {
+    private EDIFNet copyNetToNewCell(EDIFNet srcNet, EDIFCell newCell, Boolean copyTopPort) {
         assert !srcNet.isGND() && !srcNet.isVCC();
 
         EDIFNet newNet = null;
@@ -935,19 +1392,31 @@ public class ParallelIterativePnR {
         if (newNet != null) { // copy top-level ports if net has portInsts inside island
             for (EDIFPortInst portInst : incidentTopPortInsts) {
                 EDIFPort port = portInst.getPort();
-                EDIFPort newPort = newCell.getPort(EDIFTools.getRootBusName(port.getName()));
-                if (newPort == null) {
-                    newPort = newCell.createPort(port);
-                }
-                if (newPort.isBus()) {
-                    Integer index = EDIFTools.getPortIndexFromName(portInst.getName());
-                    newNet.createPortInst(newPort, newPort.getPortIndexFromNameIndex(index));
+                
+                if (copyTopPort) {
+                    EDIFPort newPort = newCell.getPort(EDIFTools.getRootBusName(port.getName()));
+                    if (newPort == null) {
+                        newPort = newCell.createPort(port);
+                    }
+                    if (newPort.isBus()) {
+                        Integer index = EDIFTools.getPortIndexFromName(portInst.getName());
+                        newNet.createPortInst(newPort, newPort.getPortIndexFromNameIndex(index));
+                    } else {
+                        newNet.createPortInst(newPort);
+                    }                    
                 } else {
+                    String newPortName = port.getBusName();
+                    if (port.isBus()) {
+                        Integer index = EDIFTools.getPortIndexFromName(portInst.getName());
+                        newPortName = String.format("%s_%d", newPortName, index);
+                    }
+                    
+                    EDIFPort newPort = newCell.createPort(newPortName, port.getDirection(), 1);
                     newNet.createPortInst(newPort);
+                    logger.info(String.format("Create new port %s on cell %s", newPortName, newCell.getName()));
                 }
             }
         }
-
         return newNet;
     }
 
@@ -1047,6 +1516,23 @@ public class ParallelIterativePnR {
         design.addXDCConstraint(String.format("create_pblock %s", pblockName));
         design.addXDCConstraint(String.format("resize_pblock %s -add { %s }", pblockName, pblockRange));
     }
+
+    private void setPblockProperties(Design design, String pblockName, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
+        if (!isSoft) {
+            design.addXDCConstraint(String.format("set_property IS_SOFT FALSE [get_pblocks %s]", pblockName));
+        }
+        if (excludePlace) {
+            design.addXDCConstraint(String.format("set_property EXCLUDE_PLACEMENT true [get_pblocks %s]", pblockName));
+        }
+        if (containRouting) {
+            design.addXDCConstraint(String.format("set_property CONTAIN_ROUTING true [get_pblocks %s]", pblockName));
+        }
+    }
+
+    private void addCellToPblock(Design design, String pblockName, String cellName) {
+        design.addXDCConstraint(String.format("add_cells_to_pblock %s [get_cells %s]", pblockName, cellName));
+    }
+
     private void addPBlockConstraint(Design islandDesign, String pblockName, String pblockRange) {
         islandDesign.addXDCConstraint(String.format("create_pblock %s", pblockName));
         islandDesign.addXDCConstraint(String.format("resize_pblock %s -add { %s }", pblockName, pblockRange));
@@ -1060,7 +1546,7 @@ public class ParallelIterativePnR {
     }
 
     private void addClockConstraint(Design design, String clkPortName, Double period) {
-        String constrString = String.format("create_clock -period %f -name %s [get_ports %s]", period, clockPortName, clockPortName);
+        String constrString = String.format("create_clock -period %f -name %s [get_ports %s]", period, clkPortName, clkPortName);
         design.addXDCConstraint(constrString);
         logger.info("Add Clock Constraint: " + constrString);
     }
@@ -1106,5 +1592,152 @@ public class ParallelIterativePnR {
     private String getPartitionPinNameFromNet(EDIFNet net) {
         String netName = net.getName();
         return netName + "_part_pin";
+    }
+
+    public Map<EDIFNet, List<Integer>> extractPartPinLocs(String routedDcpPath) {
+        logger.info("# Start extracting partition pin locations of routed design");
+
+        Design routedDesign = Design.readCheckpoint(routedDcpPath);
+        Device targetDevice = routedDesign.getDevice();
+        int[][] horiBoundary2RowMap = {{467}, {467}};
+        int[][] vertBoundary2ColMap = {{347, 347}};
+
+
+        Map<EDIFNet, List<Integer>> partPinNet2TileLocMap = new HashMap<>();
+
+        // Extract partition pin locations for horizontal boundary
+        for (int x = 0; x < gridDimension.get(0); x++) {
+            for (int y = 0; y < gridDimension.get(1) - 1; y++) {
+                int horiBoundaryRow = horiBoundary2RowMap[x][y];
+                for (EDIFNet edifNet : horiBoundary2NetMap[x][y]) {
+                    EDIFHierNet routedHierEdifNet = routedDesign.getNetlist().getTopHierCellInst().getNet(edifNet.getName());
+                    EDIFHierNet parentHierNet = routedDesign.getNetlist().getParentNet(routedHierEdifNet);
+                    Net net = routedDesign.getNet(parentHierNet.getHierarchicalNetName());
+                    assert net != null;
+                    
+                    int prePipRow = net.getPIPs().get(0).getTile().getRow();
+                    int prePipCol = net.getPIPs().get(0).getTile().getColumn();
+                    for (PIP pip : net.getPIPs()) {
+                        int curPipRow = pip.getTile().getRow();
+                        int curPipCol = pip.getTile().getColumn();
+                        Boolean crossBoundaryU = (prePipRow > horiBoundaryRow) && (curPipRow < horiBoundaryRow);
+                        Boolean crossBoundaryD = (prePipRow < horiBoundaryRow) && (curPipRow > horiBoundaryRow);
+                        if (crossBoundaryU || crossBoundaryD) {
+                            assert curPipCol == prePipCol: edifNet.getName();
+                            List<Integer> intTileLoc = Arrays.asList(prePipCol, horiBoundaryRow);
+                            partPinNet2TileLocMap.put(edifNet, intTileLoc);
+                            break;
+                        } else if (curPipRow == horiBoundaryRow) {
+                            List<Integer> intTileLoc = Arrays.asList(curPipCol, curPipRow);
+                            partPinNet2TileLocMap.put(edifNet, intTileLoc);
+                            break;
+                        }
+                        prePipRow = curPipRow;
+                        prePipCol = curPipCol;
+                    }
+                }
+            }
+        }
+
+        // Extract partition pin locations for vertical boundary
+        for (int x = 0; x < gridDimension.get(0) - 1; x++) {
+            for (int y = 0; y < gridDimension.get(1); y++) {
+                int vertBoundaryCol = vertBoundary2ColMap[x][y];
+
+                for (EDIFNet edifNet : vertBoundary2NetMap[x][y]) {
+                    EDIFHierNet routedHierEdifNet = routedDesign.getNetlist().getTopHierCellInst().getNet(edifNet.getName());
+                    EDIFHierNet parentHierNet = routedDesign.getNetlist().getParentNet(routedHierEdifNet);
+                    Net net = routedDesign.getNet(parentHierNet.getHierarchicalNetName());
+                    assert net != null;
+                    
+                    int prePipRow = net.getPIPs().get(0).getTile().getRow();
+                    int prePipCol = net.getPIPs().get(0).getTile().getColumn();
+
+                    logger.info("### Extract partition pin location for net: " + edifNet.getName());
+                    for (PIP pip : net.getPIPs()) {
+                        int curPipRow = pip.getTile().getRow();
+                        int curPipCol = pip.getTile().getColumn();
+                        logger.info("### PIP: " + curPipCol + ", " + curPipRow);
+                        Boolean crossBoundaryL = (prePipCol > vertBoundaryCol) && (curPipCol < vertBoundaryCol);
+                        Boolean crossBoundaryR = (prePipCol < vertBoundaryCol) && (curPipCol > vertBoundaryCol);
+                        if (crossBoundaryL || crossBoundaryR) {
+                            assert Math.abs(curPipRow - prePipRow) <= 2: edifNet.getName();
+                            List<Integer> intTileLoc = Arrays.asList(vertBoundaryCol, curPipRow);
+                            partPinNet2TileLocMap.put(edifNet, intTileLoc);
+                            logger.info("### Add partition pin location: " + intTileLoc);
+                            break;
+                        } else if (curPipCol == vertBoundaryCol) {
+                            List<Integer> intTileLoc = Arrays.asList(curPipCol, curPipRow);
+                            partPinNet2TileLocMap.put(edifNet, intTileLoc);
+                            logger.info("### Add partition pin location: " + intTileLoc);
+                            break;
+                        }
+                        prePipRow = curPipRow;
+                        prePipCol = curPipCol;
+                    }
+                }
+            }
+        }
+
+        // Convert tile loc to INT Tile loc
+        for (List<Integer> tileLoc : partPinNet2TileLocMap.values()) {
+            Tile intTile = targetDevice.getTile(tileLoc.get(1), tileLoc.get(0));
+            String tileName = intTile.getName();
+            int xIdx = tileName.indexOf("X");
+            int yIdx = tileName.indexOf("Y");
+            assert tileName.substring(0, xIdx).equals("INT_");
+            String xString = tileName.substring(xIdx + 1, yIdx);
+            String yString = tileName.substring(yIdx + 1);
+
+            tileLoc.set(0, Integer.parseInt(xString));
+            tileLoc.set(1, Integer.parseInt(yString));
+        }
+
+        logger.info("## Total number of partition pins extracted from routed design: " + partPinNet2TileLocMap.size());
+        return partPinNet2TileLocMap;
+    }
+
+
+    public static void main(String[] args) {
+
+        String designName = "blue-rdma-direct-rst-ooc-flat2";
+        Boolean isFlat = true;
+
+        Path outputPath = Paths.get("./pr_result2", designName);
+        try {
+            Files.createDirectories(outputPath);
+        } catch (IOException e) {
+            System.out.println("Fail to Create Directory: " + e.getMessage());
+        }
+        String designDcpPath = String.format("./benchmarks/%s/%s.dcp", designName, designName);
+        String abstractNetlistJsonPath = String.format("./benchmarks/%s/%s.json", designName, designName);
+        String placeJsonPath = String.format("./benchmarks/%s/place_result.json", designName);
+        String logFilePath = Paths.get(outputPath.toString(), designName + ".log").toString();
+        
+        Logger logger = Logger.getLogger(designName);
+        logger.setUseParentHandlers(false);
+        // Setup Logger
+        try {
+            FileHandler fileHandler = new FileHandler(logFilePath, false);
+            fileHandler.setFormatter(new CustomFormatter());
+            logger.addHandler(fileHandler);
+
+            ConsoleHandler consoleHandler = new ConsoleHandler();
+            consoleHandler.setFormatter(new CustomFormatter());
+            logger.addHandler(consoleHandler);
+        } catch (Exception e) {
+            System.out.println("Fail to open log file: " + logFilePath);
+        }
+        logger.setLevel(Level.INFO);
+
+        ParallelIterativePnR pnR = new ParallelIterativePnR(designDcpPath, abstractNetlistJsonPath, placeJsonPath, isFlat, logger);
+
+        //pnR.generateFloorplanDCP(outputPath.toString());
+        pnR.generateIslandDCPs(outputPath.toString());
+        //String placedIslandDcpPrefix = String.format("%s/island_placed", outputPath.toString());
+        //pnR.updatePartitionPinPos(placedIslandDcpPrefix);
+
+        //String routedIslandDcpPrefix = String.format("%s/island_placed_routed", outputPath.toString());
+        //pnR.mergeSeparateDesigns(routedIslandDcpPrefix);
     }
 }

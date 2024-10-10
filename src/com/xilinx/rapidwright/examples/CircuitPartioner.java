@@ -1216,8 +1216,8 @@ public class CircuitPartioner {
         List<String> resetCellNames = globalResetTreeCellInsts.stream().map(cellInst -> cellInst.getName()).collect(Collectors.toList());
         List<String> resetNetNames = globalResetNets.stream().map(net -> net.getName()).collect(Collectors.toList());
         partitionResultsJson.resetTreeCellNames = resetCellNames;
-        partitionResultsJson.rstPortName = rstPortName;
-        partitionResultsJson.clkPortName = clkPortName;
+        partitionResultsJson.rstPortNames = Arrays.asList(rstPortName);
+        partitionResultsJson.clkPortNames = Arrays.asList(clkPortName);
         partitionResultsJson.resetNetNames = resetNetNames;
 
         try {

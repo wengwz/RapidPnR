@@ -196,8 +196,8 @@ public class ParallelIslandPnR {
                 assert cellInst != null: "Invalid Reset Tree CellInst Name: " + cellName;
                 resetTreeCellInsts.add(cellInst);
             }
-            clockPortName = partitionResults.clkPortName;
-            resetPortName = partitionResults.rstPortName;
+            clockPortName = partitionResults.clkPortNames.get(0);
+            resetPortName = partitionResults.rstPortNames.get(0);
             clockNets = new HashSet<>();
             clockNets.add(originTopCell.getNet(clockPortName));
 

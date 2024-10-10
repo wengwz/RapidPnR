@@ -34,8 +34,8 @@ public class PartitionResultsJson {
     public List<PartitionGroupJson> partitionGroups;
     public List<PartitionEdgeJson> partitionEdges;
 
-    public String rstPortName;
-    public String clkPortName;
+    public List<String> rstPortNames;
+    public List<String> clkPortNames;
     public List<String> resetTreeCellNames;
     public List<String> resetNetNames;
     public List<String> clkNetNames;
