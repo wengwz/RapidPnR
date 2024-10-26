@@ -40,6 +40,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
 import com.xilinx.rapidwright.examples.PartitionResultsJson;
+
 import com.xilinx.rapidwright.examples.PartitionGroupJson;
 import com.xilinx.rapidwright.examples.PartitionEdgeJson;
 
@@ -163,6 +164,46 @@ public class NetlistHandler {
         logger.info("## Total number of illegal nets: " + illegalNets.size());
         logger.info("## Number of empty nets: " + emptyNetsNum);
         logger.info("## Number of undriven nets: " + undrivenNetsNum);
+    }
+
+    private void reduceRegisterFanout(int maxRegFanout, int targetFanout) {
+        logger.info("# Start reducing fanout of registered net through register replication:");
+
+        int handledNetNum = 0;
+        List<String> flatTopCellNetNames = flatTopCell.getNets().stream().map(EDIFNet::getName).collect(Collectors.toList());
+        for (String netName : flatTopCellNetNames) {
+            EDIFNet edifNet = flatTopCell.getNet(netName);
+            if (edifNet.isVCC() || edifNet.isGND()) continue;
+            if (globalClockNets.contains(edifNet) || globalResetNets.contains(edifNet)) continue;
+            if (illegalNets.contains(edifNet)) continue;
+
+            int netFanout = edifNet.getPortInsts().size() - 1;
+            if (NetlistUtils.isRegFanoutNet(edifNet) && netFanout > targetFanout) {
+                logger.info("## The fanout of registered net " + edifNet.getName() + ": " + netFanout);
+            }
+            if (NetlistUtils.isRegFanoutNet(edifNet) && netFanout > maxRegFanout) {
+                logger.info("## Reduce fanout of net: " + edifNet.getName() + " with fanout=" + netFanout);
+                EDIFCellInst srcCellInst = NetlistUtils.getSourceCellInstOfNet(edifNet);
+                List<EDIFPortInst> sinkPortInsts = NetlistUtils.getSinkPortsOf(edifNet);
+
+                List<List<EDIFPortInst>> splitSinkPortInsts = new ArrayList<>();
+                for (int i = 0; i < sinkPortInsts.size(); i += targetFanout) {
+                    splitSinkPortInsts.add(sinkPortInsts.subList(i, Math.min(i + targetFanout, sinkPortInsts.size())));
+                }
+
+                for (int i = 1; i < splitSinkPortInsts.size(); i++) {
+                    String repCellInstName = String.format("%s_rep%d", srcCellInst.getName(), i);
+                    NetlistUtils.registerReplication(srcCellInst, repCellInstName, splitSinkPortInsts.get(i));
+                }
+
+                logger.info(String.format("## Replicate %d registers for net %s", splitSinkPortInsts.size() - 1, edifNet.getName()));
+
+                handledNetNum++;
+            }
+        }
+
+        logger.info("## Total number of processed registered nets: " + handledNetNum);
+        logger.info("# Complete reducing fanout of high-fanout registered net");
     }
 
     private void traverseGlobalClockNetwork() {
@@ -406,17 +447,32 @@ public class NetlistHandler {
 
         Map<Integer, Integer> leafCellNum2AmountMap = new HashMap<>();
         Map<Integer, Integer> incidentEdgeNum2AmountMap = new HashMap<>();
+        Map<Integer, Integer> lutNum2AmountMap = new HashMap<>();
 
 
         for (int i = 0; i < group2CellInstMap.size(); i++){
             Set<Integer> grpIncidnetEdges = group2EdgeIdxMap.get(i);
             Integer grpPrimCellNum = group2LeafCellNumMap.get(i);
+            Integer grpLutNum = 0;
+
+            for (Map.Entry<EDIFCell, Integer> entry : group2LeafCellUtilMap.get(i).entrySet()) {
+                if (NetlistUtils.cellType2ResTypeMap.get(entry.getKey().getName()).equals("LUT")) {
+                    grpLutNum += entry.getValue();
+                }
+            }
 
             if (leafCellNum2AmountMap.containsKey(grpPrimCellNum)) {
                 Integer amount = leafCellNum2AmountMap.get(grpPrimCellNum);
                 leafCellNum2AmountMap.replace(grpPrimCellNum, amount + 1);
             } else {
                 leafCellNum2AmountMap.put(grpPrimCellNum, 1);
+            }
+
+            if (lutNum2AmountMap.containsKey(grpLutNum)) {
+                Integer amount = lutNum2AmountMap.get(grpLutNum);
+                lutNum2AmountMap.replace(grpLutNum, amount + 1);
+            } else {
+                lutNum2AmountMap.put(grpLutNum, 1);
             }
 
             Integer grpIncidentEdgeNum = grpIncidnetEdges.size();
@@ -440,6 +496,26 @@ public class NetlistHandler {
             float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalLeafCellNum * 100;
             logger.info(String.format("## Number of groups with %d leaf cells(%f): %d (%f)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
         }
+
+
+        Integer totalLUTNum = 0;
+        for (Map.Entry<EDIFCell, Integer> entry : flatNetlistLeafCellUtil.entrySet()) {
+            if (NetlistUtils.cellType2ResTypeMap.get(entry.getKey().getName()).equals("LUT")) {
+                totalLUTNum += entry.getValue();
+            }
+        }
+        logger.info("## Total Number of LUTs: " + totalLUTNum);
+        logger.info("## Group LUT Distribution:");
+        List<Map.Entry<Integer, Integer>> sortedLUTNum2AmountMap = lutNum2AmountMap.entrySet()
+        .stream()
+        .sorted(Map.Entry.<Integer, Integer>comparingByKey())
+        .collect(Collectors.toList());
+        for (Map.Entry<Integer, Integer> entry : sortedLUTNum2AmountMap) {
+            float singleGroupRatio = (float)entry.getKey() / totalLUTNum * 100;
+            float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalLUTNum * 100;
+            logger.info(String.format("## Number of groups with %d LUTs(%f): %d (%f)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
+        }
+    
 
         Integer totalEdgeNum = edge2GroupIdxMap.size();
         List<Map.Entry<Integer, Integer>> sortedIncidentEdgeNum2AmountMap = incidentEdgeNum2AmountMap.entrySet()
@@ -963,18 +1039,45 @@ public class NetlistHandler {
 
         // Add edge info
         List<PartitionEdgeJson> partitionEdgeJsons = new ArrayList<>();
-        for (int i = 0; i < edge2GroupIdxMap.size(); i++) {
-            PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
-            partitionEdgeJson.id = i;
-            partitionEdgeJson.primCellNum = 1; // Unused field
-            partitionEdgeJson.weight = 1; // Default weight
-            partitionEdgeJson.degree = edge2GroupIdxMap.get(i).size();
-            partitionEdgeJson.incidentGroupIds = new ArrayList<>(edge2GroupIdxMap.get(i));
-            partitionEdgeJson.edgeCellNames = new ArrayList<>(); // Unused field
+        // for (int i = 0; i < edge2GroupIdxMap.size(); i++) {
+        //     PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
+        //     partitionEdgeJson.id = i;
+        //     partitionEdgeJson.primCellNum = 1; // Unused field
+        //     partitionEdgeJson.weight = 1; // Default weight
+        //     partitionEdgeJson.degree = edge2GroupIdxMap.get(i).size();
+        //     partitionEdgeJson.incidentGroupIds = new ArrayList<>(edge2GroupIdxMap.get(i));
+        //     partitionEdgeJson.edgeCellNames = new ArrayList<>(); // Unused field
             
-            partitionEdgeJsons.add(partitionEdgeJson);
+        //     partitionEdgeJsons.add(partitionEdgeJson);
+        // }
+        // partitionResultsJson.partitionEdges = partitionEdgeJsons;
+
+        // Add Constracted Edge Info
+        Map<Set<Integer>, List<Integer>> incidentGroup2EdgeIdMap = new HashMap<>();
+        for (int i = 0; i < edge2GroupIdxMap.size(); i++) {
+            Set<Integer> incidentGroupIds = edge2GroupIdxMap.get(i);
+            if (incidentGroup2EdgeIdMap.containsKey(incidentGroupIds)) {
+                incidentGroup2EdgeIdMap.get(incidentGroupIds).add(i);
+            } else {
+                incidentGroup2EdgeIdMap.put(incidentGroupIds, new ArrayList<>(Arrays.asList(i)));
+            }
         }
+
+        Integer contractedEdgeNum = 0;
+        for (Map.Entry<Set<Integer>, List<Integer>> entry : incidentGroup2EdgeIdMap.entrySet()) {
+            PartitionEdgeJson partitionEdgeJson = new PartitionEdgeJson();
+            partitionEdgeJson.id = contractedEdgeNum;
+            partitionEdgeJson.primCellNum = 1; // Unused field
+            partitionEdgeJson.weight = entry.getValue().size(); // Default weight
+            partitionEdgeJson.degree = entry.getKey().size();
+            partitionEdgeJson.incidentGroupIds = new ArrayList<>(entry.getKey());
+            partitionEdgeJson.edgeCellNames = new ArrayList<>(); // Unused field
+            partitionEdgeJsons.add(partitionEdgeJson);
+            contractedEdgeNum += 1;
+        }
+        partitionResultsJson.totalEdgeNum = contractedEdgeNum;
         partitionResultsJson.partitionEdges = partitionEdgeJsons;
+        logger.info("## Total number of contracted edges: " + contractedEdgeNum);
 
         // Add Reset and Clock Info
         List<String> resetCellNames = globalResetTreeCellInsts.stream().map(cellInst -> cellInst.getName()).collect(Collectors.toList());
@@ -1030,6 +1133,14 @@ public class NetlistHandler {
         flatNetlistDesign.writeCheckpoint(dcpOutputPath);
     }
 
+    public void writeReducedFanoutNetlistDCP(String dcpOutputPath) {
+        reduceRegisterFanout(500, 100);
+        Design reducedFanoutDesign = new Design(flatNetlist.getName(), originDesign.getPartName());
+        reducedFanoutDesign.setNetlist(flatNetlist);
+        reducedFanoutDesign.setAutoIOBuffers(false);
+        reducedFanoutDesign.writeCheckpoint(dcpOutputPath);
+    }
+
     public static void main(String[] args) {
         
         // String designName = "blue-udp-direct-rst-ooc";
@@ -1077,6 +1188,13 @@ public class NetlistHandler {
         // List<String> ignoreNets = new ArrayList<>();
         // Path outputPath = Paths.get("./results", designName);
 
+        String designName = "blue-rdma-direct-rst-ooc-flat2";
+        String clkPortNames = "CLK";
+        String rstPortNames = "RST_N";
+        Boolean isFlat = true;
+        List<String> ignoreNets = new ArrayList<>();
+        Path outputPath = Paths.get("./results", designName);
+
         // String designName = "nax_riscv_ooc";
         // String clockPortName = "clk";
         // String resetPortName = "reset";
@@ -1092,14 +1210,14 @@ public class NetlistHandler {
         // List<String> ignoreNets = new ArrayList<>();
         // Path outputPath = Paths.get("./results", designName);
 
-        String designName = "nvdla-ooc";
-        List<String> clkPortNames = Arrays.asList("core_clk", "csb_clk");
-        // String resetPortName = "reset";
-        List<String> rstPortNames = Arrays.asList("rstn", "csb_rstn");
-        Boolean isFlat = true;
-        List<String> ignoreNets = Arrays.asList("nvdla_top/u_partition_o/u_NV_NVDLA_cdp/u_dp/u_NV_NVDLA_CDP_DP_intp/i___94_n_0", "arb_weight[3]_i_2_n_0");
+        // String designName = "nvdla-ooc";
+        // List<String> clkPortNames = Arrays.asList("core_clk", "csb_clk");
+        // // String resetPortName = "reset";
+        // List<String> rstPortNames = Arrays.asList("rstn", "csb_rstn");
+        // Boolean isFlat = true;
+        // List<String> ignoreNets = Arrays.asList("nvdla_top/u_partition_o/u_NV_NVDLA_cdp/u_dp/u_NV_NVDLA_CDP_DP_intp/i___94_n_0", "arb_weight[3]_i_2_n_0");
 
-        Path outputPath = Paths.get("./results", designName);
+        // Path outputPath = Paths.get("./results", designName);
 
         try {
             Files.createDirectories(outputPath);
@@ -1133,13 +1251,16 @@ public class NetlistHandler {
         netlistHandler.printAbstractGroupsInfo();
         netlistHandler.printAbstractEdgesInfo();
 
-        //String netlistJsonPath = Paths.get(outputPath.toString(), designName + ".json").toString();
-        //netlistHandler.writeProcessedNetlistJson(netlistJsonPath, null);
+        String netlistJsonPath = Paths.get(outputPath.toString(), designName + ".json").toString();
+        netlistHandler.writeProcessedNetlistJson(netlistJsonPath, null);
 
         String flatDcpPath = Paths.get(outputPath.toString(), designName + "-flat.dcp").toString();
         //netlistHandler.removeIOInsts();
         //netlistHandler.removeHighFanoutNets(2000);
         //netlistHandler.writeFlatNetlistDCP(flatDcpPath);
+
+        // String reducedFanoutDcpPath = Paths.get(outputPath.toString(), designName + "-rep.dcp").toString();
+        // netlistHandler.writeReducedFanoutNetlistDCP(reducedFanoutDcpPath);
     }
 
 }

@@ -24,7 +24,7 @@ public class NetlistUtils {
     public static final HashMap<String, String> cellType2ResTypeMap = new HashMap<String, String>() {
         {
             // LUT
-            put("LUT1", "LUT");
+            put("LUT1", "MISCS");
             put("LUT2", "LUT");
             put("LUT3", "LUT");
             put("LUT4", "LUT");
@@ -171,6 +171,12 @@ public class NetlistUtils {
         return cellInsts;
     }
 
+    public static EDIFCellInst getSourceCellInstOfNet(EDIFNet net) {
+        List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
+        assert srcPortInsts.size() == 1;
+        return srcPortInsts.get(0).getCellInst();
+    }
+
     public static List<String> getCellInstsNameOfNet(EDIFNet net) {
         List<String> cellInstNames = new ArrayList<>();
         for (EDIFPortInst portInst : net.getPortInsts()) {
@@ -183,9 +189,10 @@ public class NetlistUtils {
 
     public static Boolean isRegFanoutNet(EDIFNet net) {
         List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
-        if (srcPortInsts.size() != 1) return false;
+        assert srcPortInsts.size() == 1: String.format("Net %s has %d source ports", net.getName(), srcPortInsts.size());
         EDIFPortInst srcPortInst = srcPortInsts.get(0);
         EDIFCellInst srcCellInst = srcPortInst.getCellInst();
+        if (srcCellInst == null) return false;
         return isRegisterCellInst(srcCellInst);
     }
 
@@ -196,6 +203,7 @@ public class NetlistUtils {
         EDIFCell parentCell = originCellInst.getParentCell();
         // check name confliction
         assert parentCell.getCellInst(repCellInstName) == null: String.format("Cell instance %s already exists", repCellInstName);
+        assert parentCell.getNet(repCellInstName) == null: String.format("Net %s already exists", repCellInstName);
 
         EDIFCellInst repCellInst = parentCell.createChildCellInst(repCellInstName, originCellType);
         repCellInst.setPropertiesMap(originCellInst.createDuplicatePropertiesMap());
