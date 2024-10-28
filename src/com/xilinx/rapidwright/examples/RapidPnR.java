@@ -546,18 +546,19 @@ public class RapidPnR {
         logger.info(logMsg("Start running RapidPnR flow"));
 
         newSubStep();
-        // setupEnvironment();
+        setupEnvironment();
 
-        // // Parallel placement and routing of each island
-        // parallelIslandImpl();
+        parallelIslandImplAndMerge();
+        // Parallel placement and routing of each island
+        //parallelIslandImpl();
 
-        // // Iterative refinement of each island
-        // // TODO:
+        // Iterative refinement of each island
+        // TODO:
 
-        // // Merge partitions to form complete design
-        // mergeIslands();
+        // Merge partitions to form complete design
+        //mergeIslands();
 
-        test();
+        //test();
         endSubStep();
         logger.info(logMsg("Complete running RapidPnR flow successfully"));
     }
@@ -604,15 +605,122 @@ public class RapidPnR {
         logger.info(logMsg("Complete parallel implementation of each island"));
     }
 
+    void parallelIslandImplAndMerge() {
+        logger.info(logMsg("Start parallel implementation of each island"));
+
+        JobQueue jobQueue = new JobQueue();
+        newSubStep();
+
+        dirManager.addSubDir(getIslandName(0, 0));
+        dirManager.addSubDir(getIslandName(1, 1));
+        dirManager.addSubDir(getIslandName(0, 1));
+        dirManager.addSubDir(getIslandName(1, 0));
+
+        logger.info("Create DCP for each island");
+        Design island_0_0_design = createDCPforIslandImpl(0, 0);
+        Design island_1_1_design = createDCPforIslandImpl(1, 1);
+        Map<String, EDIFCell> peripheralCells = new HashMap<>();
+        peripheralCells.put(getIslandInstName(0, 0), island_0_0_design.getNetlist().getTopCell());
+        peripheralCells.put(getIslandInstName(1, 1), island_1_1_design.getNetlist().getTopCell());
+
+        Design island_0_1_design = createDCPforIslandImpl(0, 1, peripheralCells);
+        Design island_1_0_design = createDCPforIslandImpl(1, 0, peripheralCells);
+
+        Path workPath = dirManager.getSubDir(getIslandName(0, 0));
+        Path dcpPath = workPath.resolve(vivadoInputDcpName);
+        island_0_0_design.writeCheckpoint(dcpPath.toString());
+
+        workPath = dirManager.getSubDir(getIslandName(1, 1));
+        dcpPath = workPath.resolve(vivadoInputDcpName);
+        island_1_1_design.writeCheckpoint(dcpPath.toString());
+
+        workPath = dirManager.getSubDir(getIslandName(0, 1));
+        dcpPath = workPath.resolve(vivadoInputDcpName);
+        island_0_1_design.writeCheckpoint(dcpPath.toString());
+
+        workPath = dirManager.getSubDir(getIslandName(1, 0));
+        dcpPath = workPath.resolve(vivadoInputDcpName);
+        island_1_0_design.writeCheckpoint(dcpPath.toString());
+
+        createTclCmdFileForIslandImpl2(0, 0, false);
+        createTclCmdFileForIslandImpl2(1, 1, false);
+        createTclCmdFileForIslandImpl2(0, 1, true);
+        createTclCmdFileForIslandImpl2(1, 0, true);
+        //
+        logger.info("Launch Vivado runs for each island");
+        // Job island_0_0_job = JobQueue.createJob();
+        // island_0_0_job.setRunDir(dirManager.getSubDir(getIslandName(0, 0)).toString());
+        // island_0_0_job.setCommand(VivadoTclUtils.launchVivadoTcl(vivadoPath, vivadoBuildTclName));
+        // jobQueue.addJob(island_0_0_job);
+
+        // Job island_1_1_job = JobQueue.createJob();
+        // island_1_1_job.setRunDir(dirManager.getSubDir(getIslandName(1, 1)).toString());
+        // island_1_1_job.setCommand(VivadoTclUtils.launchVivadoTcl(vivadoPath, vivadoBuildTclName));
+        // jobQueue.addJob(island_1_1_job);
+
+        // boolean success = jobQueue.runAllToCompletion();
+
+        // if (!success) {
+        //     logger.severe(logMsg("Fail to complete parallel implementation of each island"));
+        //     System.exit(1);
+        // }
+
+        // Job island_0_1_job = JobQueue.createJob();
+        // island_0_1_job.setRunDir(dirManager.getSubDir(getIslandName(0, 1)).toString());
+        // island_0_1_job.setCommand(VivadoTclUtils.launchVivadoTcl(vivadoPath, vivadoBuildTclName));
+        // jobQueue.addJob(island_0_1_job);
+
+        // Job island_1_0_job = JobQueue.createJob();
+        // island_1_0_job.setRunDir(dirManager.getSubDir(getIslandName(1, 0)).toString());
+        // island_1_0_job.setCommand(VivadoTclUtils.launchVivadoTcl(vivadoPath, vivadoBuildTclName));
+        // jobQueue.addJob(island_1_0_job);
+
+        // boolean success = jobQueue.runAllToCompletion();
+        
+        // if (!success) {
+        //     logger.severe(logMsg("Fail to complete parallel implementation of each island"));
+        //     System.exit(1);
+        // }
+
+        Map<List<Integer>, EDIFCell> island2TopCellMap = new HashMap<>();
+        island2TopCellMap.put(Arrays.asList(0, 0), island_0_0_design.getNetlist().getTopCell());
+        island2TopCellMap.put(Arrays.asList(1, 1), island_1_1_design.getNetlist().getTopCell());
+        //island2TopCellMap.put(Arrays.asList(0, 1), island_0_1_design.getNetlist().getCell(getIslandName(0, 1)));
+        //island2TopCellMap.put(Arrays.asList(1, 0), island_1_0_design.getNetlist().getCell(getIslandName(1, 0)));
+        Design mergeDesign = createDCPforIslandMerge(island2TopCellMap);
+
+        logger.info("Write checkpoint of top design");
+        dirManager.addSubDir(mergeDirName);
+        workPath = dirManager.getSubDir(mergeDirName);
+        dcpPath = workPath.resolve(vivadoInputDcpName);
+        mergeDesign.writeCheckpoint(dcpPath.toString());
+
+        createTclCmdFileForIslandMerge2();
+
+
+        endSubStep();
+
+        logger.info(logMsg("Complete parallel implementation of each island"));
+    }
+
     void mergeIslands() {
         logger.info(logMsg("Start merging islands to form complete design"));
 
         newSubStep();
+        //
         logger.info(logMsg("Create working directory for merging islands"));
         dirManager.addSubDir(mergeDirName);
 
-        createDCPforIslandMerge();
+        //
+        Design mergeDesign = createDCPforIslandMerge();
+        
+        //
+        logger.info("Write checkpoint of top design");
+        Path workPath = dirManager.getSubDir(mergeDirName);
+        Path dcpPath = workPath.resolve(vivadoInputDcpName);
+        mergeDesign.writeCheckpoint(dcpPath.toString());
 
+        //
         createTclCmdFileForIslandMerge();
 
         endSubStep();
@@ -655,13 +763,12 @@ public class RapidPnR {
 
         newSubStep();
         logger.info(logMsg("Create cells and cellInsts for island and boundary"));
-        List<EDIFCellInst> newCellInsts = new ArrayList<>();
         
         EDIFCell islandCell = new EDIFCell(workLib, getIslandName(x, y));
         copyPartialNetlistToCell(islandCell, island2CellInstMap[x][y]);
         EDIFCellInst islandCellInst = islandCell.createCellInst(getIslandInstName(x, y), topCell);
-        newCellInsts.add(islandCellInst);
         VivadoTclUtils.addStrictPblocConstr(topDesign, islandCellInst, islandPBlockRanges[x][y]);
+        //VivadoTclUtils.setPropertyDontTouch(topDesign, islandCellInst);
 
         List<Integer> upBoundaryLoc = getUpBoundaryLocOf(x, y);
         if (upBoundaryLoc != null) {
@@ -671,8 +778,8 @@ public class RapidPnR {
             copyPartialNetlistToCell(newCell, cellInsts);
 
             EDIFCellInst newCellInst = newCell.createCellInst(getHoriBoundaryInstName(x, y), topCell);
-            newCellInsts.add(newCellInst);
             VivadoTclUtils.addStrictPblocConstr(topDesign, newCellInst, horiBoundaryPBlockRanges[upBoundaryLoc.get(0)][upBoundaryLoc.get(1)]);
+            //VivadoTclUtils.setPropertyDontTouch(topDesign, islandCellInst);
         }
 
         List<Integer> downBoundaryLoc = getDownBoundaryLocOf(x, y);
@@ -683,8 +790,8 @@ public class RapidPnR {
             copyPartialNetlistToCell(newCell, cellInsts);
 
             EDIFCellInst newCellInst = newCell.createCellInst(getHoriBoundaryInstName(downBoundaryLoc), topCell);
-            newCellInsts.add(newCellInst);
             VivadoTclUtils.addStrictPblocConstr(topDesign, newCellInst, horiBoundaryPBlockRanges[downBoundaryLoc.get(0)][downBoundaryLoc.get(1)]);
+            //VivadoTclUtils.setPropertyDontTouch(topDesign, islandCellInst);
         }
 
         List<Integer> leftBoundaryLoc = getLeftBoundaryLocOf(x, y);
@@ -695,8 +802,8 @@ public class RapidPnR {
             copyPartialNetlistToCell(newCell, cellInsts);
 
             EDIFCellInst newCellInst = newCell.createCellInst(getVertBoundaryInstName(leftBoundaryLoc), topCell);
-            newCellInsts.add(newCellInst);
             VivadoTclUtils.addStrictPblocConstr(topDesign, newCellInst, vertBoundaryPBlockRanges[leftBoundaryLoc.get(0)][leftBoundaryLoc.get(1)]);
+            //VivadoTclUtils.setPropertyDontTouch(topDesign, islandCellInst);
         }
 
         List<Integer> rightBoundaryLoc = getRightBoundaryLocOf(x, y);
@@ -707,8 +814,9 @@ public class RapidPnR {
             copyPartialNetlistToCell(newCell, cellInsts);
 
             EDIFCellInst newCellInst = newCell.createCellInst(getVertBoundaryInstName(rightBoundaryLoc), topCell);
-            newCellInsts.add(newCellInst);
+            //newCellInsts.add(newCellInst);
             VivadoTclUtils.addStrictPblocConstr(topDesign, newCellInst, vertBoundaryPBlockRanges[rightBoundaryLoc.get(0)][rightBoundaryLoc.get(1)]);
+            //VivadoTclUtils.setPropertyDontTouch(topDesign, newCellInst);
         }
 
         logger.info(logMsg("Create nets connecting cellInsts of boundary and island"));
@@ -739,14 +847,12 @@ public class RapidPnR {
         //     }
         // }
 
+        // add constraints
         logger.info(logMsg("Add Vivado constraints for top design"));
         VivadoTclUtils.addClockConstraint(topDesign, clockPortNames.get(0), clk2PeriodMap.get(clockPortNames.get(0)));
-        // for (EDIFCellInst cellInst : newCellInsts) {
-        //     VivadoTclUtils.setPartitionPropConstr(topDesign, cellInst);
-        // }
         topDesign.setAutoIOBuffers(false);
         topDesign.setDesignOutOfContext(true);
-        VivadoTclUtils.setPartitionPropConstr(topDesign);
+        VivadoTclUtils.setPropertyHDPartition(topDesign);
 
         endSubStep();
 
@@ -764,11 +870,11 @@ public class RapidPnR {
         peripherals.put("island_0_0", island_0_0.getNetlist().getTopCell());
         peripherals.put("island_1_1", island_1_1.getNetlist().getTopCell());
 
-        Design island_0_1 =  createDCPforIslandImplWithContext(0, 1, peripherals);
-        Design island_1_0 = createDCPforIslandImplWithContext(1, 0, peripherals);
+        Design island_0_1 = createDCPforIslandImpl(0, 1, peripherals);
+        Design island_1_0 = createDCPforIslandImpl(1, 0, peripherals);
 
-        peripherals.put("island_0_1", island_0_1.getNetlist().getTopCell());
-        peripherals.put("island_1_0", island_1_0.getNetlist().getTopCell());
+        peripherals.put("island_0_1", island_0_1.getNetlist().getCell(getIslandName(0, 1)));
+        peripherals.put("island_1_0", island_1_0.getNetlist().getCell(getIslandName(1, 0)));
 
         Path workPath = dirManager.addSubDir(getIslandName(0, 1));
         Path dcpPath = workPath.resolve(vivadoInputDcpName);
@@ -778,13 +884,13 @@ public class RapidPnR {
         dcpPath = workPath.resolve(vivadoInputDcpName);
         island_1_0.writeCheckpoint(dcpPath.toString());
 
-        Design completeDesign = createDCPforIslandMerge(peripherals);
-        workPath = dirManager.addSubDir(mergeDirName);
-        dcpPath = workPath.resolve(vivadoInputDcpName);
-        completeDesign.writeCheckpoint(dcpPath.toString());
+        // Design completeDesign = createDCPforIslandMerge(peripherals);
+        // workPath = dirManager.addSubDir(mergeDirName);
+        // dcpPath = workPath.resolve(vivadoInputDcpName);
+        // completeDesign.writeCheckpoint(dcpPath.toString());
     }
 
-    Design createDCPforIslandImplWithContext(int x, int y, Map<String, EDIFCell> peripherals) {
+    Design createDCPforIslandImpl(int x, int y, Map<String, EDIFCell> peripherals) {
         String designName = "island_with_context";
         String partName = originDesign.getPartName();
 
@@ -793,12 +899,14 @@ public class RapidPnR {
         EDIFLibrary workLib = topNetlist.getWorkLibrary();
         EDIFCell topCell = topNetlist.getTopCell();
 
+        // add island cell
         EDIFCell islandCell = new EDIFCell(workLib, getIslandName(x, y));
         copyPartialNetlistToCell(islandCell, island2CellInstMap[x][y]);
         EDIFCellInst islandCellInst = islandCell.createCellInst(getIslandInstName(x, y), topCell);
         VivadoTclUtils.addStrictPblocConstr(topDesign, islandCellInst, islandPBlockRanges[x][y]);
+        VivadoTclUtils.setPropertyHDReConfig(topDesign, islandCellInst);
 
-        // Add peripheral cells to the top design
+        // add peripheral cells as blackboxes
         for (Map.Entry<String, EDIFCell> entry : peripherals.entrySet()) {
             String peripheralCellName = entry.getKey();
             EDIFCell peripheralCell = entry.getValue();
@@ -808,12 +916,12 @@ public class RapidPnR {
                 newCell.createPort(port);
             }
             EDIFCellInst newCellInst = newCell.createCellInst(peripheralCellName, topCell);
-            VivadoTclUtils.setPartitionPropConstr(topDesign, newCellInst);
+            VivadoTclUtils.setPropertyHDPartition(topDesign, newCellInst);
         }
 
         connectCellInstsOfCustomCell(topCell);
 
-        //
+        // add constraints
         VivadoTclUtils.addClockConstraint(topDesign, clockPortNames.get(0), clk2PeriodMap.get(clockPortNames.get(0)));
         topDesign.setAutoIOBuffers(false);
         //topDesign.setDesignOutOfContext(true);
@@ -845,6 +953,7 @@ public class RapidPnR {
             if (readBoundaryImpl) {
                 tclCmdFile.addCmd(VivadoTclUtils.updateCellBlackbox(instName));
                 tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+                tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
             }
             cellInstDcpPathPairs.add(new Pair<>(instName, dcpPath));
         }
@@ -855,6 +964,7 @@ public class RapidPnR {
             if (readBoundaryImpl) {
                 tclCmdFile.addCmd(VivadoTclUtils.updateCellBlackbox(instName));
                 tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+                tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
             }
             cellInstDcpPathPairs.add(new Pair<>(instName, dcpPath));
         }
@@ -865,6 +975,7 @@ public class RapidPnR {
             if (readBoundaryImpl) {
                 tclCmdFile.addCmd(VivadoTclUtils.updateCellBlackbox(instName));
                 tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+                tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
             }
             cellInstDcpPathPairs.add(new Pair<>(instName, dcpPath));
         }
@@ -875,6 +986,7 @@ public class RapidPnR {
             if (readBoundaryImpl) {
                 tclCmdFile.addCmd(VivadoTclUtils.updateCellBlackbox(instName));
                 tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+                tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
             }
             cellInstDcpPathPairs.add(new Pair<>(instName, dcpPath));
         }
@@ -886,9 +998,9 @@ public class RapidPnR {
         String timingRptPath = addSuffixRpt("timing_summary");
         tclCmdFile.addCmd(VivadoTclUtils.reportTimingSummary(0, timingRptPath));
 
-        // for (Pair<String, String> cellInstDcpPath : cellInstDcpPathPairs) {
-        //     tclCmdFile.addCmd(VivadoTclUtils.writeCheckpoint(cellInstDcpPath.getFirst(), cellInstDcpPath.getSecond()));
-        // }
+        for (Pair<String, String> cellInstDcpPath : cellInstDcpPathPairs) {
+            tclCmdFile.addCmd(VivadoTclUtils.writeCheckpoint(true, cellInstDcpPath.getFirst(), cellInstDcpPath.getSecond()));
+        }
 
         tclCmdFile.addCmd(VivadoTclUtils.writeCheckpoint(true, null, vivadoOutputDcpName));
 
@@ -898,7 +1010,78 @@ public class RapidPnR {
         logger.info(logMsg("Complete generating Tcl commands file for " + getIslandName(x, y)));
     }
 
-    private Design createDCPforIslandMerge(Map<String, EDIFCell> cells) {
+    void createTclCmdFileForIslandImpl2(int x, int y, Boolean readPeripheral) {
+        logger.info(logMsg("Start generating file of Tcl commands for" + getIslandName(x, y)));
+
+        Path islandPath = dirManager.getSubDir(getIslandName(x, y));
+        Path resultPath = dirManager.getSubDir(resultDirName);
+
+        Path tclCmdPath = islandPath.resolve(vivadoBuildTclName);
+        TclCmdFile tclCmdFile = new TclCmdFile(tclCmdPath);
+        
+        // Add Tcl commands for Vivado implementation
+        tclCmdFile.addCmd(VivadoTclUtils.setMaxThread(maxThreadNum));
+        tclCmdFile.addCmd(VivadoTclUtils.openCheckpoint(vivadoInputDcpName));
+
+        
+        List<Integer> upIslandLoc = getUpIslandLocOf(x, y);
+        if (upIslandLoc != null && readPeripheral) {
+            String instName = getIslandInstName(upIslandLoc);
+            String dcpPath = resultPath.resolve(getIslandDcpName(upIslandLoc)).toString();
+            
+            tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+            tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
+        }
+
+        List<Integer> downIslandLoc = getDownIslandLocOf(x, y);
+        if (downIslandLoc != null && readPeripheral) {
+            String instName = getIslandInstName(downIslandLoc);
+            String dcpPath = resultPath.resolve(getIslandDcpName(downIslandLoc)).toString();
+            
+            tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+            tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
+        }
+
+        List<Integer> leftIslandLoc = getLeftIslandLocOf(x, y);
+        if (leftIslandLoc != null && readPeripheral) {
+            String instName = getIslandInstName(leftIslandLoc);
+            String dcpPath = resultPath.resolve(getIslandDcpName(leftIslandLoc)).toString();
+            
+            tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+            tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
+        }
+
+        List<Integer> rightIslandLoc = getRightIslandLocOf(x, y);
+        if (rightIslandLoc != null && readPeripheral) {
+            String instName = getIslandInstName(rightIslandLoc);
+            String dcpPath = resultPath.resolve(getIslandDcpName(rightIslandLoc)).toString();
+            
+            tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(instName, dcpPath));
+            tclCmdFile.addCmd(VivadoTclUtils.lockDesign(false, "routing", instName));
+        }
+        
+        tclCmdFile.addCmd(VivadoTclUtils.placeDesign(null));
+        tclCmdFile.addCmd(VivadoTclUtils.routeDesign(null));
+        tclCmdFile.addCmd(VivadoTclUtils.physOptDesign());
+
+        String timingRptPath = addSuffixRpt("timing_summary");
+        tclCmdFile.addCmd(VivadoTclUtils.reportTimingSummary(0, timingRptPath));
+
+        if (readPeripheral) {
+            tclCmdFile.addCmd(VivadoTclUtils.writeCheckpoint(true, getIslandInstName(x, y), resultPath.resolve(getIslandDcpName(x, y)).toString()));
+        } else {
+            tclCmdFile.addCmd(VivadoTclUtils.writeCheckpoint(true, null, resultPath.resolve(getIslandDcpName(x, y)).toString()));
+        }
+
+        tclCmdFile.addCmd(VivadoTclUtils.writeCheckpoint(true, null, vivadoOutputDcpName));
+
+        // write files of Tcl commands
+        tclCmdFile.writeToFile();
+
+        logger.info(logMsg("Complete generating Tcl commands file for " + getIslandName(x, y)));
+    }
+
+    private Design createDCPforIslandMerge(Map<List<Integer>, EDIFCell> cells) {
 
         String designName = "complete_design";
         String partName = originDesign.getPartName();
@@ -908,17 +1091,30 @@ public class RapidPnR {
         EDIFLibrary workLib = topNetlist.getWorkLibrary();
         EDIFCell topCell = topNetlist.getTopCell();
 
-        // Add peripheral cells to the top design
-        for (Map.Entry<String, EDIFCell> entry : cells.entrySet()) {
-            String peripheralCellName = entry.getKey();
-            EDIFCell peripheralCell = entry.getValue();
+        EDIFCell islandCell = new EDIFCell(workLib, getIslandName(0, 1));
+        copyPartialNetlistToCell(islandCell, island2CellInstMap[0][1]);
+        EDIFCellInst islandCellInst = islandCell.createCellInst(getIslandInstName(0, 1), topCell);
+        VivadoTclUtils.addStrictPblocConstr(topDesign, islandCellInst, islandPBlockRanges[0][1]);
 
-            EDIFCell newCell = new EDIFCell(workLib, peripheralCellName);
-            for (EDIFPort port : peripheralCell.getPorts()) {
+        islandCell = new EDIFCell(workLib, getIslandName(1, 0));
+        copyPartialNetlistToCell(islandCell, island2CellInstMap[1][0]);
+        islandCellInst = islandCell.createCellInst(getIslandInstName(1, 0), topCell);
+        VivadoTclUtils.addStrictPblocConstr(topDesign, islandCellInst, islandPBlockRanges[1][0]);
+
+
+        // Add peripheral cells to the top design
+        for (Map.Entry<List<Integer>, EDIFCell> entry : cells.entrySet()) {
+            List<Integer> loc = entry.getKey();
+            EDIFCell cell = entry.getValue();
+
+            EDIFCell newCell = new EDIFCell(workLib, getIslandName(loc));
+            for (EDIFPort port : cell.getPorts()) {
                 newCell.createPort(port);
             }
-            EDIFCellInst newCellInst = newCell.createCellInst(peripheralCellName, topCell);
-            VivadoTclUtils.setPartitionPropConstr(topDesign, newCellInst);
+            EDIFCellInst newCellInst = newCell.createCellInst(getIslandInstName(loc), topCell);
+
+            VivadoTclUtils.setPropertyHDPartition(topDesign, newCellInst);
+            //VivadoTclUtils.setPropertyHDPartition(topDesign, newCellInst);
         }
 
         connectCellInstsOfCustomCell(topCell);
@@ -931,7 +1127,7 @@ public class RapidPnR {
         return topDesign;
     }
 
-    private void createDCPforIslandMerge() {
+    private Design createDCPforIslandMerge() {
         logger.info(logMsg("Start creating DCP for merging design"));
 
         String designName = "merge_island";
@@ -1034,17 +1230,14 @@ public class RapidPnR {
         logger.info("Add Vivado constraints for top design");
         VivadoTclUtils.addClockConstraint(topDesign, clockPortNames.get(0), clk2PeriodMap.get(clockPortNames.get(0)));
         for (EDIFCellInst cellInst : newCellInsts) {
-            VivadoTclUtils.setPartitionPropConstr(topDesign, cellInst);
+            //VivadoTclUtils.setPropertyHDPartition(topDesign, cellInst);
         }
         topDesign.setAutoIOBuffers(false);
 
-        logger.info("Write checkpoint of top design");
-        Path workPath = dirManager.getSubDir(mergeDirName);
-        Path dcpPath = workPath.resolve(vivadoInputDcpName);
-        topDesign.writeCheckpoint(dcpPath.toString());
-
         endSubStep();
         logger.info(logMsg("Complete creating DCP for merging design"));
+
+        return topDesign;
     }
 
     private void createTclCmdFileForIslandMerge() {
@@ -1054,9 +1247,34 @@ public class RapidPnR {
         logger.info(logMsg("Complete creating file of Tcl commands for merging design"));
     }
 
+    private void createTclCmdFileForIslandMerge2() {
+        logger.info(logMsg("Start creating file of Tcl commands for merging design"));
+        Path workDir = dirManager.getSubDir(mergeDirName);
+        Path resultPath = dirManager.getSubDir(resultDirName);
+
+        Path tclCmdPath = workDir.resolve(vivadoBuildTclName);
+        TclCmdFile tclCmdFile = new TclCmdFile(tclCmdPath);
+        
+        // Add Tcl commands for Vivado implementation
+        tclCmdFile.addCmd(VivadoTclUtils.setMaxThread(maxThreadNum));
+        tclCmdFile.addCmd(VivadoTclUtils.openCheckpoint(vivadoInputDcpName));
+
+        tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(getIslandInstName(0, 0), resultPath.resolve(getIslandDcpName(0, 0)).toString()));
+        tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(getIslandInstName(1, 1), resultPath.resolve(getIslandDcpName(1, 1)).toString()));
+        tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(getIslandInstName(0, 1), resultPath.resolve(getIslandDcpName(0, 1)).toString()));
+        tclCmdFile.addCmd(VivadoTclUtils.readCheckPoint(getIslandInstName(1, 0), resultPath.resolve(getIslandDcpName(1, 0)).toString()));
+
+        tclCmdFile.addCmd(VivadoTclUtils.writeCheckpoint(true, null, vivadoOutputDcpName));
+
+        tclCmdFile.writeToFile();
+
+        logger.info(logMsg("Complete creating file of Tcl commands for merging design"));
+    }
+
     private void connectCellInstsOfCustomCell(EDIFCell cell) {
         for (EDIFCellInst cellInst : cell.getCellInsts()) {
             EDIFCell cellType = cellInst.getCellType();
+            assert !cellType.isStaticSource();
 
             for (EDIFPort port : cellType.getPorts()) {
                 String portName = port.getName();
@@ -1236,6 +1454,38 @@ public class RapidPnR {
     private List<Integer> getDownBoundaryLocOf(Integer x, Integer y) {
         if (y - 1 >= 0) {
             return Arrays.asList(x, y - 1);
+        } else {
+            return null;
+        }
+    }
+
+    private List<Integer> getUpIslandLocOf(Integer x, Integer y) {
+        if (y + 1 < gridDimension.get(1)) {
+            return Arrays.asList(x, y + 1);
+        } else {
+            return null;
+        }
+    }
+
+    private List<Integer> getDownIslandLocOf(Integer x, Integer y) {
+        if (y - 1 >= 0) {
+            return Arrays.asList(x, y - 1);
+        } else {
+            return null;
+        }
+    }
+
+    private List<Integer> getLeftIslandLocOf(Integer x, Integer y) {
+        if (x - 1 >= 0) {
+            return Arrays.asList(x - 1, y);
+        } else {
+            return null;
+        }
+    }
+
+    private List<Integer> getRightIslandLocOf(Integer x, Integer y) {
+        if (x + 1 < gridDimension.get(0)) {
+            return Arrays.asList(x + 1, y);
         } else {
             return null;
         }
@@ -1448,7 +1698,7 @@ public class RapidPnR {
     public static void main(String[] args) {
 
         String designName = "blue-rdma-direct-rst-ooc-flat2";
-        String rootDir = "blue-rdma";
+        String rootDir = "blue-rdma-peripheral";
         String designDcpPath = String.format("./benchmarks/%s/%s.dcp", designName, designName);
         String abstractNetlistJsonPath = String.format("./benchmarks/%s/%s.json", designName, designName);
         String placeJsonPath = String.format("./benchmarks/%s/place_result.json", designName);

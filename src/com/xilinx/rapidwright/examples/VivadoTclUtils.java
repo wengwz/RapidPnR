@@ -70,14 +70,6 @@ public class VivadoTclUtils {
         String constrStr = String.format("%s -clock %s %f %s", commandStr, clkName, delay, portName);
         design.addXDCConstraint(constrStr);
     }
-
-    public static void setPartitionPropConstr(Design design) {
-        design.addXDCConstraint(String.format("set_property HD.PARTITION 1 [current_design]"));
-    }
-
-    public static void setPartitionPropConstr(Design design, EDIFCellInst cellInst) {
-        design.addXDCConstraint(String.format("set_property HD.PARTITION 1 [get_cells %s]", cellInst.getName()));
-    }
     
     public static String readCheckPoint(String cellInstName, String dcpPath) {
         return String.format("read_checkpoint -cell %s %s", cellInstName, dcpPath);
@@ -153,6 +145,45 @@ public class VivadoTclUtils {
         }
         return cmdStr;
     }
+
+    public static String setProperty(String propertyName, boolean value, String cellInstName) {
+        String valStr = value ? "TRUE" : "FALSE";
+        String targetName = "[current_design]";
+        if (cellInstName != null) {
+            targetName = String.format("[get_cells %s]", cellInstName);
+        }
+
+        return String.format("set_property %s %s %s", propertyName, valStr, targetName); 
+    }
+
+    public static String setPropertyHDReConfig(boolean val, String cellInstName) {
+        return setProperty("HD.RECONFIGURABLE", val, cellInstName);
+    }
+
+    public static void setPropertyHDReConfig(Design design, EDIFCellInst cellInst) {
+        design.addXDCConstraint(setPropertyHDReConfig(true, cellInst.getName()));
+    }
+
+    public static String setPropertyHDPartition(boolean val, String cellInstName) {
+        return setProperty("HD.PARTITION", val, cellInstName);
+    }
+
+    public static void setPropertyHDPartition(Design design) {
+        design.addXDCConstraint(setPropertyHDPartition(true, null));
+    }
+
+    public static void setPropertyHDPartition(Design design, EDIFCellInst cellInst) {
+        design.addXDCConstraint(setPropertyHDPartition(true, cellInst.getName()));
+    }
+
+    public static String setPropertyDontTouch(boolean val, String cellInstName) {
+        return setProperty("DONT_TOUCH", val, cellInstName);
+    }
+    
+    public static void setPropertyDontTouch(Design design, EDIFCellInst cellInst) {
+        design.addXDCConstraint(setPropertyDontTouch(true, cellInst.getName()));
+    }
+
     public static String exitVivad() {
         return "exit";
     }
