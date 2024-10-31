@@ -12,3 +12,6 @@
 /designs/
 interchange/schema/capnp/java.capnp
 *.orig
+
+workspace
+.vscode

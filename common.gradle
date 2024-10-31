@@ -2,8 +2,8 @@ apply plugin: 'application'
 apply plugin: 'java-library'
 apply plugin: "java-test-fixtures"
 
-sourceCompatibility = 8
-targetCompatibility = 8
+sourceCompatibility = 11
+targetCompatibility = 11
 
 repositories {
     if (project.hasProperty('additionalMavenRepo')) {
@@ -45,6 +45,7 @@ dependencies {
   api 'commons-io:commons-io:2.11.0'
   api 'com.xilinx.rapidwright:qtjambi-'+os+':4.5.2_01'
   api 'com.xilinx.rapidwright:jupyter-kernel-jsr223:1.0.1'
+  implementation 'com.google.code.gson:gson:2.10.1'
   testFixturesApi 'org.junit.jupiter:junit-jupiter-api:5.7.1'
   testFixturesApi 'org.junit.jupiter:junit-jupiter-engine:5.7.1'
   testFixturesApi 'org.junit.jupiter:junit-jupiter-params:5.7.1'
