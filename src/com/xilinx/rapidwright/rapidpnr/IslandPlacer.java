@@ -34,6 +34,7 @@ public class IslandPlacer {
             Map<String, Integer> resTypeUtil;
 
         };
+
         public static class AbstractEdge {
             Integer id;
             Integer weight;
@@ -56,7 +57,7 @@ public class IslandPlacer {
         List<List<Integer>> groupLocs;
     }
 
-    public IslandPlacer(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams params, AbstractNetlist netlist) {
+    public IslandPlacer(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams params) {
         this.logger = logger;
         this.dirManager = dirManager;
 
@@ -65,12 +66,12 @@ public class IslandPlacer {
         this.gridLimit = params.getGridLimit();
         this.islandPlaceResPath = params.getIslandPlaceResPath();
 
-        this.abstractNetlist = netlist;
-
         assert Files.exists(extIslandPlacerPath): "External island placer not found on: " + extIslandPlacerPath.toString();
     }
 
-    public List<Coordinate2D> run() {
+    public List<Coordinate2D> run(AbstractNetlist netlist) {
+
+        this.abstractNetlist = netlist;
 
         if (islandPlaceResPath != null) {
             logger.info("Start reading island placer results from previous run");
@@ -120,7 +121,7 @@ public class IslandPlacer {
         return placeResults;
     }
 
-    public void writeIslandPlacerInputJson(Path inputJsonPath) {
+    private void writeIslandPlacerInputJson(Path inputJsonPath) {
         logger.info("Start writing island placer input in JSON format");
         IslandPlacerInputJson inputJson = new IslandPlacerInputJson();
         inputJson.gridWidth = gridDim.getX();
@@ -168,7 +169,7 @@ public class IslandPlacer {
 
     }
 
-    public List<Coordinate2D> readIslandPlacerOutputJson(Path outputJsonPath) {
+    private List<Coordinate2D> readIslandPlacerOutputJson(Path outputJsonPath) {
 
         logger.info("Start reading island placer output in JSON format");
         List<Coordinate2D> groupPlaceResults = new ArrayList<>();

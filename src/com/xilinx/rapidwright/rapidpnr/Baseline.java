@@ -14,15 +14,16 @@ import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
 public class Baseline {
 
     public static void main(String[] args) {
-        String jsonFilePath = "workspace/json/blue-rdma.json";
+        String jsonFilePath = "workspace/json/blue-rdma-cross-slr.json";
 
         Path paramsPath = Path.of(jsonFilePath).toAbsolutePath();
         DesignParams designParams = new DesignParams(paramsPath);
         DirectoryManager dirManager = new DirectoryManager(designParams.getWorkDir());
+        Path workDir = dirManager.addSubDir("baseline");
 
         HierarchicalLogger logger = new HierarchicalLogger("baseline");
         logger.setUseParentHandlers(false);
-        Path logFilePath = dirManager.getRootDir().resolve("baseline.log");
+        Path logFilePath = workDir.resolve("baseline.log");
         // Setup Logger
         try {
             FileHandler fileHandler = new FileHandler(logFilePath.toString(), false);
@@ -58,7 +59,6 @@ public class Baseline {
 
         // create Vivado project
         logger.info("Create Vivado project");
-        Path workDir = dirManager.addSubDir("baseline");
         VivadoProject vivadoProject = new VivadoProject(inputDesign, workDir, "vivado", tclCmdFile);
         Job vivadoJob = vivadoProject.createVivadoJob();
 
@@ -74,9 +74,9 @@ public class Baseline {
             long duration = (endTime - startTime) / 1000;
             long durationMinute = duration / 60;
             long durationSecond = duration % 60;
-            System.out.println("Baseline flow completed in " + durationMinute + ":" + durationSecond + " minutes");
+            logger.info("Baseline flow completed in " + durationMinute + ":" + durationSecond + " minutes");
         } else {
-            System.out.println("Baseline flow failed");
+            logger.severe("Baseline flow failed");
         }
     }
 }

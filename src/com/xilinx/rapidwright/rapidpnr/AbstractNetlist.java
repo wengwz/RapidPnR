@@ -26,6 +26,7 @@ public class AbstractNetlist {
 
     public List<Set<Integer>> edge2GroupIds;
     public List<Set<Integer>> group2EdgeIds;
+    public List<EDIFNet> edge2OriginNet;
 
     public List<Map<EDIFCell, Integer>> group2LeafCellUtils;
     public List<Integer> group2LeafCellNum;
@@ -63,11 +64,20 @@ public class AbstractNetlist {
 
 
         Set<EDIFNet> visitedNetsCls = new HashSet<>();
+
+        
         // Remove global clock/reset nets and ignore nets
         visitedNetsCls.addAll(netlistDatabase.globalClockNets);
         visitedNetsCls.addAll(netlistDatabase.globalResetNets);
-        visitedNetsCls.addAll(netlistDatabase.ignoreNets);
         visitedNetsCls.addAll(netlistDatabase.illegalNets);
+        // for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
+        //     if (visitedNetsCls.contains(net)) continue;
+
+        //     if (net.getPortInsts().size() > 1000) {
+        //         netlistDatabase.ignoreNets.add(net);
+        //     }
+        // }
+        visitedNetsCls.addAll(netlistDatabase.ignoreNets);
 
         // Remove static nets and reg-fanout nets
         for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
@@ -77,7 +87,6 @@ public class AbstractNetlist {
             List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
             assert srcPortInsts.size() == 1;
             
-            //boolean highFanoutNet = net.getPortInsts().size() > 500;
             EDIFPortInst srcPortInst = srcPortInsts.get(0);
             EDIFCellInst srcCellInst = srcPortInst.getCellInst();
             
@@ -148,6 +157,8 @@ public class AbstractNetlist {
     private void buildEdge2GroupMap() {
         logger.info("Start building timing-path-aware edge-group map:");
         edge2GroupIds = new ArrayList<>();
+        edge2OriginNet = new ArrayList<>();
+        
         for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
             if (net.isVCC() || net.isGND()) continue;
             if (netlistDatabase.globalClockNets.contains(net)) continue;
@@ -169,6 +180,7 @@ public class AbstractNetlist {
                 for (Integer groupIdx : incidentGrpIds) {
                     group2EdgeIds.get(groupIdx).add(edge2GroupIds.size() - 1);
                 }
+                edge2OriginNet.add(net);
             }
         }
 

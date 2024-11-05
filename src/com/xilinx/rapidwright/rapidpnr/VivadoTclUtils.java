@@ -64,6 +64,7 @@ public class VivadoTclUtils {
             String pblockName = "pblock_" + cellInst.getName();
             drawPblock(design, pblockName, pblockRange);
             setPblockProperties(design, pblockName, false, true, true);
+            //setPblockProperties(design, pblockName, false, false, true);
             addCellToPblock(design, pblockName, cellInst.getName());
         }
 

@@ -93,8 +93,8 @@ public class RapidPnR {
     }
 
     private void runIslandPlacement() {
-        IslandPlacer islandPlacer = new IslandPlacer(logger, dirManager, designParams, abstractNetlist);
-        groupPlaceResults = islandPlacer.run();
+        IslandPlacer islandPlacer = new IslandPlacer(logger, dirManager, designParams);
+        groupPlaceResults = islandPlacer.run(abstractNetlist);
     }
 
     private void runPhysicalImplementation() {
@@ -152,8 +152,9 @@ public class RapidPnR {
     }
 
     public static void main(String[] args) {
-        String jsonFilePath = "workspace/json/blue-rdma.json";
+        String jsonFilePath = "workspace/json/blue-rdma-cross-slr.json";
         RapidPnR rapidPnR = new RapidPnR(jsonFilePath);
+        //rapidPnR.run(RapidPnRStep.NETLIST_ABSTRACTION);
         rapidPnR.run(RapidPnRStep.PHYSICAL_IMPLEMENTATION);
     }
 

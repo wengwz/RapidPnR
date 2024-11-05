@@ -239,7 +239,7 @@ public class NetlistDatabase {
                     undrivenNetsNum++;
                 } else if (incidentPortNum == 1) {
                     illegalNets.add(net);
-                    logger.info("None-Sink Net: " + net.getName());
+                    //logger.info("None-Sink Net: " + net.getName());
                     noneSinkNetsNum++;
                 }
             }
