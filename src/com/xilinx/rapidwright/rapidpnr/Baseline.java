@@ -49,7 +49,7 @@ public class Baseline {
         // prepare tcl command file
         logger.info("Prepare tcl command file");
         TclCmdFile tclCmdFile = new TclCmdFile();
-        tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(designParams.getVivadoMaxThreadNum()));
+        tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
         tclCmdFile.addCmd(VivadoTclCmd.placeDesign(null));
         tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
@@ -59,7 +59,7 @@ public class Baseline {
 
         // create Vivado project
         logger.info("Create Vivado project");
-        VivadoProject vivadoProject = new VivadoProject(inputDesign, workDir, "vivado", tclCmdFile);
+        VivadoProject vivadoProject = new VivadoProject(inputDesign, workDir, tclCmdFile);
         Job vivadoJob = vivadoProject.createVivadoJob();
 
         logger.info("Launch baseline flow");

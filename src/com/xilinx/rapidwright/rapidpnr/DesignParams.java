@@ -37,8 +37,7 @@ public class DesignParams {
     private List<List<String>> horiBoundaryPblockRanges;
     private List<List<String>> vertBoundaryPblockRanges;
 
-    private String vivadoCmd = "vivado";
-    private Integer vivadoMaxThreadNum = 16;
+
     private Path extIslandPlacerPath;
     private Path islandPlaceResPath;
 
@@ -128,12 +127,12 @@ public class DesignParams {
             this.horiBoundaryPblockRanges = params.horiBoundaryPblockRanges;
             this.vertBoundaryPblockRanges = params.vertBoundaryPblockRanges;
 
-            //
+            // set parameters related with Vivado
             if (params.vivadoCmd != null) {
-                vivadoCmd = params.vivadoCmd;
+                VivadoProject.setVivadoCmd(params.vivadoCmd);
             }
             if (params.vivadoMaxThreadNum != null) {
-                vivadoMaxThreadNum = params.vivadoMaxThreadNum;
+                VivadoProject.setVivadoMaxThread(params.vivadoMaxThreadNum);
             }
 
             assert params.extIslandPlacerPath != null: "extIslandPlacerPath not found in json file";
@@ -230,16 +229,8 @@ public class DesignParams {
         return Collections.unmodifiableList(vertBoundaryPblockRanges);
     }
 
-    public String getVivadoCmd() {
-        return vivadoCmd;
-    }
-
     public Path getExtIslandPlacerPath() {
         return extIslandPlacerPath;
-    }
-
-    public Integer getVivadoMaxThreadNum() {
-        return vivadoMaxThreadNum;
     }
 
     public Path getIslandPlaceResPath() {

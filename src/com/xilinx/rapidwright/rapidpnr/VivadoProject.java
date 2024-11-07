@@ -10,7 +10,8 @@ import com.xilinx.rapidwright.util.FileTools;
 import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
 
 public class VivadoProject {
-
+    public static String VIVADO_CMD = "vivado";
+    public static int MAX_THREAD = 24;
     public static final String BUILD_TCL_NAME = "vivado_build.tcl";
     public static final String INPUT_DCP_NAME = "input.dcp";
     public static final String OUTPUT_DCP_NAME = "output.dcp";
@@ -18,13 +19,26 @@ public class VivadoProject {
     private Path workDir;
     private Design design;
     private TclCmdFile tclCmdFile;
-    private String vivadoCmd;
 
-    public VivadoProject(Design design, Path workDir, String vivadoCmd, TclCmdFile tclCmdFile) {
+    static public void setVivadoCmd(String vivadoCmd) {
+        VIVADO_CMD = vivadoCmd;
+    }
+
+    static public void setVivadoMaxThread(int maxThread) {
+        MAX_THREAD = maxThread;
+    }
+
+    static public String getVivadoCmd() {
+        return VIVADO_CMD;
+    }
+    static public int getVivadoMaxThread() {
+        return MAX_THREAD;
+    }
+
+    public VivadoProject(Design design, Path workDir, TclCmdFile tclCmdFile) {
         this.design = design;
         this.workDir = workDir;
         this.tclCmdFile = tclCmdFile;
-        this.vivadoCmd = vivadoCmd;
     }
 
     public void setDesign(Design design) {
@@ -37,10 +51,6 @@ public class VivadoProject {
 
     public void setTclCmdFile(TclCmdFile tclCmdFile) {
         this.tclCmdFile = tclCmdFile;
-    }
-
-    public void setVivadoCmd(String vivadoCmd) {
-        this.vivadoCmd = vivadoCmd;
     }
 
     public Job createVivadoJob() {
@@ -59,8 +69,8 @@ public class VivadoProject {
         tclCmdFile.writeToFile(tclPath);
 
         //
-        assert FileTools.isExecutableOnPath(vivadoCmd);
-        String launchVivadoCmd = String.format("%s -mode batch -source %s", vivadoCmd, tclPath.toString());
+        assert FileTools.isExecutableOnPath(VIVADO_CMD);
+        String launchVivadoCmd = String.format("%s -mode batch -source %s", VIVADO_CMD, tclPath.toString());
 
         Job job = new LocalJob();
         job.setRunDir(workDir.toString());

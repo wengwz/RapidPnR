@@ -9,6 +9,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Collection;
 
 import com.xilinx.rapidwright.design.NetType;
 import com.xilinx.rapidwright.edif.EDIFCell;
@@ -22,13 +23,13 @@ import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.edif.EDIFTools;
 import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
 import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
-import com.xilinx.rapidwright.util.FileTools;
 import com.xilinx.rapidwright.util.Pair;
+import com.xilinx.rapidwright.util.RuntimeTracker;
+import com.xilinx.rapidwright.util.RuntimeTrackerTree;
 import com.xilinx.rapidwright.util.JobQueue;
 
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.design.Design;
-import com.xilinx.rapidwright.design.Net;
 
 import static com.xilinx.rapidwright.rapidpnr.NameConvention.*;
 
@@ -68,10 +69,6 @@ public class IncrementalIslandPnR {
 
     String designName;
 
-    ////
-    private String vivadoCmd;
-    private Integer vivadoMaxThreadNum;
-
     //// Layout Informatio
     private Coordinate2D gridDim;
     private Coordinate2D vertBoundaryDim;
@@ -88,9 +85,6 @@ public class IncrementalIslandPnR {
         // Parse Design Parameters
 
         designName = designParams.getDesignName();
-        vivadoCmd = designParams.getVivadoCmd();
-        vivadoMaxThreadNum = designParams.getVivadoMaxThreadNum();
-        assert FileTools.isExecutableOnPath(vivadoCmd): "Invalid Vivado command: " + vivadoCmd;
 
         gridDim = designParams.getGridDim();
         vertBoundaryDim = designParams.getVertBoundaryDim();
@@ -110,6 +104,197 @@ public class IncrementalIslandPnR {
         logger.info("Start running Parallel Iterative PnR flow");
         logger.newSubStep();
 
+        setup(abstractNetlist, groupLocs);
+
+        //
+        Coordinate2D island0Loc = Coordinate2D.of(0, 0);
+        Path island0WorkDir = dirManager.addSubDir(getIslandName(island0Loc));
+        
+        Design island0 = createIslandDesignWithBoundary(new Coordinate2D(0, 0));
+        TclCmdFile island0TclCmdFile = createTclCmdFileForIslandImpl(island0Loc, null, true);
+        VivadoProject island0Project = new VivadoProject(island0, island0WorkDir, island0TclCmdFile);
+        Job island0Job = island0Project.createVivadoJob();
+
+        //
+        Coordinate2D island3Loc = Coordinate2D.of(1, 1);
+        Path island3WorkDir = dirManager.addSubDir(getIslandName(new Coordinate2D(1, 1)));
+        
+        Design island3 = createIslandDesignWithBoundary(island3Loc);
+        TclCmdFile island3TclCmdFile = createTclCmdFileForIslandImpl(island3Loc, null, true);
+        VivadoProject island3Project = new VivadoProject(island3, island3WorkDir, island3TclCmdFile);
+        Job island3Job = island3Project.createVivadoJob();
+
+        //
+        Coordinate2D island1Loc = Coordinate2D.of(1, 0);
+        Path island1WorkDir = dirManager.addSubDir(getIslandName(new Coordinate2D(1, 0)));
+        
+        Design island1 = createIslandDesignWithContext(island1Loc, Arrays.asList(island0, island3), false);
+        Map<Path, Design> island1Context = new HashMap<>();
+        island1Context.put(island0WorkDir, island0);
+        island1Context.put(island3WorkDir, island3);
+        TclCmdFile island1TclCmdFile = createTclCmdFileForIslandImpl(island1Loc, island1Context, true);
+        VivadoProject island1Project = new VivadoProject(island1, island1WorkDir, island1TclCmdFile);
+        Job island1Job = island1Project.createVivadoJob();
+        
+        //
+        Coordinate2D island2Loc = Coordinate2D.of(0, 1);
+        Path island2WorkDir = dirManager.addSubDir(getIslandName(island2Loc));
+
+        Design island2 = createIslandDesignWithContext(island2Loc, Arrays.asList(island1), true);
+        Map<Path, Design> island2Context = new HashMap<>();
+        island2Context.put(island2WorkDir, island2);
+        TclCmdFile island2TclCmdFile = createTclCmdFileForIslandImpl(island2Loc, island2Context, false);
+        VivadoProject island2Project = new VivadoProject(island2, island2WorkDir, island2TclCmdFile);
+        Job island2Job = island2Project.createVivadoJob();
+
+        JobQueue jobQueue = new JobQueue();
+        jobQueue.addJob(island0Job);
+        jobQueue.addJob(island3Job);
+
+
+        RuntimeTrackerTree runTimeTrackerTree = new RuntimeTrackerTree("RapidPnR", false);
+        String rootTimerName = runTimeTrackerTree.getRootRuntimeTracker();
+        //
+        RuntimeTracker subTimer = runTimeTrackerTree.createRuntimeTracker("island0&3", rootTimerName);
+
+        subTimer.start();
+        boolean success = jobQueue.runAllToCompletion();
+        subTimer.stop();
+
+        assert success: "run Vivado Impls of island0 and island3 failed";
+        logger.info("Complete running Vivado Impls of island0 and island3");
+        logger.info(subTimer.toString());
+
+        //
+        subTimer = runTimeTrackerTree.createRuntimeTracker("island1", rootTimerName);
+        jobQueue.addJob(island1Job);
+        subTimer.start();
+        success = jobQueue.runAllToCompletion();
+        subTimer.stop();
+
+        assert success: "run Vivado Impls of island1 failed";
+        logger.info("Complete running Vivado Impls of island1");
+        logger.info(subTimer.toString());
+
+        //
+        subTimer = runTimeTrackerTree.createRuntimeTracker("island2", rootTimerName);
+        jobQueue.addJob(island2Job);
+        subTimer.start();
+        success = jobQueue.runAllToCompletion();
+        subTimer.stop();
+        assert success: "run Vivado Impls of island2 failed";
+
+        logger.info("Complete running Vivado Impls of island2");
+        logger.info(subTimer.toString());
+
+
+        logger.endSubStep();
+        logger.info("Complete running Parallel Iterative PnR flow");
+        logger.info(runTimeTrackerTree.toString());
+    }
+
+    public void runParallelAndComplete(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
+        logger.info("Start running Parallel and then Complete PnR flow");
+        logger.newSubStep();
+
+        Map<Path, Design> path2DesignMap = new HashMap<>();
+        JobQueue jobQueue = new JobQueue();
+        RuntimeTrackerTree runTimeTrackerTree = new RuntimeTrackerTree("Parallel&Complete Flow", false);
+        String rootTimerName = runTimeTrackerTree.getRootRuntimeTracker();
+
+        // island_0_0
+        Coordinate2D island0Loc = Coordinate2D.of(0, 0);
+        Path island0WorkDir = dirManager.addSubDir(getIslandName(island0Loc));
+        Design island0 = createIslandDesignWithBoundary(new Coordinate2D(0, 0));
+        path2DesignMap.put(island0WorkDir, island0);
+        TclCmdFile island0TclCmdFile = createTclCmdFileForIslandImpl(island0Loc, null, true);
+        VivadoProject island0Project = new VivadoProject(island0, island0WorkDir, island0TclCmdFile);
+        Job island0Job = island0Project.createVivadoJob();
+
+        // island_1_1
+        Coordinate2D island3Loc = Coordinate2D.of(1, 1);
+        Path island3WorkDir = dirManager.addSubDir(getIslandName(new Coordinate2D(1, 1)));
+        Design island3 = createIslandDesignWithBoundary(island3Loc);
+        path2DesignMap.put(island3WorkDir, island3);
+        TclCmdFile island3TclCmdFile = createTclCmdFileForIslandImpl(island3Loc, null, true);
+        VivadoProject island3Project = new VivadoProject(island3, island3WorkDir, island3TclCmdFile);
+        Job island3Job = island3Project.createVivadoJob();
+
+        // complete design
+        List<Coordinate2D> islandLocs = Arrays.asList(Coordinate2D.of(0, 1), Coordinate2D.of(1, 0));
+        Path completeWorkDir = dirManager.addSubDir("complete");
+        Design completeDesign = createCompleteDesignWithContext(islandLocs, path2DesignMap.values());
+        TclCmdFile completeTclCmdFile = createTclCmdFileForIslandImpl(null, path2DesignMap, false);
+        VivadoProject completeProject = new VivadoProject(completeDesign, completeWorkDir, completeTclCmdFile);
+
+        
+        RuntimeTracker subTimer = runTimeTrackerTree.createRuntimeTracker("island0&3", rootTimerName);
+        jobQueue.addJob(island0Job);
+        jobQueue.addJob(island3Job);
+
+        subTimer.start();
+        boolean success = jobQueue.runAllToCompletion();
+        subTimer.stop();
+        assert success: "run parallel Vivado impls of island0 and island3 failed";
+        logger.info("Complete running parallel Vivado impls of island0 and island3");
+        logger.info(subTimer.toString());
+
+        subTimer = runTimeTrackerTree.createRuntimeTracker("complete", rootTimerName);
+        jobQueue.addJob(completeProject.createVivadoJob());
+        subTimer.start();
+        success = jobQueue.runAllToCompletion();
+        subTimer.stop();
+        assert success: "run Vivado impls of complete design failed";
+        logger.info("Complete running Vivado impls of complete design");
+        logger.info(subTimer.toString());
+
+
+        logger.endSubStep();
+
+        logger.info("Complete running Parallel and then Complete PnR flow");
+        logger.info(runTimeTrackerTree.toString());
+    }
+
+    public void runCompleteDesign(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
+        logger.info("Start running PnR flow for floorplanned complete design");
+        logger.newSubStep();
+
+        setup(abstractNetlist, groupLocs);
+
+
+        Path workDir = dirManager.addSubDir("complete");
+        Design completeDesign = createCompleteDesign();
+
+        // create tcl comand file
+        TclCmdFile tclCmdFile = new TclCmdFile();
+        tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
+        tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
+        tclCmdFile.addCmd(VivadoTclCmd.placeDesign(null));
+        tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
+        tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
+        tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, "timing.rpt"));
+        tclCmdFile.addCmd(VivadoTclCmd.writeCheckpoint(false, null, VivadoProject.OUTPUT_DCP_NAME));
+
+        VivadoProject vivadoProject = new VivadoProject(completeDesign, workDir, tclCmdFile);
+        Job vivadoJob = vivadoProject.createVivadoJob();
+
+        for (int x = 0; x < gridDim.getX(); x++) {
+            for (int y = 0; y < gridDim.getY(); y++) {
+                Design islanDesign = createIslandDesign(Coordinate2D.of(x, y));
+                Path dcpPath = workDir.resolve(getIslandName(Coordinate2D.of(x, y)) + ".dcp");
+                islanDesign.writeCheckpoint(dcpPath.toString());
+            }
+        }
+
+        JobQueue jobQueue = new JobQueue();
+        jobQueue.addJob(vivadoJob);
+        jobQueue.runAllToCompletion();
+
+        logger.endSubStep();
+        logger.info("Complete running PnR flow for floorplanned complete design");
+    }
+
+    private void setup(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
         this.abstractNetlist = abstractNetlist;
         this.groupLocs = groupLocs;
 
@@ -121,75 +306,6 @@ public class IncrementalIslandPnR {
 
         // Build cellInst to boundary map
         buildCellInst2BoundaryMap();
-
-        //
-        Coordinate2D island0Loc = Coordinate2D.of(0, 0);
-        Path island0WorkDir = dirManager.addSubDir(getIslandName(island0Loc));
-        
-        Design island0 = createIslandDesign(new Coordinate2D(0, 0));
-        TclCmdFile island0TclCmdFile = createTclCmdFileForIslandImpl(island0Loc, null, true);
-        VivadoProject island0Project = new VivadoProject(island0, island0WorkDir, vivadoCmd, island0TclCmdFile);
-        Job island0Job = island0Project.createVivadoJob();
-
-        //
-        Coordinate2D island3Loc = Coordinate2D.of(1, 1);
-        Path island3WorkDir = dirManager.addSubDir(getIslandName(new Coordinate2D(1, 1)));
-        
-        Design island3 = createIslandDesign(island3Loc);
-        TclCmdFile island3TclCmdFile = createTclCmdFileForIslandImpl(island3Loc, null, true);
-        VivadoProject island3Project = new VivadoProject(island3, island3WorkDir, vivadoCmd, island3TclCmdFile);
-        Job island3Job = island3Project.createVivadoJob();
-
-        //
-        Coordinate2D island1Loc = Coordinate2D.of(1, 0);
-        Path island1WorkDir = dirManager.addSubDir(getIslandName(new Coordinate2D(1, 0)));
-        
-        Design island1 = createIslandDesignWithContext(island1Loc, Arrays.asList(island0, island3), false);
-        List<Pair<Path, Design>> island1Context = new ArrayList<>();
-        island1Context.add(new Pair<>(island0WorkDir, island0));
-        island1Context.add(new Pair<>(island3WorkDir, island3));
-        TclCmdFile island1TclCmdFile = createTclCmdFileForIslandImpl(island1Loc, island1Context, true);
-        VivadoProject island1Project = new VivadoProject(island1, island1WorkDir, vivadoCmd, island1TclCmdFile);
-        Job island1Job = island1Project.createVivadoJob();
-        
-        //
-        Coordinate2D island2Loc = Coordinate2D.of(0, 1);
-        Path island2WorkDir = dirManager.addSubDir(getIslandName(island2Loc));
-
-        Design island2 = createIslandDesignWithContext(island2Loc, Arrays.asList(island1), true);
-        List<Pair<Path, Design>> island2Context = new ArrayList<>();
-        island2Context.add(new Pair<>(island1WorkDir, island1));
-        TclCmdFile island2TclCmdFile = createTclCmdFileForIslandImpl(island2Loc, island2Context, false);
-        VivadoProject island2Project = new VivadoProject(island2, island2WorkDir, vivadoCmd, island2TclCmdFile);
-        Job island2Job = island2Project.createVivadoJob();
-
-        long startTime = System.currentTimeMillis();
-        JobQueue jobQueue = new JobQueue();
-        jobQueue.addJob(island0Job);
-        jobQueue.addJob(island3Job);
-        boolean success = jobQueue.runAllToCompletion();
-        assert success: "run Vivado Impls of island0 and island3 failed";
-        logger.info("Complete running Vivado Impls of island0 and island3");
-
-        jobQueue.addJob(island1Job);
-        success = jobQueue.runAllToCompletion();
-        assert success: "run Vivado Impls of island1 failed";
-        logger.info("Complete running Vivado Impls of island1");
-
-        jobQueue.addJob(island2Job);
-        success = jobQueue.runAllToCompletion();
-        assert success: "run Vivado Impls of island2 failed";
-        logger.info("Complete running Vivado Impls of island2");
-
-        long endTime = System.currentTimeMillis();
-        long duration = (endTime - startTime) / 1000;
-        long durationMinute = duration / 60;
-        long durationSecond = duration % 60;
-        logger.info("The duration of entire incremental physical implementation flow " + durationMinute + ":" + durationSecond + " minutes");
-
-
-        logger.endSubStep();
-        logger.info("Complete running Parallel Iterative PnR flow");
     }
 
     private void buildCellInst2IslandMap() {
@@ -372,6 +488,25 @@ public class IncrementalIslandPnR {
         logger.info("Start creating design for island" + loc.toString());
         logger.newSubStep();
 
+        String islandDesignName = getIslandName(loc);
+
+        Design topDesign = new Design(islandDesignName, netlistDB.partName);
+        EDIFNetlist topNetlist = topDesign.getNetlist();
+        EDIFCell topCell = topNetlist.getTopCell();
+
+        copyPartialNetlistToCell(topCell, netlistDB.originTopCell, getCellInstsOfIsland(loc));
+
+        topDesign.setAutoIOBuffers(false);
+
+        logger.endSubStep();
+        logger.info("Complete creating design for island" + loc.toString());
+        return topDesign;
+    }
+
+    private Design createIslandDesignWithBoundary(Coordinate2D loc) {
+        logger.info("Start creating design with boundary for island" + loc.toString());
+        logger.newSubStep();
+
         String islandDesignName = "incremental_" + getIslandName(loc);
 
         Design topDesign = new Design(islandDesignName, netlistDB.partName);
@@ -480,7 +615,7 @@ public class IncrementalIslandPnR {
         //topDesign.setDesignOutOfContext(true);
 
         logger.endSubStep();
-        logger.info("Complete creating design for island" + loc.toString());
+        logger.info("Complete creating design with boundary for island" + loc.toString());
 
         return topDesign;
     }
@@ -577,19 +712,102 @@ public class IncrementalIslandPnR {
         return topDesign;
     }
 
+    private Design createCompleteDesignWithContext(List<Coordinate2D> locs, Collection<Design> contextDesigns) {
+        logger.info("Start creating design with context for islands");
+        logger.newSubStep();
 
-    private TclCmdFile createTclCmdFileForIslandImpl(Coordinate2D loc, List<Pair<Path, Design>> contextDesigns, Boolean lockIsland) {
+        String islandDesignName = "complete";
+        Design topDesign = new Design(islandDesignName, netlistDB.partName);
+        EDIFNetlist topNetlist = topDesign.getNetlist();
+        EDIFLibrary workLib = topNetlist.getWorkLibrary();
+        EDIFCell topCell = topNetlist.getTopCell();
+
+        for (Coordinate2D loc : locs) {
+            EDIFCell islandCell = new EDIFCell(workLib, getIslandName(loc));
+            copyPartialNetlistToCell(islandCell, netlistDB.originTopCell, getCellInstsOfIsland(loc));
+            EDIFCellInst islandCellInst = islandCell.createCellInst(getIslandName(loc), topCell);
+            VivadoTclCmd.addStrictPblockConstr(topDesign, islandCellInst, getPBlockRangeOfIsland(loc));
+        }
+
+        for (Design contextDesign : contextDesigns) {
+            EDIFCell contextTopCell = contextDesign.getNetlist().getTopCell();
+            EDIFCell newCell = createBlackboxCell(workLib, contextTopCell);
+            newCell.createCellInst(newCell.getName(), topCell);
+        }
+    
+        EDIFCell originTopCell = netlistDB.originTopCell;
+        for (EDIFPort port : originTopCell.getPorts()) {
+            topCell.createPort(port);
+        }
+
+        for (Map.Entry<String, EDIFNet> entry : originTopCell.getInternalNetMap().entrySet()) {
+            String portInstName = entry.getKey();
+            EDIFNet internalNet = entry.getValue();
+            String internalNetName = internalNet.getName();
+
+            if (internalNet.isGND() || internalNet.isVCC()) {
+                NetType netType = internalNet.isGND() ? NetType.GND : NetType.VCC;
+                EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, topCell, topNetlist);
+                newStaticNet.createPortInst(portInstName, topCell);
+                continue;
+            }
+
+            EDIFNet newInternalNet = topCell.getNet(internalNetName);
+            if (newInternalNet == null) {
+                newInternalNet = topCell.createNet(internalNetName);
+                //logger.info("Create new internal net: " + internalNetName);
+            }
+            newInternalNet.createPortInst(portInstName, topCell);
+        }
+
+        for (EDIFCellInst cellInst : topCell.getCellInsts()) {
+            EDIFCell newCell = cellInst.getCellType();
+            if (newCell.isStaticSource()) continue; // Skip static source cells
+            for (EDIFPort port : newCell.getPorts()) {
+                String portName = port.getName();
+                String netName = portName;
+                EDIFNet originNet = originTopCell.getNet(portName);
+                assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
+                if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
+                    netName = resetPortName;
+                }
+                EDIFNet newNet = topCell.getNet(netName);
+                if (newNet == null) {
+                    newNet = topCell.createNet(netName);
+                }
+                newNet.createPortInst(port, cellInst);
+            }
+        }
+
+        // check Illegal nets
+        for (EDIFNet net : topCell.getNets()) {
+            int netDegree = net.getPortInsts().size();
+            assert netDegree > 1: String.format("Net %s has only %d portInst", net.getName(), netDegree);
+            assert net.getSourcePortInsts(true).size() == 1;
+        }
+
+        //
+        VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
+        topDesign.setAutoIOBuffers(false);
+
+        logger.endSubStep();
+        logger.info("Complete creating design with context for islands");
+        return topDesign;
+    }
+
+
+    private TclCmdFile createTclCmdFileForIslandImpl(Coordinate2D loc, Map<Path, Design> contexts, Boolean lockIsland) {
         logger.info("Start creating file of Tcl commands for merging design");
         TclCmdFile tclCmdFile = new TclCmdFile();
 
-        tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(vivadoMaxThreadNum));
+        tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
         // read context designs
-        if (contextDesigns != null) {
-            for (Pair<Path, Design> contextDesign : contextDesigns) {
-                Path contextDcpPath = contextDesign.getFirst().resolve(VivadoProject.OUTPUT_DCP_NAME);
-                String designName = contextDesign.getSecond().getName();
+        if (contexts!= null) {
+            for (Map.Entry<Path, Design> context : contexts.entrySet()) {
+                Path contextDcpPath = context.getKey().resolve(VivadoProject.OUTPUT_DCP_NAME);
+                String designName = context.getValue().getName();
                 tclCmdFile.addCmd(VivadoTclCmd.readCheckPoint(designName, contextDcpPath.toString()));
             }
         }
@@ -611,6 +829,116 @@ public class IncrementalIslandPnR {
         logger.info("Complete creating file of Tcl commands for merging design");
 
         return tclCmdFile;
+    }
+
+    private Design createCompleteDesign() {
+        String designName = "complete";
+        Design topDesign = new Design(designName, netlistDB.partName);
+        EDIFNetlist topNetlist = topDesign.getNetlist();
+        EDIFLibrary workLib = topNetlist.getWorkLibrary();
+        EDIFCell topCell = topNetlist.getTopCell();
+
+        // add island cells
+        for (int x = 0; x < gridDim.getX(); x++) {
+            for (int y = 0; y < gridDim.getY(); y++) {
+                Coordinate2D loc = Coordinate2D.of(x, y);
+                EDIFCell islandCell = new EDIFCell(workLib, getIslandName(loc));
+                copyPartialNetlistToCell(islandCell, netlistDB.originTopCell, getCellInstsOfIsland(loc));
+                EDIFCellInst islandCellInst = islandCell.createCellInst(getIslandName(loc), topCell);
+                String pblockRange = getPBlockRangeOfIsland(loc);
+                VivadoTclCmd.addPblockConstr(topDesign, islandCellInst, pblockRange, false, false, true);
+                VivadoTclCmd.setPropertyDontTouch(topDesign, islandCellInst.getName());
+            }
+        }
+
+        // add vertical boundary cells
+        for (int x = 0; x < vertBoundaryDim.getX(); x++) {
+            for (int y = 0; y < vertBoundaryDim.getY(); y++) {
+                Coordinate2D loc = Coordinate2D.of(x, y);
+                EDIFCell newCell = new EDIFCell(workLib, getVertBoundaryName(loc));
+                copyPartialNetlistToCell(newCell, netlistDB.originTopCell, getCellInstsOfVertBoundary(loc));
+                EDIFCellInst newCellInst = newCell.createCellInst(getVertBoundaryName(loc), topCell);
+
+                String pblockRange = getPBlockRangeOfVertBoundary(loc);
+                VivadoTclCmd.addPblockConstr(topDesign, newCellInst, pblockRange, false, false, true);
+            }
+        }
+
+        // add horizontal boundary cells
+        for (int x = 0; x < horiBoundaryDim.getX(); x++) {
+            for (int y = 0; y < horiBoundaryDim.getY(); y++) {
+                Coordinate2D loc = Coordinate2D.of(x, y);
+                EDIFCell newCell = new EDIFCell(workLib, getHoriBoundaryName(loc));
+                copyPartialNetlistToCell(newCell, netlistDB.originTopCell, getCellInstsOfHoriBoundary(loc));
+                EDIFCellInst newCellInst = newCell.createCellInst(getHoriBoundaryName(loc), topCell);
+
+                String pblockRange = getPBlockRangeOfHoriBoundary(loc);
+                VivadoTclCmd.addPblockConstr(topDesign, newCellInst, pblockRange, false, false, true);
+            }
+        }
+
+        // copy top-level ports
+        EDIFCell originTopCell = netlistDB.originTopCell;
+        for (EDIFPort port : originTopCell.getPorts()) {
+            topCell.createPort(port);
+        }
+
+        // copy internal nets
+        for (Map.Entry<String, EDIFNet> entry : originTopCell.getInternalNetMap().entrySet()) {
+            String portInstName = entry.getKey();
+            EDIFNet internalNet = entry.getValue();
+            String internalNetName = internalNet.getName();
+
+            if (internalNet.isGND() || internalNet.isVCC()) {
+                NetType netType = internalNet.isGND() ? NetType.GND : NetType.VCC;
+                EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, topCell, topNetlist);
+                newStaticNet.createPortInst(portInstName, topCell);
+                continue;
+            }
+
+            EDIFNet newInternalNet = topCell.getNet(internalNetName);
+            if (newInternalNet == null) {
+                newInternalNet = topCell.createNet(internalNetName);
+            }
+            newInternalNet.createPortInst(portInstName, topCell);
+        }
+
+        // copy nets
+        for (EDIFCellInst cellInst : topCell.getCellInsts()) {
+            EDIFCell newCell = cellInst.getCellType();
+            if (newCell.isStaticSource()) continue; // Skip static source cells
+
+            for (EDIFPort port : newCell.getPorts()) {
+                String portName = port.getName();
+                String netName = portName;
+
+                EDIFNet originNet = originTopCell.getNet(portName);
+                assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
+
+                if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
+                    netName = resetPortName;
+                }
+
+                EDIFNet newNet = topCell.getNet(netName);
+                if (newNet == null) {
+                    newNet = topCell.createNet(netName);
+                }
+                newNet.createPortInst(port, cellInst);
+            }
+        }
+
+        // check Illegality of nets
+        for (EDIFNet net : topCell.getNets()) {
+            int netDegree = net.getPortInsts().size();
+            assert netDegree > 1: String.format("Net %s has only %d portInst", net.getName(), netDegree);
+            assert net.getSourcePortInsts(true).size() == 1;
+        }
+
+        // set clock constraint
+        VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
+        topDesign.setAutoIOBuffers(false);
+
+        return topDesign;
     }
 
     private EDIFCell createBlackboxCell(EDIFLibrary lib, EDIFCell refCell) {
@@ -735,6 +1063,64 @@ public class IncrementalIslandPnR {
             }
         }
     
+    }
+
+    private void connectTopCellInstAndPorts(EDIFCell newTopCell, EDIFCell originTopCell) {
+        // copy top-level ports
+        for (EDIFPort port : originTopCell.getPorts()) {
+            newTopCell.createPort(port);
+        }
+
+        // copy internal nets
+        for (Map.Entry<String, EDIFNet> entry : originTopCell.getInternalNetMap().entrySet()) {
+            String portInstName = entry.getKey();
+            EDIFNet internalNet = entry.getValue();
+            String internalNetName = internalNet.getName();
+
+            if (internalNet.isGND() || internalNet.isVCC()) {
+                NetType netType = internalNet.isGND() ? NetType.GND : NetType.VCC;
+                EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, newTopCell, newTopCell.getNetlist());
+                newStaticNet.createPortInst(portInstName, newTopCell);
+                continue;
+            }
+
+            EDIFNet newInternalNet = newTopCell.getNet(internalNetName);
+            if (newInternalNet == null) {
+                newInternalNet = newTopCell.createNet(internalNetName);
+            }
+            newInternalNet.createPortInst(portInstName, newTopCell);
+        }
+
+        // connect toplevel cellInsts and ports
+        for (EDIFCellInst cellInst : originTopCell.getCellInsts()) {
+            EDIFCell newCell = cellInst.getCellType();
+            if (newCell.isStaticSource()) continue; // Skip static source cells
+
+            for (EDIFPort port : newCell.getPorts()) {
+                String portName = port.getName();
+                String netName = portName;
+
+                EDIFNet originNet = originTopCell.getNet(portName);
+                assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
+
+                if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
+                    netName = resetPortName;
+                }
+
+                EDIFNet newNet = originTopCell.getNet(netName);
+                if (newNet == null) {
+                    newNet = originTopCell.createNet(netName);
+                }
+                newNet.createPortInst(port, cellInst);
+            }
+        }
+
+        // check Illegal nets
+        for (EDIFNet net : originTopCell.getNets()) {
+            int netDegree = net.getPortInsts().size();
+            assert netDegree > 1: String.format("Net %s has only %d portInst", net.getName(), netDegree);
+            assert net.getSourcePortInsts(true).size() == 1;
+        }
     }
 
     private void copyCellInstToNewCell(EDIFCellInst cellInst, EDIFCell newCell) {
@@ -886,29 +1272,6 @@ public class IncrementalIslandPnR {
             return null;
         }
     }
-
-    // private List<Integer> getLeftIslandLocOfVertBoundary(List<Integer> loc) {
-    //     Integer x = loc.get(0);
-    //     Integer y = loc.get(1);
-    //     return Arrays.asList(x, y);
-    // }
-
-    // private List<Integer> getRightIslandLocOfVertBoundary(List<Integer> loc) {
-    //     Integer x = loc.get(0);
-    //     Integer y = loc.get(1);
-    //     return Arrays.asList(x + 1, y);
-    // }
-
-    // private List<Integer> getUpIslandLocOfHoriBoundary(List<Integer> loc) {
-    //     Integer x = loc.get(0);
-    //     Integer y = loc.get(1);
-    //     return Arrays.asList(x, y + 1);
-    // }
-    // private List<Integer> getDownIslandLocOfHoriBoundary(List<Integer> loc) {
-    //     Integer x = loc.get(0);
-    //     Integer y = loc.get(1);
-    //     return Arrays.asList(x, y);
-    // }
 
     private Set<EDIFCellInst> getCellInstsOfIsland(int x, int y) {
         return island2CellInsts[x][y];

@@ -74,6 +74,13 @@ public class VivadoTclUtils {
             setPblockProperties(design, pblockName, false, true, true);
             addCellToPBlock(design, pblockName);
         }
+
+        public static void addPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
+            String pblockName = "pblock_" + cellInst.getName();
+            drawPblock(design, pblockName, pblockRange);
+            setPblockProperties(design, pblockName, isSoft, excludePlace, containRouting);
+            addCellToPblock(design, pblockName, cellInst.getName());
+        }
     
         public static void addClockConstraint(Design design, String clkPortName, Double period) {
             String constrString = String.format("create_clock -period %f -name %s [get_ports %s]", period, clkPortName, clkPortName);

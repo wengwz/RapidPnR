@@ -238,4 +238,19 @@ public class NetlistUtils {
         return repCellInst;
 
     }
+
+    public boolean isCellHasIllegalNet(EDIFCell topCell) {
+        boolean hasIllegalNet = false;
+        for (EDIFNet net : topCell.getNets()) {
+            int netDegree = net.getPortInsts().size();
+            int srcPortInstNum = net.getSourcePortInsts(true).size();
+
+            if (netDegree <= 1 || srcPortInstNum != 1) {
+                hasIllegalNet = true;
+                break;
+            }
+        }
+        return hasIllegalNet;
+    }
+        
 }
