@@ -9,9 +9,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.HashSet;
+import java.lang.reflect.Type;
+
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.reflect.TypeToken;
 
 
 
@@ -33,9 +36,7 @@ public class DesignParams {
     private Coordinate2D horiBoundaryDim;
     private List<Integer> gridLimit;
     private String designPblockRange;
-    private List<List<String>> islandPBlockRanges;
-    private List<List<String>> horiBoundaryPblockRanges;
-    private List<List<String>> vertBoundaryPblockRanges;
+    private Map<String, String> pblockName2RangeMap;
 
 
     private Path extIslandPlacerPath;
@@ -56,9 +57,7 @@ public class DesignParams {
         public List<Integer> gridDimension;
         public List<Integer> gridLimit;
         public String designPblockRange;
-        public List<List<String>> islandPBlockRanges;
-        public List<List<String>> horiBoundaryPblockRanges;
-        public List<List<String>> vertBoundaryPblockRanges;
+        public String pblockRangeJsonPath;
 
         public String vivadoCmd;
         public Integer vivadoMaxThreadNum;
@@ -120,12 +119,11 @@ public class DesignParams {
             this.gridLimit = params.gridLimit;
 
             this.designPblockRange = params.designPblockRange;
-            assert params.islandPBlockRanges != null;
-            assert params.horiBoundaryPblockRanges != null;
-            assert params.vertBoundaryPblockRanges != null;
-            this.islandPBlockRanges = params.islandPBlockRanges;
-            this.horiBoundaryPblockRanges = params.horiBoundaryPblockRanges;
-            this.vertBoundaryPblockRanges = params.vertBoundaryPblockRanges;
+            assert params.pblockRangeJsonPath != null: "pblockRangeJsonPath not found in json file";
+            try (FileReader pblockReader = new FileReader(params.pblockRangeJsonPath)) {
+                Type mapType = new TypeToken<Map<String, String>>() {}.getType();
+                this.pblockName2RangeMap = gson.fromJson(pblockReader, mapType);
+            }
 
             // set parameters related with Vivado
             if (params.vivadoCmd != null) {
@@ -216,17 +214,9 @@ public class DesignParams {
     public String getDesignPblockRange() {
         return designPblockRange;
     }
-    
-    public List<List<String>> getIslandPblockRanges() {
-        return Collections.unmodifiableList(islandPBlockRanges);
-    }
 
-    public List<List<String>> getHoriBoundaryPblockRanges() {
-        return Collections.unmodifiableList(horiBoundaryPblockRanges);
-    }
-
-    public List<List<String>> getVertBoundaryPblockRanges() {
-        return Collections.unmodifiableList(vertBoundaryPblockRanges);
+    public Map<String, String> getPblockName2RangeMap() {
+        return Collections.unmodifiableMap(pblockName2RangeMap);
     }
 
     public Path getExtIslandPlacerPath() {

@@ -35,6 +35,12 @@ public class VivadoTclUtils {
     }
 
     public static class VivadoTclCmd  {
+
+        public static class IncrImplDirective {
+            public static final String RuntimeOpt = "RuntimeOptimized";
+            public static final String TimingClosure = "TimingClosure";
+            public static final String Quick = "Quick";
+        }
         public static void drawPblock(Design design, String pblockName, String pblockRange) {
             design.addXDCConstraint(String.format("create_pblock %s", pblockName));
             design.addXDCConstraint(String.format("resize_pblock %s -add { %s }", pblockName, pblockRange));
@@ -76,10 +82,21 @@ public class VivadoTclUtils {
         }
 
         public static void addPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
-            String pblockName = "pblock_" + cellInst.getName();
+            
+            String pblockName = "pblock_";
+            if (cellInst != null) {
+                pblockName += cellInst.getName();
+            } else {
+                pblockName += design.getName();
+            }
             drawPblock(design, pblockName, pblockRange);
             setPblockProperties(design, pblockName, isSoft, excludePlace, containRouting);
-            addCellToPblock(design, pblockName, cellInst.getName());
+
+            if (cellInst != null) {
+                addCellToPblock(design, pblockName, cellInst.getName());
+            } else {
+                addCellToPBlock(design, pblockName);
+            }
         }
     
         public static void addClockConstraint(Design design, String clkPortName, Double period) {
@@ -94,8 +111,28 @@ public class VivadoTclUtils {
             design.addXDCConstraint(constrStr);
         }
         
+        public static String readCheckPoint(String cellInstName, boolean autoIncr, boolean incr, String incrDirective, String dcpPath) {
+            String cmdStr = "read_checkpoint";
+
+            if (cellInstName != null) {
+                cmdStr += " -cell " + cellInstName;
+            }
+
+            if (autoIncr) {
+                cmdStr += " -auto_incremental";
+            } else if (incr) {
+                cmdStr += " -incremental";
+                if (incrDirective != null) {
+                    cmdStr += " -directive " + incrDirective;
+                }
+            }
+
+            cmdStr += " " + dcpPath;
+            return cmdStr;
+        }
+
         public static String readCheckPoint(String cellInstName, String dcpPath) {
-            return String.format("read_checkpoint -cell %s %s", cellInstName, dcpPath);
+            return readCheckPoint(cellInstName, false, false, null, dcpPath);
         }
     
         public static String openCheckpoint(String dcpPath) {

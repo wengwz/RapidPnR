@@ -73,9 +73,7 @@ public class IncrementalIslandPnR {
     private Coordinate2D gridDim;
     private Coordinate2D vertBoundaryDim;
     private Coordinate2D horiBoundaryDim;
-    private List<List<String>> islandPBlockRanges;
-    private List<List<String>> vertBoundaryPBlockRanges;
-    private List<List<String>> horiBoundaryPBlockRanges;
+    private Map<String, String> pblockName2RangeMap;
 
 
     public IncrementalIslandPnR(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams, NetlistDatabase netlistDB) {
@@ -89,9 +87,7 @@ public class IncrementalIslandPnR {
         gridDim = designParams.getGridDim();
         vertBoundaryDim = designParams.getVertBoundaryDim();
         horiBoundaryDim = designParams.getHoriBoundaryDim();
-        islandPBlockRanges = designParams.getIslandPblockRanges();
-        vertBoundaryPBlockRanges = designParams.getVertBoundaryPblockRanges();
-        horiBoundaryPBlockRanges = designParams.getHoriBoundaryPblockRanges();
+        pblockName2RangeMap = designParams.getPblockName2RangeMap();
 
         // Netlist Database
         this.netlistDB = netlistDB;
@@ -100,11 +96,9 @@ public class IncrementalIslandPnR {
         clkPeriod = designParams.getClkPeriod(clkPortName);
     }
 
-    public void run(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
+    public void run() {
         logger.info("Start running Parallel Iterative PnR flow");
         logger.newSubStep();
-
-        setup(abstractNetlist, groupLocs);
 
         //
         Coordinate2D island0Loc = Coordinate2D.of(0, 0);
@@ -193,7 +187,8 @@ public class IncrementalIslandPnR {
         logger.info(runTimeTrackerTree.toString());
     }
 
-    public void runParallelAndComplete(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
+    public void runParallelAndComplete() {
+
         logger.info("Start running Parallel and then Complete PnR flow");
         logger.newSubStep();
 
@@ -255,12 +250,9 @@ public class IncrementalIslandPnR {
         logger.info(runTimeTrackerTree.toString());
     }
 
-    public void runCompleteDesign(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
+    public void runCompleteDesign() {
         logger.info("Start running PnR flow for floorplanned complete design");
         logger.newSubStep();
-
-        setup(abstractNetlist, groupLocs);
-
 
         Path workDir = dirManager.addSubDir("complete");
         Design completeDesign = createCompleteDesign();
@@ -294,7 +286,7 @@ public class IncrementalIslandPnR {
         logger.info("Complete running PnR flow for floorplanned complete design");
     }
 
-    private void setup(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
+    public void loadPreStepsResult(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
         this.abstractNetlist = abstractNetlist;
         this.groupLocs = groupLocs;
 
@@ -507,7 +499,7 @@ public class IncrementalIslandPnR {
         logger.info("Start creating design with boundary for island" + loc.toString());
         logger.newSubStep();
 
-        String islandDesignName = "incremental_" + getIslandName(loc);
+        String islandDesignName = getIslandName(loc) + "_boundary";
 
         Design topDesign = new Design(islandDesignName, netlistDB.partName);
         EDIFNetlist topNetlist = topDesign.getNetlist();
@@ -624,7 +616,7 @@ public class IncrementalIslandPnR {
         logger.info("Start creating design with context for island" + loc.toString());
         logger.newSubStep();
 
-        String islandDesignName = "incremental_" + getIslandName(loc);
+        String islandDesignName = getIslandName(loc) + "_context";
         Design topDesign = new Design(islandDesignName, netlistDB.partName);
         EDIFNetlist topNetlist = topDesign.getNetlist();
         EDIFLibrary workLib = topNetlist.getWorkLibrary();
@@ -641,61 +633,7 @@ public class IncrementalIslandPnR {
         }
 
         if (copyOriginPorts) {
-            EDIFCell originTopCell = netlistDB.originTopCell;
-            for (EDIFPort port : originTopCell.getPorts()) {
-                topCell.createPort(port);
-            }
-
-            for (Map.Entry<String, EDIFNet> entry : originTopCell.getInternalNetMap().entrySet()) {
-                String portInstName = entry.getKey();
-                EDIFNet internalNet = entry.getValue();
-                String internalNetName = internalNet.getName();
-
-                if (internalNet.isGND() || internalNet.isVCC()) {
-                    NetType netType = internalNet.isGND() ? NetType.GND : NetType.VCC;
-                    EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, topCell, topNetlist);
-                    newStaticNet.createPortInst(portInstName, topCell);
-                    continue;
-                }
-
-                EDIFNet newInternalNet = topCell.getNet(internalNetName);
-                if (newInternalNet == null) {
-                    newInternalNet = topCell.createNet(internalNetName);
-                    //logger.info("Create new internal net: " + internalNetName);
-                }
-                newInternalNet.createPortInst(portInstName, topCell);
-            }
-
-            for (EDIFCellInst cellInst : topCell.getCellInsts()) {
-                EDIFCell newCell = cellInst.getCellType();
-                if (newCell.isStaticSource()) continue; // Skip static source cells
-
-                for (EDIFPort port : newCell.getPorts()) {
-                    String portName = port.getName();
-                    String netName = portName;
-    
-                    EDIFNet originNet = originTopCell.getNet(portName);
-                    assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
-
-                    if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
-                        netName = resetPortName;
-                    }
-    
-                    EDIFNet newNet = topCell.getNet(netName);
-                    if (newNet == null) {
-                        newNet = topCell.createNet(netName);
-                    }
-                    newNet.createPortInst(port, cellInst);
-                }
-            }
-
-            // check Illegal nets
-            for (EDIFNet net : topCell.getNets()) {
-                int netDegree = net.getPortInsts().size();
-                assert netDegree > 1: String.format("Net %s has only %d portInst", net.getName(), netDegree);
-                assert net.getSourcePortInsts(true).size() == 1;
-            }
-
+            connectTopCellInstAndPorts(topCell, netlistDB.originTopCell);
         } else {
             connectCellInstsOfCustomCell(topCell, netlistDB.originTopCell);
         }
@@ -735,56 +673,7 @@ public class IncrementalIslandPnR {
             newCell.createCellInst(newCell.getName(), topCell);
         }
     
-        EDIFCell originTopCell = netlistDB.originTopCell;
-        for (EDIFPort port : originTopCell.getPorts()) {
-            topCell.createPort(port);
-        }
-
-        for (Map.Entry<String, EDIFNet> entry : originTopCell.getInternalNetMap().entrySet()) {
-            String portInstName = entry.getKey();
-            EDIFNet internalNet = entry.getValue();
-            String internalNetName = internalNet.getName();
-
-            if (internalNet.isGND() || internalNet.isVCC()) {
-                NetType netType = internalNet.isGND() ? NetType.GND : NetType.VCC;
-                EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, topCell, topNetlist);
-                newStaticNet.createPortInst(portInstName, topCell);
-                continue;
-            }
-
-            EDIFNet newInternalNet = topCell.getNet(internalNetName);
-            if (newInternalNet == null) {
-                newInternalNet = topCell.createNet(internalNetName);
-                //logger.info("Create new internal net: " + internalNetName);
-            }
-            newInternalNet.createPortInst(portInstName, topCell);
-        }
-
-        for (EDIFCellInst cellInst : topCell.getCellInsts()) {
-            EDIFCell newCell = cellInst.getCellType();
-            if (newCell.isStaticSource()) continue; // Skip static source cells
-            for (EDIFPort port : newCell.getPorts()) {
-                String portName = port.getName();
-                String netName = portName;
-                EDIFNet originNet = originTopCell.getNet(portName);
-                assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
-                if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
-                    netName = resetPortName;
-                }
-                EDIFNet newNet = topCell.getNet(netName);
-                if (newNet == null) {
-                    newNet = topCell.createNet(netName);
-                }
-                newNet.createPortInst(port, cellInst);
-            }
-        }
-
-        // check Illegal nets
-        for (EDIFNet net : topCell.getNets()) {
-            int netDegree = net.getPortInsts().size();
-            assert netDegree > 1: String.format("Net %s has only %d portInst", net.getName(), netDegree);
-            assert net.getSourcePortInsts(true).size() == 1;
-        }
+        connectTopCellInstAndPorts(topCell, netlistDB.originTopCell);
 
         //
         VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
@@ -877,62 +766,7 @@ public class IncrementalIslandPnR {
             }
         }
 
-        // copy top-level ports
-        EDIFCell originTopCell = netlistDB.originTopCell;
-        for (EDIFPort port : originTopCell.getPorts()) {
-            topCell.createPort(port);
-        }
-
-        // copy internal nets
-        for (Map.Entry<String, EDIFNet> entry : originTopCell.getInternalNetMap().entrySet()) {
-            String portInstName = entry.getKey();
-            EDIFNet internalNet = entry.getValue();
-            String internalNetName = internalNet.getName();
-
-            if (internalNet.isGND() || internalNet.isVCC()) {
-                NetType netType = internalNet.isGND() ? NetType.GND : NetType.VCC;
-                EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, topCell, topNetlist);
-                newStaticNet.createPortInst(portInstName, topCell);
-                continue;
-            }
-
-            EDIFNet newInternalNet = topCell.getNet(internalNetName);
-            if (newInternalNet == null) {
-                newInternalNet = topCell.createNet(internalNetName);
-            }
-            newInternalNet.createPortInst(portInstName, topCell);
-        }
-
-        // copy nets
-        for (EDIFCellInst cellInst : topCell.getCellInsts()) {
-            EDIFCell newCell = cellInst.getCellType();
-            if (newCell.isStaticSource()) continue; // Skip static source cells
-
-            for (EDIFPort port : newCell.getPorts()) {
-                String portName = port.getName();
-                String netName = portName;
-
-                EDIFNet originNet = originTopCell.getNet(portName);
-                assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
-
-                if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
-                    netName = resetPortName;
-                }
-
-                EDIFNet newNet = topCell.getNet(netName);
-                if (newNet == null) {
-                    newNet = topCell.createNet(netName);
-                }
-                newNet.createPortInst(port, cellInst);
-            }
-        }
-
-        // check Illegality of nets
-        for (EDIFNet net : topCell.getNets()) {
-            int netDegree = net.getPortInsts().size();
-            assert netDegree > 1: String.format("Net %s has only %d portInst", net.getName(), netDegree);
-            assert net.getSourcePortInsts(true).size() == 1;
-        }
+        connectTopCellInstAndPorts(topCell, netlistDB.originTopCell);
 
         // set clock constraint
         VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
@@ -1065,13 +899,11 @@ public class IncrementalIslandPnR {
     
     }
 
-    private void connectTopCellInstAndPorts(EDIFCell newTopCell, EDIFCell originTopCell) {
-        // copy top-level ports
+    private void connectTopCellInstAndPorts(EDIFCell topCell, EDIFCell originTopCell) {
         for (EDIFPort port : originTopCell.getPorts()) {
-            newTopCell.createPort(port);
+            topCell.createPort(port);
         }
 
-        // copy internal nets
         for (Map.Entry<String, EDIFNet> entry : originTopCell.getInternalNetMap().entrySet()) {
             String portInstName = entry.getKey();
             EDIFNet internalNet = entry.getValue();
@@ -1079,44 +911,40 @@ public class IncrementalIslandPnR {
 
             if (internalNet.isGND() || internalNet.isVCC()) {
                 NetType netType = internalNet.isGND() ? NetType.GND : NetType.VCC;
-                EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, newTopCell, newTopCell.getNetlist());
-                newStaticNet.createPortInst(portInstName, newTopCell);
+                EDIFNet newStaticNet = EDIFTools.getStaticNet(netType, topCell, topCell.getNetlist());
+                newStaticNet.createPortInst(portInstName, topCell);
                 continue;
             }
 
-            EDIFNet newInternalNet = newTopCell.getNet(internalNetName);
+            EDIFNet newInternalNet = topCell.getNet(internalNetName);
             if (newInternalNet == null) {
-                newInternalNet = newTopCell.createNet(internalNetName);
+                newInternalNet = topCell.createNet(internalNetName);
+                //logger.info("Create new internal net: " + internalNetName);
             }
-            newInternalNet.createPortInst(portInstName, newTopCell);
+            newInternalNet.createPortInst(portInstName, topCell);
         }
 
-        // connect toplevel cellInsts and ports
-        for (EDIFCellInst cellInst : originTopCell.getCellInsts()) {
+        for (EDIFCellInst cellInst : topCell.getCellInsts()) {
             EDIFCell newCell = cellInst.getCellType();
             if (newCell.isStaticSource()) continue; // Skip static source cells
-
             for (EDIFPort port : newCell.getPorts()) {
                 String portName = port.getName();
                 String netName = portName;
-
                 EDIFNet originNet = originTopCell.getNet(portName);
                 assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
-
                 if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
                     netName = resetPortName;
                 }
-
-                EDIFNet newNet = originTopCell.getNet(netName);
+                EDIFNet newNet = topCell.getNet(netName);
                 if (newNet == null) {
-                    newNet = originTopCell.createNet(netName);
+                    newNet = topCell.createNet(netName);
                 }
                 newNet.createPortInst(port, cellInst);
             }
         }
 
         // check Illegal nets
-        for (EDIFNet net : originTopCell.getNets()) {
+        for (EDIFNet net : topCell.getNets()) {
             int netDegree = net.getPortInsts().size();
             assert netDegree > 1: String.format("Net %s has only %d portInst", net.getName(), netDegree);
             assert net.getSourcePortInsts(true).size() == 1;
@@ -1313,16 +1141,28 @@ public class IncrementalIslandPnR {
         return getCellInstsOfHoriBoundary(loc.getX(), loc.getY());
     }
 
-    private String getPBlockRangeOfHoriBoundary(Coordinate2D loc) {
-        return horiBoundaryPBlockRanges.get(loc.getX()).get(loc.getY());
+    private String getPblockRange(String pblockName) {
+        return pblockName2RangeMap.get(pblockName);
     }
 
-    private String getPBlockRangeOfVertBoundary(Coordinate2D loc) {
-        return vertBoundaryPBlockRanges.get(loc.getX()).get(loc.getY());
+    protected String getPBlockRangeOfHoriBoundary(Coordinate2D loc) {
+        String pblockName = getHoriBoundaryName(loc);
+        String pblockRange = getPblockRange(pblockName);
+        assert pblockRange != null;
+        return pblockRange;
     }
 
-    private String getPBlockRangeOfIsland(Coordinate2D loc) {
-        return islandPBlockRanges.get(loc.getX()).get(loc.getY());
+    protected String getPBlockRangeOfVertBoundary(Coordinate2D loc) {
+        String pblockName = getVertBoundaryName(loc);
+        String pblockRange = getPblockRange(pblockName);
+        assert pblockRange != null;
+        return pblockRange;
     }
 
+    protected String getPBlockRangeOfIsland(Coordinate2D loc) {
+        String pblockName = getIslandName(loc);
+        String pblockRange = getPblockRange(pblockName);
+        assert pblockRange != null;
+        return pblockRange;
+    }
 }
