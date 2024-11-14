@@ -211,6 +211,9 @@ public class AbstractNetlist {
             Integer grpLutNum = 0;
 
             for (Map.Entry<EDIFCell, Integer> entry : group2LeafCellUtils.get(i).entrySet()) {
+                // if (NetlistUtils.cellType2ResTypeMap.get(entry.getKey().getName()) == null) {
+                //     continue;
+                // }
                 if (NetlistUtils.cellType2ResTypeMap.get(entry.getKey().getName()).equals("LUT")) {
                     grpLutNum += entry.getValue();
                 }

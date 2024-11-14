@@ -63,9 +63,8 @@ public class IncrementalIslandPnR {
 
     // Design Parameters
     ////
-    String clkPortName; // TODO: only support single clock design
+    Map<String, Double> clkName2PeriodMap;
     String resetPortName; // TODO: only support single reset design
-    Double clkPeriod;
 
     String designName;
 
@@ -89,11 +88,12 @@ public class IncrementalIslandPnR {
         horiBoundaryDim = designParams.getHoriBoundaryDim();
         pblockName2RangeMap = designParams.getPblockName2RangeMap();
 
+        clkName2PeriodMap = designParams.getClkPortName2PeriodMap();
+
         // Netlist Database
         this.netlistDB = netlistDB;
-        clkPortName = netlistDB.clkPorts.iterator().next().getName();
         resetPortName = netlistDB.resetPorts.iterator().next().getName();
-        clkPeriod = designParams.getClkPeriod(clkPortName);
+        
     }
 
     public void run() {
@@ -261,29 +261,34 @@ public class IncrementalIslandPnR {
         TclCmdFile tclCmdFile = new TclCmdFile();
         tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
-        tclCmdFile.addCmd(VivadoTclCmd.placeDesign(null));
-        tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
-        tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
-        tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, "timing.rpt"));
+        tclCmdFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.Quick, true));
+        // tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
+        // tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
+        //tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, "timing.rpt"));
         tclCmdFile.addCmd(VivadoTclCmd.writeCheckpoint(false, null, VivadoProject.OUTPUT_DCP_NAME));
 
         VivadoProject vivadoProject = new VivadoProject(completeDesign, workDir, tclCmdFile);
         Job vivadoJob = vivadoProject.createVivadoJob();
 
-        for (int x = 0; x < gridDim.getX(); x++) {
-            for (int y = 0; y < gridDim.getY(); y++) {
-                Design islanDesign = createIslandDesign(Coordinate2D.of(x, y));
-                Path dcpPath = workDir.resolve(getIslandName(Coordinate2D.of(x, y)) + ".dcp");
-                islanDesign.writeCheckpoint(dcpPath.toString());
-            }
-        }
+        // for (int x = 0; x < gridDim.getX(); x++) {
+        //     for (int y = 0; y < gridDim.getY(); y++) {
+        //         Design islanDesign = createIslandDesign(Coordinate2D.of(x, y));
+        //         Path dcpPath = workDir.resolve(getIslandName(Coordinate2D.of(x, y)) + ".dcp");
+        //         islanDesign.writeCheckpoint(dcpPath.toString());
+        //     }
+        // }
 
         JobQueue jobQueue = new JobQueue();
         jobQueue.addJob(vivadoJob);
+
+        RuntimeTracker timer = new RuntimeTracker("Complete Design", (short) 0);
+        timer.start();
         jobQueue.runAllToCompletion();
+        timer.stop();
 
         logger.endSubStep();
         logger.info("Complete running PnR flow for floorplanned complete design");
+        logger.info(timer.toString());
     }
 
     public void loadPreStepsResult(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
@@ -601,7 +606,7 @@ public class IncrementalIslandPnR {
             }
         }
 
-        VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
+        VivadoTclCmd.createClocks(topDesign, clkName2PeriodMap);
         //VivadoTclCmd.setPropertyHDPartition(topDesign);
         topDesign.setAutoIOBuffers(false);
         //topDesign.setDesignOutOfContext(true);
@@ -640,7 +645,7 @@ public class IncrementalIslandPnR {
 
         //
         VivadoTclCmd.addStrictPblockConstr(topDesign, islandCellInst, getPBlockRangeOfIsland(loc));
-        VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
+        VivadoTclCmd.createClocks(topDesign, clkName2PeriodMap);
         //VivadoTclCmd.setPropertyHDPartition(topDesign);
         topDesign.setAutoIOBuffers(false);
         //topDesign.setDesignOutOfContext(false);
@@ -676,7 +681,7 @@ public class IncrementalIslandPnR {
         connectTopCellInstAndPorts(topCell, netlistDB.originTopCell);
 
         //
-        VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
+        VivadoTclCmd.createClocks(topDesign, clkName2PeriodMap);
         topDesign.setAutoIOBuffers(false);
 
         logger.endSubStep();
@@ -697,11 +702,11 @@ public class IncrementalIslandPnR {
             for (Map.Entry<Path, Design> context : contexts.entrySet()) {
                 Path contextDcpPath = context.getKey().resolve(VivadoProject.OUTPUT_DCP_NAME);
                 String designName = context.getValue().getName();
-                tclCmdFile.addCmd(VivadoTclCmd.readCheckPoint(designName, contextDcpPath.toString()));
+                tclCmdFile.addCmd(VivadoTclCmd.readCheckpoint(designName, contextDcpPath.toString()));
             }
         }
 
-        tclCmdFile.addCmd(VivadoTclCmd.placeDesign(null));
+        tclCmdFile.addCmd(VivadoTclCmd.placeDesign());
         tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
         tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
 
@@ -749,7 +754,7 @@ public class IncrementalIslandPnR {
                 EDIFCellInst newCellInst = newCell.createCellInst(getVertBoundaryName(loc), topCell);
 
                 String pblockRange = getPBlockRangeOfVertBoundary(loc);
-                VivadoTclCmd.addPblockConstr(topDesign, newCellInst, pblockRange, false, false, true);
+                VivadoTclCmd.addPblockConstr(topDesign, newCellInst, pblockRange, false, true, true);
             }
         }
 
@@ -762,14 +767,14 @@ public class IncrementalIslandPnR {
                 EDIFCellInst newCellInst = newCell.createCellInst(getHoriBoundaryName(loc), topCell);
 
                 String pblockRange = getPBlockRangeOfHoriBoundary(loc);
-                VivadoTclCmd.addPblockConstr(topDesign, newCellInst, pblockRange, false, false, true);
+                VivadoTclCmd.addPblockConstr(topDesign, newCellInst, pblockRange, false, true, true);
             }
         }
 
         connectTopCellInstAndPorts(topCell, netlistDB.originTopCell);
 
         // set clock constraint
-        VivadoTclCmd.addClockConstraint(topDesign, clkPortName, clkPeriod);
+        VivadoTclCmd.createClocks(topDesign, clkName2PeriodMap);
         topDesign.setAutoIOBuffers(false);
 
         return topDesign;

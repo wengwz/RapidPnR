@@ -35,10 +35,9 @@ public class DesignParams {
     private Coordinate2D vertBoundaryDim;
     private Coordinate2D horiBoundaryDim;
     private List<Integer> gridLimit;
-    private String designPblockRange;
     private Map<String, String> pblockName2RangeMap;
 
-
+    // Island Placer Parameters
     private Path extIslandPlacerPath;
     private Path islandPlaceResPath;
 
@@ -56,11 +55,11 @@ public class DesignParams {
 
         public List<Integer> gridDimension;
         public List<Integer> gridLimit;
-        public String designPblockRange;
         public String pblockRangeJsonPath;
 
         public String vivadoCmd;
         public Integer vivadoMaxThreadNum;
+
         public String extIslandPlacerPath;
         public String islandPlaceResPath;
 
@@ -113,12 +112,11 @@ public class DesignParams {
             this.gridDimension = new Coordinate2D(params.gridDimension.get(0), params.gridDimension.get(1));
             this.vertBoundaryDim = new Coordinate2D(gridDimension.getX() - 1, gridDimension.getY());
             this.horiBoundaryDim = new Coordinate2D(gridDimension.getX(), gridDimension.getY() - 1);
-
+            
+            //
             assert params.gridLimit != null: "gridLimit not found in json file";
             assert params.gridLimit.size() == getIslandNum(): "gridLimit size does not match gridDimension";
             this.gridLimit = params.gridLimit;
-
-            this.designPblockRange = params.designPblockRange;
             assert params.pblockRangeJsonPath != null: "pblockRangeJsonPath not found in json file";
             try (FileReader pblockReader = new FileReader(params.pblockRangeJsonPath)) {
                 Type mapType = new TypeToken<Map<String, String>>() {}.getType();
@@ -133,6 +131,7 @@ public class DesignParams {
                 VivadoProject.setVivadoMaxThread(params.vivadoMaxThreadNum);
             }
 
+            // set parameters related with Island Placer
             assert params.extIslandPlacerPath != null: "extIslandPlacerPath not found in json file";
             extIslandPlacerPath = Path.of(params.extIslandPlacerPath).toAbsolutePath();
 
@@ -161,6 +160,10 @@ public class DesignParams {
 
     public double getClkPeriod(String clkName) {
         return clkPeriods.get(clkName);
+    }
+
+    public Map<String, Double> getClkPortName2PeriodMap() {
+        return Collections.unmodifiableMap(clkPeriods);
     }
 
     public String getResetPortName(int index) {
@@ -211,12 +214,12 @@ public class DesignParams {
         return Collections.unmodifiableList(gridLimit);
     }
 
-    public String getDesignPblockRange() {
-        return designPblockRange;
-    }
-
     public Map<String, String> getPblockName2RangeMap() {
         return Collections.unmodifiableMap(pblockName2RangeMap);
+    }
+
+    public String getPblockRange(String pblockName) {
+        return pblockName2RangeMap.get(pblockName);
     }
 
     public Path getExtIslandPlacerPath() {

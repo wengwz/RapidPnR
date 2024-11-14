@@ -1,10 +1,15 @@
 package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.nio.file.Path;
 
 import com.xilinx.rapidwright.design.Design;
+import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.util.FileTools;
@@ -41,6 +46,13 @@ public class VivadoTclUtils {
             public static final String TimingClosure = "TimingClosure";
             public static final String Quick = "Quick";
         }
+
+        public static class PlacerDirective {
+            public static final String Default = "Default";
+            public static final String RuntimeOpt = "RuntimeOptimized";
+            public static final String Quick = "Quick";
+        }
+
         public static void drawPblock(Design design, String pblockName, String pblockRange) {
             design.addXDCConstraint(String.format("create_pblock %s", pblockName));
             design.addXDCConstraint(String.format("resize_pblock %s -add { %s }", pblockName, pblockRange));
@@ -98,10 +110,51 @@ public class VivadoTclUtils {
                 addCellToPBlock(design, pblockName);
             }
         }
-    
-        public static void addClockConstraint(Design design, String clkPortName, Double period) {
-            String constrString = String.format("create_clock -period %f -name %s [get_ports %s]", period, clkPortName, clkPortName);
-            design.addXDCConstraint(constrString);
+
+        public static String setClockGroups(boolean isAsync, Set<String> clkGroups) {
+            String cmdStr = "set_clock_groups";
+            if (isAsync) {
+                cmdStr += " -asynchronous";
+            }
+            for (String clkGroup : clkGroups) {
+                cmdStr += " -group " + clkGroup;
+            }
+            return cmdStr;
+        }
+
+        public static void setClockGroups(Design design, boolean isAsync, Set<String> clkGroups) {
+            design.addXDCConstraint(setClockGroups(isAsync, clkGroups));
+        }
+
+        public static void setAsyncClockGroupsForEachClk(Design design, Collection<String> clkPortNames) {
+            EDIFCell topCell = design.getNetlist().getTopCell();
+            Set<String> validClkPortNames = new HashSet<>();
+
+            for (String clkPortName : clkPortNames) {
+                if (topCell.getPort(clkPortName) != null) {
+                    validClkPortNames.add(clkPortName);
+                }
+            }
+            if (clkPortNames.size() > 1) {
+                design.addXDCConstraint(setClockGroups(true, validClkPortNames));
+            }
+        }
+
+        public static String createClock(String clkPortName, Double period) {
+            return String.format("create_clock -period %f -name %s [get_ports %s]", period, clkPortName, clkPortName);
+        }
+
+        public static void createClock(Design design, String clkPortName, Double period) {
+            design.addXDCConstraint(createClock(clkPortName, period));
+        }
+
+        public static void createClocks(Design design, Map<String, Double> clk2PeriodMap) {
+            for (String clkName : clk2PeriodMap.keySet()) {
+                EDIFCell topCell = design.getNetlist().getTopCell();
+                if (topCell.getPort(clkName) != null) {
+                    createClock(design, clkName, clk2PeriodMap.get(clkName));
+                }
+            }
         }
     
         public static void addIODelayConstraint(Design design, EDIFPort port, String clkName, Double delay) {
@@ -111,7 +164,7 @@ public class VivadoTclUtils {
             design.addXDCConstraint(constrStr);
         }
         
-        public static String readCheckPoint(String cellInstName, boolean autoIncr, boolean incr, String incrDirective, String dcpPath) {
+        public static String readCheckpoint(String cellInstName, boolean autoIncr, boolean incr, String incrDirective, String dcpPath) {
             String cmdStr = "read_checkpoint";
 
             if (cellInstName != null) {
@@ -131,20 +184,23 @@ public class VivadoTclUtils {
             return cmdStr;
         }
 
-        public static String readCheckPoint(String cellInstName, String dcpPath) {
-            return readCheckPoint(cellInstName, false, false, null, dcpPath);
+        public static String readCheckpoint(String cellInstName, String dcpPath) {
+            return readCheckpoint(cellInstName, false, false, null, dcpPath);
+        }
+
+        public static String readCheckpoint(Map<String, Path> cellInst2DcpMap) {
+            String cellInst2DcpStr = "";
+            for (String cellInstName : cellInst2DcpMap.keySet()) {
+                if (cellInst2DcpStr.length() > 0) {
+                    cellInst2DcpStr += " ";
+                }
+                cellInst2DcpStr += cellInstName + " " + cellInst2DcpMap.get(cellInstName).toString();
+            }
+            return String.format("read_checkpoint -dcp_cell_list {%s}", cellInst2DcpStr);
         }
     
         public static String openCheckpoint(String dcpPath) {
             return String.format("open_checkpoint %s", dcpPath);
-        }
-    
-        public static String readCheckpoint(boolean isStrict, String dcpPath) {
-            if (isStrict) {
-                return String.format("read_checkpoint -strict %s", dcpPath);
-            } else {
-                return String.format("read_checkpoint %s", dcpPath);
-            }
         }
     
         public static String writeCheckpoint(boolean force, String cellInstName, String dcpPath) {
@@ -158,13 +214,34 @@ public class VivadoTclUtils {
             assert dcpPath != null;
             return cmdStr + " " + dcpPath;
         }
+
+        public static String writeEDIF(boolean force, String cellInstName, String edifPath) {
+            String cmdStr = "write_edif";
+            if (force) {
+                cmdStr += " -force";
+            }
+            if (cellInstName != null) {
+                cmdStr += " -cell " + cellInstName;
+            }
+            assert edifPath != null;
+            return cmdStr + " " + edifPath;
+        }
     
-        public static String placeDesign(String directive) {
+        public static String placeDesign(String directive, boolean noPSIP) {
             String cmdString = "place_design";
             if (directive != null) {
                 cmdString += " -directive " + directive;
             }
+
+            if (noPSIP) {
+                cmdString += " -no_psip";
+            }
+            
             return cmdString;
+        }
+
+        public static String placeDesign() {
+            return placeDesign(null, false);
         }
     
         public static String routeDesign(String directive) {

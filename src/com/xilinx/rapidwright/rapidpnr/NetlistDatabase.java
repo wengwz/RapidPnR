@@ -10,7 +10,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
-import java.nio.file.Path;
+
 
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.device.Device;
@@ -162,7 +162,7 @@ public class NetlistDatabase {
                 if (NetlistUtils.isRegisterCellInst(incidentCellInst)) {
                     String portName = incidentPortInst.getName();
                     assert portName.equals("D") || portName.equals("S") || portName.equals("R") || portName.equals("CLR") || portName.equals("PRE"):
-                    "Invalid Reset Port Name: " + incidentPortInst.getName();
+                    "Invalid Reset Port Name: " + portName;
                     if (incidentPortInst.getName().equals("D")) {
                         searchRstInsts.add(incidentCellInst);
                         assert !globalResetTreeCellInsts.contains(incidentCellInst);
@@ -337,9 +337,9 @@ public class NetlistDatabase {
                 if (!cell.isLeafCellOrBlackBox()) {
                     Map<EDIFCell, Integer> leafCellUtilMap = new HashMap<>();
                     NetlistUtils.getLeafCellUtils(cell, leafCellUtilMap);
-                    cellTypeInfo += "(";
+                    cellTypeInfo += " (";
                     for (Map.Entry<EDIFCell, Integer> leafCellEntry : leafCellUtilMap.entrySet()) {
-                        cellTypeInfo += " " + leafCellEntry.getKey().getName() + ":" + leafCellEntry.getValue();
+                        cellTypeInfo += leafCellEntry.getKey().getName() + ":" + leafCellEntry.getValue();
                     }
                     cellTypeInfo += ")";
                 } else {

@@ -9,12 +9,13 @@ import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.JobQueue;
+import com.xilinx.rapidwright.util.RuntimeTracker;
 import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
 
 public class Baseline {
 
     public static void main(String[] args) {
-        String jsonFilePath = "workspace/json/blue-rdma-cross-slr.json";
+        String jsonFilePath = "workspace/json/nvdla-small-256-full.json";
 
         Path paramsPath = Path.of(jsonFilePath).toAbsolutePath();
         DesignParams designParams = new DesignParams(paramsPath);
@@ -24,7 +25,7 @@ public class Baseline {
         HierarchicalLogger logger = new HierarchicalLogger("baseline");
         logger.setUseParentHandlers(false);
         Path logFilePath = workDir.resolve("baseline.log");
-        // Setup Logger
+        // setup logger
         try {
             FileHandler fileHandler = new FileHandler(logFilePath.toString(), false);
             fileHandler.setFormatter(new CustomFormatter());
@@ -41,17 +42,21 @@ public class Baseline {
         // prepare input design
         logger.info("Prepare input design");
         Design inputDesign = Design.readCheckpoint(designParams.getInputDcpPath().toString());
-        VivadoTclCmd.addStrictPblockConstr(inputDesign, designParams.getDesignPblockRange());
-        String clkPortName = designParams.getClkPortNames().get(0);
-        double clkPeriod = designParams.getClkPeriod(clkPortName);
-        VivadoTclCmd.addClockConstraint(inputDesign, clkPortName, clkPeriod);
+        //// set pblock constraints
+        String pblockRange = designParams.getPblockRange("complete");
+        assert pblockRange != null;
+        VivadoTclCmd.addStrictPblockConstr(inputDesign, pblockRange);
+        //// set clock constraints
+        VivadoTclCmd.createClocks(inputDesign, designParams.getClkPortName2PeriodMap());
+        VivadoTclCmd.setAsyncClockGroupsForEachClk(inputDesign, designParams.getClkPortNames());
+
 
         // prepare tcl command file
         logger.info("Prepare tcl command file");
         TclCmdFile tclCmdFile = new TclCmdFile();
         tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
-        tclCmdFile.addCmd(VivadoTclCmd.placeDesign(null));
+        tclCmdFile.addCmd(VivadoTclCmd.placeDesign());
         tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
         tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
         tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, "timing.rpt"));
@@ -66,15 +71,14 @@ public class Baseline {
         JobQueue jobQueue = new JobQueue();
         jobQueue.addJob(vivadoJob);
 
-        long startTime = System.currentTimeMillis();
+        RuntimeTracker timer = new RuntimeTracker("baseline", (short) 0);
+        timer.start();
         boolean success = jobQueue.runAllToCompletion();
-        long endTime = System.currentTimeMillis();
+        timer.stop();
 
         if (success) {
-            long duration = (endTime - startTime) / 1000;
-            long durationMinute = duration / 60;
-            long durationSecond = duration % 60;
-            logger.info("Baseline flow completed in " + durationMinute + ":" + durationSecond + " minutes");
+            logger.info("Baseline flow completed successfully");
+            logger.info(timer.toString());
         } else {
             logger.severe("Baseline flow failed");
         }

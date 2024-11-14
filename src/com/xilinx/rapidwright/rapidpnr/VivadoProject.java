@@ -15,6 +15,7 @@ public class VivadoProject {
     public static final String BUILD_TCL_NAME = "vivado_build.tcl";
     public static final String INPUT_DCP_NAME = "input.dcp";
     public static final String OUTPUT_DCP_NAME = "output.dcp";
+    public static final String OUTPUT_EDIF_NAME = "output.edif";
 
     private Path workDir;
     private Design design;
