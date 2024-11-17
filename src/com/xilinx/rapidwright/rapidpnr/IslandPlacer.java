@@ -97,7 +97,7 @@ public class IslandPlacer {
         job.setCommand(getRunExtIslandPlacerCmd(inputJsonPath, outputJsonPath));
         job.launchJob();
 
-        int maxRunTime = 120; // max run time in seconds
+        int maxRunTime = 1000; // max run time in seconds
         while (!job.isFinished()) {
             try {
                 Thread.sleep(1000);
@@ -179,7 +179,7 @@ public class IslandPlacer {
             assert placeResultJson.groupLocs != null;
 
             // check island placer results
-            assert placeResultJson.groupLocs.size() == abstractNetlist.getGroupNum();
+            assert placeResultJson.groupLocs.size() == abstractNetlist.getGroupNum(): "Num of groups in Json file: " + placeResultJson.groupLocs.size() + " Num of groups in abstract netlist: " + abstractNetlist.getGroupNum();
             for (List<Integer> loc : placeResultJson.groupLocs) {
                 assert loc.size() == 2;
                 assert loc.get(0) >= 0 && loc.get(0) < gridDim.getX();
@@ -219,6 +219,7 @@ public class IslandPlacer {
     }
 
     private String getRunExtIslandPlacerCmd(Path inputJsonPath, Path outputJsonPath) {
-        return extIslandPlacerPath.toString() + " " + inputJsonPath.toString() + " " + outputJsonPath.toString();
+        //TODO: 
+        return extIslandPlacerPath.toString() + "  2800" + " " + inputJsonPath.toString() + " " + outputJsonPath.toString();
     }
 }

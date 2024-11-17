@@ -19,12 +19,13 @@ import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 
 public class NetlistUtils {
+    // public static final HashSet<String> regCellTypeNames = new HashSet<>(Arrays.asList("FDSE", "FDRE", "FDCE", "FDPE", "SRL16E"));
     public static final HashSet<String> regCellTypeNames = new HashSet<>(Arrays.asList("FDSE", "FDRE", "FDCE", "FDPE"));
     public static final HashSet<String> ioBufCellTypeNames = new HashSet<>(Arrays.asList("OBUF", "IBUFCTRL", "INBUF", "IBUF", "BUFGCE"));
     public static final HashSet<String> lutCellTypeNames = new HashSet<>(Arrays.asList("LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6"));
     public static final HashSet<String> srlCellTypeNames = new HashSet<>(Arrays.asList("SRL16E", "SRLC32E"));
 
-    public static final HashSet<String> resTypeNames = new HashSet<>(Arrays.asList("LUT", "FF", "CARRY", "DSP", "BRAM", "IO", "MISCS"));
+    public static final HashSet<String> resTypeNames = new HashSet<>(Arrays.asList("LUT", "FF", "CARRY", "DSP", "BRAM", "IO", "URAM", "MISCS"));
     public static final HashMap<String, String> cellType2ResTypeMap = new HashMap<String, String>() {
         {
             // LUT
@@ -39,6 +40,7 @@ public class NetlistUtils {
             put("RAMD64E", "LUT");
             put("SRL16E", "LUT");
             put("SRLC32E", "LUT");
+            put("RAMS64E", "LUT");
 
             // CARRY
             put("CARRY8", "CARRY");
@@ -68,6 +70,9 @@ public class NetlistUtils {
 
             // DSP
             put("DSP48E2", "DSP");
+            
+            // URAM
+            put("URAM288", "URAM");
         }
     };
 

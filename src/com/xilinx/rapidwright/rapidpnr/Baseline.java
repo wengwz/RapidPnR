@@ -45,7 +45,7 @@ public class Baseline {
         //// set pblock constraints
         String pblockRange = designParams.getPblockRange("complete");
         assert pblockRange != null;
-        VivadoTclCmd.addStrictPblockConstr(inputDesign, pblockRange);
+        VivadoTclCmd.addStrictCellPblockConstr(inputDesign, pblockRange);
         //// set clock constraints
         VivadoTclCmd.createClocks(inputDesign, designParams.getClkPortName2PeriodMap());
         VivadoTclCmd.setAsyncClockGroupsForEachClk(inputDesign, designParams.getClkPortNames());

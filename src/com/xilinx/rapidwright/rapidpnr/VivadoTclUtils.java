@@ -53,61 +53,93 @@ public class VivadoTclUtils {
             public static final String Quick = "Quick";
         }
 
+        public static String createPblock(String pblockName) {
+            return String.format("create_pblock %s", pblockName);
+        }
+
+        public static String resizePblock(String pblockName, String pblockRange) {
+            return String.format(String.format("resize_pblock %s -add { %s }", pblockName, pblockRange));
+        }
+
+        public static List<String> drawPblock(String pblockName, String pblockRange) {
+            List<String> tclCmds = new ArrayList<>();
+            tclCmds.add(createPblock(pblockName));
+            tclCmds.add(resizePblock(pblockName, pblockRange));
+            return tclCmds;
+        }
+
         public static void drawPblock(Design design, String pblockName, String pblockRange) {
-            design.addXDCConstraint(String.format("create_pblock %s", pblockName));
-            design.addXDCConstraint(String.format("resize_pblock %s -add { %s }", pblockName, pblockRange));
+            for (String cmd : drawPblock(pblockName, pblockRange)) {
+                design.addXDCConstraint(cmd);
+            }
+        }
+
+        public static List<String> setPblockProperties(String pblockName, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            List<String> tclCmds = new ArrayList<>();
+            String targetCmd = getPblocks(pblockName);
+            tclCmds.add(setBooleanProperty("IS_SOFT", isSoft, targetCmd));
+            tclCmds.add(setBooleanProperty("EXCLUDE_PLACEMENT", excludePlace, targetCmd));
+            tclCmds.add(setBooleanProperty("CONTAIN_ROUTING", containRoute, targetCmd));
+            return tclCmds;
         }
     
-        public static void setPblockProperties(Design design, String pblockName, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
-            if (!isSoft) {
-                design.addXDCConstraint(String.format("set_property IS_SOFT FALSE [get_pblocks %s]", pblockName));
+        public static void setPblockProperties(Design design, String pblockName, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            for (String cmd : setPblockProperties(pblockName, isSoft, excludePlace, containRoute)) {
+                design.addXDCConstraint(cmd);
             }
-            if (excludePlace) {
-                design.addXDCConstraint(String.format("set_property EXCLUDE_PLACEMENT true [get_pblocks %s]", pblockName));
-            }
-            if (containRouting) {
-                design.addXDCConstraint(String.format("set_property CONTAIN_ROUTING true [get_pblocks %s]", pblockName));
-            }
+        }
+
+        public static String addCellToPblock(String pblockName, String cellName) {
+            return String.format("add_cells_to_pblock %s [%s]", pblockName, getCells(cellName));
         }
     
         public static void addCellToPblock(Design design, String pblockName, String cellName) {
-            design.addXDCConstraint(String.format("add_cells_to_pblock %s [get_cells %s]", pblockName, cellName));
+            design.addXDCConstraint(addCellToPblock(pblockName, cellName));
         }
 
-        public static void addCellToPBlock(Design design, String pblockName) {
+        public static void addCellToPblock(Design design, String pblockName) {
+            // add top cell to pblock
             design.addXDCConstraint(String.format("add_cells_to_pblock %s -top", pblockName));
         }
-    
-        public static void addStrictPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange) {
-            String pblockName = "pblock_" + cellInst.getName();
-            drawPblock(design, pblockName, pblockRange);
-            setPblockProperties(design, pblockName, false, true, true);
-            //setPblockProperties(design, pblockName, false, false, true);
-            addCellToPblock(design, pblockName, cellInst.getName());
+
+        public static List<String> addCellPblockConstr(String cellInstName, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            List<String> cmds = new ArrayList<>();
+            String pblockName = "pblock_" + cellInstName;
+
+            cmds.addAll(drawPblock(pblockName, pblockRange));
+            cmds.addAll(setPblockProperties(pblockName, isSoft, excludePlace, containRoute));
+            cmds.add(addCellToPblock(pblockName, cellInstName));
+
+            return cmds;
         }
 
-        public static void addStrictPblockConstr(Design design, String pblockRange) {
-            String pblockName = "pblock_" + design.getName();
-            drawPblock(design, pblockName, pblockRange);
-            setPblockProperties(design, pblockName, false, true, true);
-            addCellToPBlock(design, pblockName);
-        }
-
-        public static void addPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
-            
-            String pblockName = "pblock_";
-            if (cellInst != null) {
-                pblockName += cellInst.getName();
-            } else {
-                pblockName += design.getName();
+        public static void addCellPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
+            for (String cmd : addCellPblockConstr(cellInst.getName(), pblockRange, isSoft, excludePlace, containRouting)) {
+                design.addXDCConstraint(cmd);
             }
-            drawPblock(design, pblockName, pblockRange);
-            setPblockProperties(design, pblockName, isSoft, excludePlace, containRouting);
+        }
 
-            if (cellInst != null) {
-                addCellToPblock(design, pblockName, cellInst.getName());
-            } else {
-                addCellToPBlock(design, pblockName);
+        public static void addCellPblockConstr(Design design, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
+            String topCellName = design.getNetlist().getTopCell().getName();
+            for (String cmd : addCellPblockConstr(topCellName, pblockRange, isSoft, excludePlace, containRouting)) {
+                design.addXDCConstraint(cmd);
+            }
+        }
+
+        public static List<String> addStrictCellPblockConstr(String cellInstName, String pblockRange) {
+            return addCellPblockConstr(cellInstName, pblockRange, false, true, true);
+        }
+
+        public static void addStrictCellPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange) {
+            for (String cmd : addStrictCellPblockConstr(cellInst.getName(), pblockRange)) {
+                design.addXDCConstraint(cmd);
+            }
+        }
+
+        public static void addStrictCellPblockConstr(Design design, String pblockRange) {
+            String topCellName = design.getNetlist().getTopCell().getName();
+            for (String cmd : addStrictCellPblockConstr(topCellName, pblockRange)) {
+                design.addXDCConstraint(cmd);
             }
         }
 
@@ -151,6 +183,7 @@ public class VivadoTclUtils {
         public static void createClocks(Design design, Map<String, Double> clk2PeriodMap) {
             for (String clkName : clk2PeriodMap.keySet()) {
                 EDIFCell topCell = design.getNetlist().getTopCell();
+                // check existence of port
                 if (topCell.getPort(clkName) != null) {
                     createClock(design, clkName, clk2PeriodMap.get(clkName));
                 }
@@ -251,6 +284,10 @@ public class VivadoTclUtils {
             }
             return cmdString;
         }
+
+        public static String routeDesign() {
+            return routeDesign(null);
+        }
     
         public static String physOptDesign() {
             return "phys_opt_design";
@@ -291,18 +328,18 @@ public class VivadoTclUtils {
             return cmdStr;
         }
     
-        public static String setProperty(String propertyName, boolean value, String cellInstName) {
-            String valStr = value ? "TRUE" : "FALSE";
-            String targetName = "[current_design]";
-            if (cellInstName != null) {
-                targetName = String.format("[get_cells %s]", cellInstName);
-            }
-    
-            return String.format("set_property %s %s %s", propertyName, valStr, targetName); 
+        public static String setProperty(String propertyName, String value, String targetCmd) {
+            return String.format("set_property %s %s [%s]", propertyName, value, targetCmd);
         }
-    
+
+        public static String setBooleanProperty(String propertyName, boolean value, String targetCmd) {
+            String valStr = value ? "TRUE" : "FALSE";
+            return setProperty(propertyName, valStr, targetCmd);
+        }
+
         public static String setPropertyHDReConfig(boolean val, String cellInstName) {
-            return setProperty("HD.RECONFIGURABLE", val, cellInstName);
+            String targetCmd = getCells(cellInstName);
+            return setBooleanProperty("HD.RECONFIGURABLE", val, targetCmd);
         }
     
         public static void setPropertyHDReConfig(Design design, EDIFCellInst cellInst) {
@@ -310,34 +347,46 @@ public class VivadoTclUtils {
         }
     
         public static String setPropertyHDPartition(boolean val, String cellInstName) {
-            return setProperty("HD.PARTITION", val, cellInstName);
+            String targetCmd = getCells(cellInstName);
+            return setBooleanProperty("HD.PARTITION", val, targetCmd);
         }
     
         public static void setPropertyHDPartition(Design design) {
-            design.addXDCConstraint(setPropertyHDPartition(true, null));
+            String targetCmd = "[current_design]";
+            design.addXDCConstraint(setBooleanProperty("HD.PARTITION", true, targetCmd));
         }
     
         public static void setPropertyHDPartition(Design design, EDIFCellInst cellInst) {
             design.addXDCConstraint(setPropertyHDPartition(true, cellInst.getName()));
         }
 
-        public static void setPropertyDontTouch(Design design, String cellInstName) {
-            // set DONT_TOUCH property TRUE for specific cell inst
-            assert cellInstName != null;
-            design.addXDCConstraint(setPropertyDontTouch(true, cellInstName));
-        }
-    
         public static String setPropertyDontTouch(boolean val, String cellInstName) {
-            assert cellInstName != null;
-            return setProperty("DONT_TOUCH", val, cellInstName);
+            String targetCmd = getCells(cellInstName);
+            return setBooleanProperty("DONT_TOUCH", val, targetCmd);
+        }
+
+        public static void setPropertyDontTouch(Design design, EDIFCellInst cellInst) {
+            design.addXDCConstraint(setPropertyDontTouch(true, cellInst.getName()));
         }
     
-        public static String exitVivad() {
+        public static String exitVivado() {
             return "exit";
+        }
+
+        public static String source(String filePath) {
+            return String.format("source %s", filePath);
         }
     
         public static String setMaxThread(int maxThreadNum) {
             return String.format("set_param general.maxThreads %d", maxThreadNum);
+        }
+
+        public static String getCells(String pattern) {
+            return String.format("get_cells %s", pattern);
+        }
+
+        public static String getPblocks(String pattern) {
+            return String.format("get_pblocks %s", pattern);
         }
     
     }

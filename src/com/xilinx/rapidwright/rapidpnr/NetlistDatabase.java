@@ -144,7 +144,7 @@ public class NetlistDatabase {
                 assert fanoutPortInsts.size() == 1;
                 EDIFPortInst fanoutPortInst = fanoutPortInsts.get(0);
                 fanoutRstNet = fanoutPortInst.getNet();
-                logger.info("" + searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
+                logger.info("  " + searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
             }
             
             assert !globalResetNets.contains(fanoutRstNet);
@@ -154,7 +154,7 @@ public class NetlistDatabase {
                 
                 EDIFCellInst incidentCellInst = incidentPortInst.getCellInst();
                 if (incidentCellInst == null) continue; // Special case for toplevel reset ports
-                logger.info("  " + incidentCellInst.getName() + "(" + incidentCellInst.getCellName() + ")" + ": " + incidentPortInst.getName());
+                logger.info("    " + incidentCellInst.getName() + "(" + incidentCellInst.getCellName() + ")" + ": " + incidentPortInst.getName());
                 
                 //assert isRegisterCellInst(incidentCellInst): "Non-Register Instances on The Reset Tree";
                 // Reset Signals may connect to RAMB36E2 and DSP
@@ -176,6 +176,7 @@ public class NetlistDatabase {
                     List<EDIFPortInst> incidentCellInstOutPorts = NetlistUtils.getOutPortInstsOf(incidentCellInst);
                     //assert incidentCellInstOutPorts.size() == 1;
                     EDIFPortInst incidentCellInstOutPort = incidentCellInstOutPorts.get(0);
+                    logger.info("    LUT Reset Signal Fanout: " + (incidentCellInstOutPort.getNet().getPortInsts().size() - 1));
                     for (EDIFPortInst portInst : NetlistUtils.getSinkPortsOf(incidentCellInstOutPort.getNet())) {
                         if (!NetlistUtils.isRegisterCellInst(portInst.getCellInst())) {
                             nonRegLutResetSinkInsts.add(portInst.getCellInst());
