@@ -201,7 +201,7 @@ public class IncrementalIslandPnR extends PhysicalImpl{
 
         String islandPblockRange = getPblockRangeOfIsland(islandLoc);
         // Add pblock constraints on top cell
-        VivadoTclCmd.addCellPblockConstr(design, islandPblockRange, false, false, true);
+        VivadoTclCmd.addTopCellPblockConstr(design, islandPblockRange, false, false, true);
 
         Coordinate2D loc = getUpBoundaryLocOf(islandLoc);
         if (loc != null) {

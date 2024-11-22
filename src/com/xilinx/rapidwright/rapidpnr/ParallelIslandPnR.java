@@ -221,7 +221,7 @@ public class ParallelIslandPnR extends PhysicalImpl{
 
         String islandPblockRange = getPblockRangeOfIsland(islandLoc);
         if (addPblockOnTop) {
-            VivadoTclCmd.addCellPblockConstr(design, islandPblockRange, false, false, true);
+            VivadoTclCmd.addTopCellPblockConstr(design, islandPblockRange, false, false, true);
         } else {
             VivadoTclCmd.addStrictCellPblockConstr(design, islandCellInst, islandPblockRange);
         }

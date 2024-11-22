@@ -108,6 +108,10 @@ import com.xilinx.rapidwright.util.StringTools;
 import com.xilinx.rapidwright.util.Unzip;
 import com.xilinx.rapidwright.util.performance_evaluation.PerformanceEvaluation;
 
+import com.xilinx.rapidwright.rapidpnr.RapidPnR;
+import com.xilinx.rapidwright.rapidpnr.TestMaxFrequency;
+import com.xilinx.rapidwright.rapidpnr.Baseline;
+
 public class MainEntrypoint {
     interface MainStyleFunction<E extends Throwable> {
         void main(String[] args) throws E;
@@ -201,6 +205,10 @@ public class MainEntrypoint {
         addFunction("TileColumnPattern", TileColumnPattern::main);
         addFunction("Unzip", Unzip::main);
         addFunction("UpdateRoutingUsingSATRouter", UpdateRoutingUsingSATRouter::main);
+
+        addFunction("RapidPnR", RapidPnR::main);
+        addFunction("TestMaxFrequency", TestMaxFrequency::main);
+        addFunction("Baseline", Baseline::main);
     }
 
     private static void listModes(PrintStream ps) {

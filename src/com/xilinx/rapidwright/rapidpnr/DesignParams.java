@@ -146,6 +146,13 @@ public class DesignParams {
         }
     }
 
+    // setters
+    public void setClkPeriod(String clkName, Double period) {
+        assert clkPortNames.contains(clkName): "Clock port name not found: " + clkName;
+        clkPeriods.replace(clkName, period);
+    }
+
+    // getters
     public String getDesignName() {
         return designName;
     }

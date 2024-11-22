@@ -30,7 +30,7 @@ public class CompletePnR extends PhysicalImpl {
         logger.info("Start running PnR flow for floorplanned complete design");
         logger.newSubStep();
 
-        Path workDir = dirManager.addSubDir("complete");
+        Path workDir = dirManager.addSubDir("complete-reconfig");
         // create design
         Design completeDesign = createCompleteDesign();
         // create tcl command file
@@ -84,7 +84,8 @@ public class CompletePnR extends PhysicalImpl {
                 String cellName = getIslandName(x, y);
                 String pblockRange = getPblockRangeOfIsland(Coordinate2D.of(x, y));
                 tclCmdFile.addCmds(VivadoTclCmd.addCellPblockConstr(cellName, pblockRange, false, false, true));
-                tclCmdFile.addCmd(VivadoTclCmd.setPropertyDontTouch(true, cellName));
+                //tclCmdFile.addCmd(VivadoTclCmd.setPropertyDontTouch(true, cellName));
+                tclCmdFile.addCmd(VivadoTclCmd.setPropertyHDReConfig(true, cellName));
             }
         }
 

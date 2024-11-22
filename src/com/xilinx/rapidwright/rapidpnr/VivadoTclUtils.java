@@ -92,14 +92,18 @@ public class VivadoTclUtils {
         public static String addCellToPblock(String pblockName, String cellName) {
             return String.format("add_cells_to_pblock %s [%s]", pblockName, getCells(cellName));
         }
-    
+
         public static void addCellToPblock(Design design, String pblockName, String cellName) {
             design.addXDCConstraint(addCellToPblock(pblockName, cellName));
         }
 
-        public static void addCellToPblock(Design design, String pblockName) {
+        public static String addTopCellToPblock(String pblockName) {
+            return String.format("add_cells_to_pblock %s -top", pblockName);
+        }
+
+        public static void addTopCellToPblock(Design design, String pblockName) {
             // add top cell to pblock
-            design.addXDCConstraint(String.format("add_cells_to_pblock %s -top", pblockName));
+            design.addXDCConstraint(addTopCellToPblock(pblockName));
         }
 
         public static List<String> addCellPblockConstr(String cellInstName, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
@@ -113,15 +117,25 @@ public class VivadoTclUtils {
             return cmds;
         }
 
-        public static void addCellPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
-            for (String cmd : addCellPblockConstr(cellInst.getName(), pblockRange, isSoft, excludePlace, containRouting)) {
+        public static void addCellPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            for (String cmd : addCellPblockConstr(cellInst.getName(), pblockRange, isSoft, excludePlace, containRoute)) {
                 design.addXDCConstraint(cmd);
             }
         }
 
-        public static void addCellPblockConstr(Design design, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRouting) {
-            String topCellName = design.getNetlist().getTopCell().getName();
-            for (String cmd : addCellPblockConstr(topCellName, pblockRange, isSoft, excludePlace, containRouting)) {
+        public static List<String> addTopCellPblockConstr(String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            List<String> cmds = new ArrayList<>();
+            String pblockName = "pblock_top";
+
+            cmds.addAll(drawPblock(pblockName, pblockRange));
+            cmds.addAll(setPblockProperties(pblockName, isSoft, excludePlace, containRoute));
+            cmds.add(addTopCellToPblock(pblockName));
+
+            return cmds;
+        }
+
+        public static void addTopCellPblockConstr(Design design, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            for (String cmd : addTopCellPblockConstr(pblockRange, isSoft, excludePlace, containRoute)) {
                 design.addXDCConstraint(cmd);
             }
         }
@@ -136,9 +150,12 @@ public class VivadoTclUtils {
             }
         }
 
-        public static void addStrictCellPblockConstr(Design design, String pblockRange) {
-            String topCellName = design.getNetlist().getTopCell().getName();
-            for (String cmd : addStrictCellPblockConstr(topCellName, pblockRange)) {
+        public static List<String> addStrictTopCellPblockConstr(String pblockRange) {
+            return addTopCellPblockConstr(pblockRange, false, true, true);
+        }
+
+        public static void addStrictTopCellPblockConstr(Design design, String pblockRange) {
+            for (String cmd : addStrictTopCellPblockConstr(pblockRange)) {
                 design.addXDCConstraint(cmd);
             }
         }
@@ -387,6 +404,14 @@ public class VivadoTclUtils {
 
         public static String getPblocks(String pattern) {
             return String.format("get_pblocks %s", pattern);
+        }
+
+        public static List<String> saveWorstSetupSlack(String fileName) {
+            List<String> cmds = new ArrayList<>();
+            cmds.add("set fd [open " + fileName + " w]");
+            cmds.add("puts $fd [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]");
+            cmds.add("close $fd");
+            return cmds;
         }
     
     }
