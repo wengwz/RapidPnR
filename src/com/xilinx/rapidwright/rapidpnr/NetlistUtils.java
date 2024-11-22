@@ -2,13 +2,11 @@ package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
@@ -25,22 +23,33 @@ public class NetlistUtils {
     public static final HashSet<String> lutCellTypeNames = new HashSet<>(Arrays.asList("LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6"));
     public static final HashSet<String> srlCellTypeNames = new HashSet<>(Arrays.asList("SRL16E", "SRLC32E"));
 
-    public static final HashSet<String> resTypeNames = new HashSet<>(Arrays.asList("LUT", "FF", "CARRY", "DSP", "BRAM", "IO", "URAM", "MISCS"));
+    // public static final HashSet<String> resTypeNames = new HashSet<>(Arrays.asList("LUT", "FF", "CARRY", "DSP", "BRAM", "IO", "URAM", "MISCS"));
+    public static final HashSet<String> resTypeNames = new HashSet<>(Arrays.asList("LUT", "LUTM", "FF", "CARRY", "DSP", "BRAM", "IO", "URAM", "MISCS"));
+
     public static final HashMap<String, String> cellType2ResTypeMap = new HashMap<String, String>() {
         {
             // LUT
             put("LUT1", "MISCS");
+            
             put("LUT2", "LUT");
             put("LUT3", "LUT");
             put("LUT4", "LUT");
             put("LUT5", "LUT");
             put("LUT6", "LUT");
+            
             put("RAMD32", "LUT");
             put("RAMS32", "LUT");
             put("RAMD64E", "LUT");
             put("SRL16E", "LUT");
             put("SRLC32E", "LUT");
             put("RAMS64E", "LUT");
+
+            // put("RAMD32",  "LUTM");
+            // put("RAMS32",  "LUTM");
+            // put("RAMD64E", "LUTM");
+            // put("SRL16E",  "LUTM");
+            // put("SRLC32E", "LUTM");
+            // put("RAMS64E", "LUTM");
 
             // CARRY
             put("CARRY8", "CARRY");
@@ -77,6 +86,25 @@ public class NetlistUtils {
     };
 
     public static HashSet<String> pseudoLeafCellNames = new HashSet<>(Arrays.asList("DSP48E2"));
+
+    public static Map<String, Map<String, Integer>> nonPrimUnisimCellUtils;
+
+    static {
+        nonPrimUnisimCellUtils = new HashMap<>();
+        nonPrimUnisimCellUtils.put("RAM32M", new HashMap<>() {
+            {
+                put("RAMD32", 3);
+                put("RAMS32", 1);
+            }
+        });
+
+        nonPrimUnisimCellUtils.put("RAM32M16", new HashMap<>() {
+            {
+                put("RAMD32", 7);
+                put("RAMS32", 1);
+            }
+        });
+    }
 
     public static Boolean isRegisterCellInst(EDIFCellInst cellInst) {
         return regCellTypeNames.contains(cellInst.getCellType().getName());
@@ -139,6 +167,22 @@ public class NetlistUtils {
             } else {
                 leafCellUtilMap.put(cell, 1);
             }
+        } else if (nonPrimUnisimCellUtils.containsKey(cell.getName())) {
+            EDIFLibrary hdiPrimLibrary = cell.getLibrary().getNetlist().getHDIPrimitivesLibrary();
+            
+            Map<String, Integer> unisimCellUtilMap = nonPrimUnisimCellUtils.get(cell.getName());
+            for (Map.Entry<String, Integer> entry : unisimCellUtilMap.entrySet()) {
+                String primCellName = entry.getKey();
+                Integer amount = entry.getValue();
+                EDIFCell primCell = hdiPrimLibrary.getCell(primCellName);
+                if (leafCellUtilMap.containsKey(primCell)) {
+                    Integer originAmount = leafCellUtilMap.get(primCell);
+                    leafCellUtilMap.replace(primCell, originAmount + amount);
+                } else {
+                    leafCellUtilMap.put(primCell, amount);
+                }
+            }
+
         } else {
             for (EDIFCellInst childCellInst : cell.getCellInsts()) {
                 getLeafCellUtils(childCellInst.getCellType(), leafCellUtilMap);

@@ -340,7 +340,7 @@ public class NetlistDatabase {
                     NetlistUtils.getLeafCellUtils(cell, leafCellUtilMap);
                     cellTypeInfo += " (";
                     for (Map.Entry<EDIFCell, Integer> leafCellEntry : leafCellUtilMap.entrySet()) {
-                        cellTypeInfo += leafCellEntry.getKey().getName() + ":" + leafCellEntry.getValue();
+                        cellTypeInfo += leafCellEntry.getKey().getName() + ":" + leafCellEntry.getValue() + " ";
                     }
                     cellTypeInfo += ")";
                 } else {
