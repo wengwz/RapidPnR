@@ -93,18 +93,19 @@ public class RapidPnR {
     }
 
     private void runIslandPlacement() {
-        IslandPlacer islandPlacer = new IslandPlacer(logger, dirManager, designParams);
+        //AbstractIslandPlacer islandPlacer = new IslandPlacer(logger, dirManager, designParams);
+        AbstractIslandPlacer islandPlacer = new IslandPlacer2(logger, dirManager, designParams);
         groupPlaceResults = islandPlacer.run(abstractNetlist);
     }
 
     private void runPhysicalImplementation() {
         PhysicalImpl physicalImpl;
 
-        //physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase);
-        //physicalImpl.run(abstractNetlist, groupPlaceResults);
-
-        physicalImpl = new ParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
+        physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase);
         physicalImpl.run(abstractNetlist, groupPlaceResults);
+
+        // physicalImpl = new ParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
+        // physicalImpl.run(abstractNetlist, groupPlaceResults);
 
         // physicalImpl = new IncrementalIslandPnR(logger, dirManager, designParams, netlistDatabase);
         // physicalImpl.run(abstractNetlist, groupPlaceResults);
@@ -161,17 +162,17 @@ public class RapidPnR {
     }
 
     public static void main(String[] args) {
-        //String jsonFilePath = "workspace/json/blue-rdma-3n.json";
+        String jsonFilePath = "workspace/json/blue-rdma-3n.json";
         //String jsonFilePath = "workspace/json/nvdla-opt.json";
         //String jsonFilePath = "workspace/json/cnn13x2.json";
         //String jsonFilePath = "workspace/json/miaow.json";
-        String jsonFilePath = "workspace/json/nvdla-small-256-full.json";
-        //String jsonFilePath = "workspace/json/supranational-ntt.json";
+        //String jsonFilePath = "workspace/json/nvdla-small-256-full.json";
+        // String jsonFilePath = "workspace/json/mm_int16.json";
         
         RapidPnR rapidPnR = new RapidPnR(jsonFilePath);
         //rapidPnR.run(RapidPnRStep.NETLIST_ABSTRACTION);
-        //rapidPnR.run(RapidPnRStep.ISLAND_PLACEMENT);
-        rapidPnR.run(RapidPnRStep.PHYSICAL_IMPLEMENTATION);
+        rapidPnR.run(RapidPnRStep.ISLAND_PLACEMENT);
+        //rapidPnR.run(RapidPnRStep.PHYSICAL_IMPLEMENTATION);
     }
 
 }

@@ -30,6 +30,7 @@ public class AbstractNetlist {
 
     public List<Map<EDIFCell, Integer>> group2LeafCellUtils;
     public List<Integer> group2LeafCellNum;
+    public List<Map<String, Integer>> group2ResUtils;
 
     public AbstractNetlist(HierarchicalLogger logger, NetlistDatabase netlistDatabase) {
         this.logger = logger;
@@ -61,6 +62,7 @@ public class AbstractNetlist {
         group2EdgeIds = new ArrayList<>();
         group2LeafCellUtils = new ArrayList<>();
         group2LeafCellNum = new ArrayList<>();
+        group2ResUtils = new ArrayList<>();
 
 
         Set<EDIFNet> visitedNetsCls = new HashSet<>();
@@ -141,6 +143,8 @@ public class AbstractNetlist {
                 NetlistUtils.getLeafCellUtils(cellInstInGrp.getCellType(), primCellUtilMap);
             }
             group2LeafCellUtils.add(primCellUtilMap);
+            group2ResUtils.add(NetlistUtils.getResTypeUtils(primCellUtilMap));
+            
             Integer primCellNum = primCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
             group2LeafCellNum.add(primCellNum);
         }
@@ -209,14 +213,8 @@ public class AbstractNetlist {
             Set<Integer> grpIncidnetEdges = group2EdgeIds.get(i);
             Integer grpPrimCellNum = group2LeafCellNum.get(i);
             Integer grpLutNum = 0;
-
-            for (Map.Entry<EDIFCell, Integer> entry : group2LeafCellUtils.get(i).entrySet()) {
-                // if (NetlistUtils.cellType2ResTypeMap.get(entry.getKey().getName()) == null) {
-                //     continue;
-                // }
-                if (NetlistUtils.cellType2ResTypeMap.get(entry.getKey().getName()).equals("LUT")) {
-                    grpLutNum += entry.getValue();
-                }
+            if (group2ResUtils.get(i).get("LUT") != null) {
+                grpLutNum = group2ResUtils.get(i).get("LUT");
             }
 
             if (leafCellNum2AmountMap.containsKey(grpPrimCellNum)) {
@@ -259,13 +257,7 @@ public class AbstractNetlist {
         logger.endSubStep();
 
 
-        Integer totalLUTNum = 0;
-        for (Map.Entry<EDIFCell, Integer> entry : netlistDatabase.netlistLeafCellUtilMap.entrySet()) {
-            if (NetlistUtils.cellType2ResTypeMap.get(entry.getKey().getName()).equals("LUT")) {
-                totalLUTNum += entry.getValue();
-            }
-        }
-
+        Integer totalLUTNum = group2ResUtils.stream().mapToInt(map -> (map.get("LUT") == null) ? 0 : map.get("LUT")).sum();
         logger.info("Total Num of LUTs: " + totalLUTNum);
         logger.info("Group LUT Num Distribution:");
         List<Map.Entry<Integer, Integer>> sortedLUTNum2AmountMap = lutNum2AmountMap.entrySet()
@@ -336,13 +328,20 @@ public class AbstractNetlist {
         logger.endSubStep();
     }
 
-
     int getGroupNum() {
         return group2CellInsts.size();
     }
 
     int getEdgeNum() {
         return edge2GroupIds.size();
+    }
+
+    int getLeafCellNumOfGroup(int id) {
+        return group2LeafCellNum.get(id);
+    }
+
+    Map<String, Integer> getResUtilOfGroup(int id) {
+        return group2ResUtils.get(id);
     }
 
     Set<EDIFCellInst> getCellInstsOfGroup(int grpId) {

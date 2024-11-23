@@ -16,16 +16,9 @@ import com.google.gson.GsonBuilder;
 import com.xilinx.rapidwright.util.LocalJob;
 
 
-public class IslandPlacer {
+public class IslandPlacer extends AbstractIslandPlacer{
 
-    private HierarchicalLogger logger;
-    private DirectoryManager dirManager;
     private Path extIslandPlacerPath;
-    private Path islandPlaceResPath;
-
-    private Coordinate2D gridDim;
-    private List<Integer> gridLimit;
-    private AbstractNetlist abstractNetlist;
 
     private static class IslandPlacerInputJson {
         public static class AbstractGroup {
@@ -53,19 +46,14 @@ public class IslandPlacer {
         public List<AbstractEdge> abstractEdges;
     }
 
-    private class IslandPlacerOutputJson {
-        List<List<Integer>> groupLocs;
-    }
+    // private class IslandPlacerOutputJson {
+    //     List<List<Integer>> groupLocs;
+    // }
 
     public IslandPlacer(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams params) {
-        this.logger = logger;
-        this.dirManager = dirManager;
+        super(logger, dirManager, params);
 
         this.extIslandPlacerPath = params.getExtIslandPlacerPath();
-        this.gridDim = params.getGridDim();
-        this.gridLimit = params.getGridLimit();
-        this.islandPlaceResPath = params.getIslandPlaceResPath();
-
         assert Files.exists(extIslandPlacerPath): "External island placer not found on: " + extIslandPlacerPath.toString();
     }
 
@@ -76,7 +64,7 @@ public class IslandPlacer {
         if (islandPlaceResPath != null) {
             logger.info("Start reading island placer results from previous run");
 
-            List<Coordinate2D> placeResults = readIslandPlacerOutputJson(islandPlaceResPath);
+            List<Coordinate2D> placeResults = readIslandPlaceResultJson(islandPlaceResPath);
             logger.info("Complete reading island placer results from previous run");
 
             return placeResults;
@@ -114,7 +102,8 @@ public class IslandPlacer {
         assert job.jobWasSuccessful(): "Fail to run external island placer";
         logger.info("External island placer finished");
 
-        List<Coordinate2D> placeResults = readIslandPlacerOutputJson(outputJsonPath);
+        List<Coordinate2D> placeResults = readIslandPlaceResultJson(outputJsonPath);
+        assert placeResults.size() == abstractNetlist.getGroupNum(): "Num of groups in Json file: " + placeResults.size() + " Num of groups in abstract netlist: " + abstractNetlist.getGroupNum();
 
         logger.endSubStep();
         logger.info("Complete running island placer");
@@ -169,54 +158,29 @@ public class IslandPlacer {
 
     }
 
-    private List<Coordinate2D> readIslandPlacerOutputJson(Path outputJsonPath) {
-
-        logger.info("Start reading island placer output in JSON format");
-        List<Coordinate2D> groupPlaceResults = new ArrayList<>();
-        Gson gson = new GsonBuilder().create();
-        try (FileReader reader = new FileReader(outputJsonPath.toFile())) {
-            IslandPlacerOutputJson placeResultJson = gson.fromJson(reader, IslandPlacerOutputJson.class);
-            assert placeResultJson.groupLocs != null;
-
-            // check island placer results
-            assert placeResultJson.groupLocs.size() == abstractNetlist.getGroupNum(): "Num of groups in Json file: " + placeResultJson.groupLocs.size() + " Num of groups in abstract netlist: " + abstractNetlist.getGroupNum();
-            for (List<Integer> loc : placeResultJson.groupLocs) {
-                assert loc.size() == 2;
-                assert loc.get(0) >= 0 && loc.get(0) < gridDim.getX();
-                assert loc.get(1) >= 0 && loc.get(1) < gridDim.getY();
-
-                groupPlaceResults.add(new Coordinate2D(loc.get(0), loc.get(1)));
-            }
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        logger.info("Complete reading island placer output in JSON format");
-        return groupPlaceResults;
-    }
-
-    private Map<Set<Integer>, List<Integer>> compressAbstractEdges(List<Set<Integer>> edge2GroupIds) {
-        logger.info("Start compressing abstract edges");
-        logger.newSubStep();
-
-        Map<Set<Integer>, List<Integer>> incidentGroup2EdgeIdMap = new HashMap<>();
 
 
-        for (int i = 0; i < edge2GroupIds.size(); i++) {
-            Set<Integer> incidentGroupIds = edge2GroupIds.get(i);
-            if (incidentGroup2EdgeIdMap.containsKey(incidentGroupIds)) {
-                incidentGroup2EdgeIdMap.get(incidentGroupIds).add(i);
-            } else {
-                incidentGroup2EdgeIdMap.put(incidentGroupIds, new ArrayList<>(Arrays.asList(i)));
-            }
-        }
+    // private Map<Set<Integer>, List<Integer>> compressAbstractEdges(List<Set<Integer>> edge2GroupIds) {
+    //     logger.info("Start compressing abstract edges");
+    //     logger.newSubStep();
 
-        logger.info("Total number of compressed edges: " + incidentGroup2EdgeIdMap.size());
-        logger.endSubStep();
-        logger.info("Complete compressing abstract edges");
-        return incidentGroup2EdgeIdMap;
-    }
+    //     Map<Set<Integer>, List<Integer>> incidentGroup2EdgeIdMap = new HashMap<>();
+
+
+    //     for (int i = 0; i < edge2GroupIds.size(); i++) {
+    //         Set<Integer> incidentGroupIds = edge2GroupIds.get(i);
+    //         if (incidentGroup2EdgeIdMap.containsKey(incidentGroupIds)) {
+    //             incidentGroup2EdgeIdMap.get(incidentGroupIds).add(i);
+    //         } else {
+    //             incidentGroup2EdgeIdMap.put(incidentGroupIds, new ArrayList<>(Arrays.asList(i)));
+    //         }
+    //     }
+
+    //     logger.info("Total number of compressed edges: " + incidentGroup2EdgeIdMap.size());
+    //     logger.endSubStep();
+    //     logger.info("Complete compressing abstract edges");
+    //     return incidentGroup2EdgeIdMap;
+    // }
 
     private String getRunExtIslandPlacerCmd(Path inputJsonPath, Path outputJsonPath) {
         //TODO: 
