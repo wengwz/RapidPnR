@@ -2,6 +2,7 @@ package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Collections;
 
 public class StatisticsUtils {
     public static Double getMean(List<Double> data) {
@@ -29,6 +30,26 @@ public class StatisticsUtils {
         return means;
     }
 
+    public static <T extends Comparable<? super T>> T getMax(List<T> data) {
+        return Collections.max(data);
+    }
+
+    public static List<Double> getMax(List<List<Double>> data, int dim) {
+        assert dim == 0 || dim == 1;
+        assert data.stream().mapToInt(List::size).distinct().count() == 1;
+
+        if (dim == 0) {
+            data = getTranspose(data);
+        }
+
+        List<Double> maxes = new ArrayList<>();
+        for (List<Double> row : data) {
+            maxes.add(getMax(row));
+        }
+
+        return maxes;
+    }
+
     public static List<List<Double>> getTranspose(List<List<Double>> data) {
         List<List<Double>> transposed = new ArrayList<>();
         assert data.stream().mapToInt(List::size).distinct().count() == 1;
@@ -40,6 +61,24 @@ public class StatisticsUtils {
             transposed.add(row);
         }
         return transposed;
+    }
+
+    public static Double getImbalanceRatio(Double data, List<Double> dataVec) {
+        Double mean = getMean(dataVec);
+        return Math.abs(mean - data) / mean;
+    }
+
+    public static List<Double> getImbalanceRatio(List<Double> data, List<List<Double>> dataVec) {
+        assert dataVec.stream().mapToInt(List::size).distinct().count() == 1;
+        assert data.size() == dataVec.get(0).size();
+
+        List<List<Double>> transposedDataVec = getTranspose(dataVec);
+        List<Double> imbalanceRatios = new ArrayList<>();
+        for (int i = 0; i < data.size(); i++) {
+            imbalanceRatios.add(getImbalanceRatio(data.get(i), transposedDataVec.get(i)));
+        }
+
+        return imbalanceRatios;
     }
 
     public static Double getVariance(List<Double> data) {

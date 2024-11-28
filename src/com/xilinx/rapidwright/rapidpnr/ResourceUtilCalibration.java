@@ -22,11 +22,13 @@ public class ResourceUtilCalibration {
         String partName = "xcvu3p-ffvc1517-1-e";
         Map<Unisim, Integer> unisimCellType2AmountMap = new HashMap<>();
 
-        unisimCellType2AmountMap.put(Unisim.LUT2, 1);
+        Boolean commonInputNet = true;
+        unisimCellType2AmountMap.put(Unisim.LUT2, 2);
         unisimCellType2AmountMap.put(Unisim.LUT3, 3);
-        unisimCellType2AmountMap.put(Unisim.RAM32X1D, 1);
-        unisimCellType2AmountMap.put(Unisim.RAM32M16, 1);
-        unisimCellType2AmountMap.put(Unisim.RAM32M, 1);
+        unisimCellType2AmountMap.put(Unisim.LUT5, 2);
+        // unisimCellType2AmountMap.put(Unisim.RAM32X1D, 1);
+        // unisimCellType2AmountMap.put(Unisim.RAM32M16, 1);
+        // unisimCellType2AmountMap.put(Unisim.RAM32M, 1);
         //Design baseDesign = new Design("base", "xcvu3p-ffvc1517-1-e");
 
         if (!workDir.toFile().exists()) {
@@ -55,11 +57,21 @@ public class ResourceUtilCalibration {
 
                 for (EDIFPort port : cellType.getPorts()) {
                     String topPortName = cellInst.getName() + "_" + port.getName();
-                    EDIFPort topPort = topCell.createPort(topPortName, port.getDirection(), port.getWidth());
+                    if (commonInputNet && port.isInput()) {
+                        topPortName = port.getName();
+                    }
+
+                    EDIFPort topPort = topCell.getPort(topPortName);
+                    if (topPort == null) {
+                        topPort = topCell.createPort(topPortName, port.getDirection(), port.getWidth());
+                    }
+
                     if (port.getWidth() == 1) {
-                        EDIFNet net = topCell.createNet(topPortName);
-    
-                        net.createPortInst(topPort);
+                        EDIFNet net = topCell.getNet(topPortName);
+                        if (net == null) {
+                            net = topCell.createNet(topPortName);
+                            net.createPortInst(topPort);
+                        }
                         net.createPortInst(port, cellInst);
                     } else {
                         for (int i = 0; i < topPort.getWidth(); i++) {

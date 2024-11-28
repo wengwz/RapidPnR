@@ -280,6 +280,7 @@ public class NetlistDatabase {
         netlistUnisimCellNum = originTopCell.getCellInsts().size(); // TODO: only applicable for flat netlist
         netlistLeafCellUtilMap = new HashMap<>();
         NetlistUtils.getLeafCellUtils(originTopCell, netlistLeafCellUtilMap);
+        NetlistUtils.calibrateLUTUtils(originTopCell, netlistLeafCellUtilMap);
         netlistLeafCellNum = netlistLeafCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
 
         logger.info("Complete collecting resource utilization info");

@@ -38,8 +38,10 @@ public class DesignParams {
     private Map<String, String> pblockName2RangeMap;
 
     // Island Placer Parameters
+    private Double imbalanceFac = null;
+    private Integer randomSeed = null;
     private Path extIslandPlacerPath;
-    private Path islandPlaceResPath;
+    private Path islandPlaceResPath = null;
 
 
     private class ParamsJson {
@@ -60,6 +62,8 @@ public class DesignParams {
         public String vivadoCmd;
         public Integer vivadoMaxThreadNum;
 
+        public Integer randomSeed;
+        public Double imbalanceFac;
         public String extIslandPlacerPath;
         public String islandPlaceResPath;
 
@@ -137,8 +141,14 @@ public class DesignParams {
 
             if (params.islandPlaceResPath != null) {
                 islandPlaceResPath = Path.of(params.islandPlaceResPath).toAbsolutePath();
-            } else {
-                islandPlaceResPath = null;
+            }
+
+            if (params.randomSeed != null) {
+                this.randomSeed = params.randomSeed;
+            }
+
+            if (params.imbalanceFac != null) {
+                this.imbalanceFac = params.imbalanceFac;
             }
 
         } catch (Exception e) {
@@ -235,6 +245,14 @@ public class DesignParams {
 
     public Path getIslandPlaceResPath() {
         return islandPlaceResPath;
+    }
+
+    public Integer getRandomSeed() {
+        return randomSeed;
+    }
+
+    public Double getImbalanceFac() {
+        return imbalanceFac;
     }
 
     public static void main(String[] args) {

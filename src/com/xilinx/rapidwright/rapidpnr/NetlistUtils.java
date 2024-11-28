@@ -7,12 +7,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFLibrary;
 import com.xilinx.rapidwright.edif.EDIFNet;
-import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 
@@ -37,19 +37,19 @@ public class NetlistUtils {
             put("LUT5", "LUT");
             put("LUT6", "LUT");
             
-            put("RAMD32", "LUT");
-            put("RAMS32", "LUT");
-            put("RAMD64E", "LUT");
-            put("SRL16E", "LUT");
-            put("SRLC32E", "LUT");
-            put("RAMS64E", "LUT");
+            // put("RAMD32", "LUT");
+            // put("RAMS32", "LUT");
+            // put("RAMD64E", "LUT");
+            // put("SRL16E", "LUT");
+            // put("SRLC32E", "LUT");
+            // put("RAMS64E", "LUT");
 
-            // put("RAMD32",  "LUTM");
-            // put("RAMS32",  "LUTM");
-            // put("RAMD64E", "LUTM");
-            // put("SRL16E",  "LUTM");
-            // put("SRLC32E", "LUTM");
-            // put("RAMS64E", "LUTM");
+            put("RAMD32",  "LUTM");
+            put("RAMS32",  "LUTM");
+            put("RAMD64E", "LUTM");
+            put("SRL16E",  "LUTM");
+            put("SRLC32E", "LUTM");
+            put("RAMS64E", "LUTM");
 
             // CARRY
             put("CARRY8", "CARRY");
@@ -188,6 +188,78 @@ public class NetlistUtils {
                 getLeafCellUtils(childCellInst.getCellType(), leafCellUtilMap);
             }
         }
+    }
+
+    public static void calibrateLUTUtils(EDIFCell topCell, Map<EDIFCell, Integer> leafCellUtilMap) {
+        calibrateLUTUtils(new HashSet<>(topCell.getCellInsts()), leafCellUtilMap);
+    }
+    public static void calibrateLUTUtils(Set<EDIFCellInst> cellInstsRange, Map<EDIFCell, Integer> leafCellUtilMap) {
+        Set<String> packedLUTCellTypeName = new HashSet<>(Arrays.asList("LUT2", "LUT3", "LUT4", "LUT5"));
+        //Set<String> packedLUTCellTypeName = new HashSet<>(Arrays.asList("LUT4", "LUT5"));
+
+        Set<EDIFCellInst> packedLUTCellInsts = new HashSet<>();
+
+        for (EDIFCellInst cellInst : cellInstsRange) {
+            String cellTypeName = cellInst.getCellType().getName();
+
+            if (!packedLUTCellTypeName.contains(cellTypeName)) continue;
+            if (packedLUTCellInsts.contains(cellInst)) continue;
+
+            Map<EDIFCellInst, Integer> neighbor2CommonNetNum = new HashMap<>();
+            
+            List<EDIFPortInst> inputPorts = getInPortInstsOf(cellInst);
+            for (EDIFPortInst portInst : inputPorts) {
+                EDIFNet net = portInst.getNet();
+                
+                for (EDIFPortInst sinkPortInst : getSinkPortsOf(net)) {
+                    EDIFCellInst sinkCellInst = sinkPortInst.getCellInst();
+                    if (sinkCellInst == null || sinkCellInst == cellInst) continue;
+
+                    if (sinkCellInst.getCellName().equals(cellTypeName)) {
+                        if (neighbor2CommonNetNum.containsKey(sinkCellInst)) {
+                            Integer netNum = neighbor2CommonNetNum.get(sinkCellInst);
+                            neighbor2CommonNetNum.replace(sinkCellInst, netNum + 1);
+                        } else {
+                            neighbor2CommonNetNum.put(sinkCellInst, 1);
+                        }
+                    }
+                }
+            }
+
+            List<Map.Entry<EDIFCellInst, Integer>> sortedNeighbors = neighbor2CommonNetNum.entrySet().stream()
+            .sorted(Map.Entry.<EDIFCellInst, Integer>comparingByValue().reversed()).collect(Collectors.toList());
+
+            //Set<Map.Entry<EDIFCellInst, Integer>> sortedNeighbors = neighbor2CommonNetNum.entrySet();
+            for (Map.Entry<EDIFCellInst, Integer> neighbor : sortedNeighbors) {
+                
+                EDIFCellInst neighborCellInst = neighbor.getKey();
+                Integer commonNetNum = neighbor.getValue();
+                
+                Integer packThreshold = inputPorts.size();
+                if (cellTypeName.equals("LUT3")) {
+                    packThreshold = 2;
+                } else if (cellTypeName.equals("LUT2")) {
+                    packThreshold = 1;
+                }
+                
+                if (commonNetNum >= packThreshold) {
+                    packedLUTCellInsts.add(neighborCellInst);
+                    Integer amount = leafCellUtilMap.get(neighborCellInst.getCellType());
+                    leafCellUtilMap.replace(neighborCellInst.getCellType(), amount - 1);
+                    break;
+                } 
+            }
+        }
+
+        // for (EDIFCell cellType : leafCellUtilMap.keySet()) {
+        //     Integer amount = leafCellUtilMap.get(cellType);
+        //     if (cellType.getName().equals("LUT2")) {
+        //         leafCellUtilMap.replace(cellType, (int) Math.ceil(amount / 3.0));
+        //     } else if (cellType.getName().equals("LUT3")) {
+        //         leafCellUtilMap.replace(cellType, (int) Math.ceil(amount / 2.0));
+        //     }
+        // }
+
     }
 
     public static Map<String, Integer> getResTypeUtils(EDIFCell cell) {

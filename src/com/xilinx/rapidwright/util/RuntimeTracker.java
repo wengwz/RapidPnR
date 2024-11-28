@@ -128,6 +128,15 @@ public class RuntimeTracker {
     }
 
     /**
+     * Gets the total time elapsed in seconds.
+     * @return The total time elapsed in seconds.
+     */
+    public double getTimeInSec() {
+        return getTime() * 1e-9;
+    }
+
+
+    /**
      * Gets the runtime tracker name.
      * @return The runtime tracker name.
      */

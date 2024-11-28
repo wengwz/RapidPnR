@@ -21,6 +21,7 @@ abstract public class AbstractIslandPlacer {
     protected DirectoryManager dirManager;
     protected Path islandPlaceResPath;
 
+    protected DesignParams designParams;
     protected Coordinate2D gridDim;
     protected Coordinate2D horiBoundaryDim;
     protected Coordinate2D vertBoundaryDim;
@@ -36,6 +37,7 @@ abstract public class AbstractIslandPlacer {
         this.logger = logger;
         this.dirManager = dirManager;
 
+        this.designParams = params;
         this.gridDim = params.getGridDim();
         this.horiBoundaryDim = params.getHoriBoundaryDim();
         this.vertBoundaryDim = params.getVertBoundaryDim();

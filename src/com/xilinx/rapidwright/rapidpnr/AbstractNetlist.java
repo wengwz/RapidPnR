@@ -142,11 +142,13 @@ public class AbstractNetlist {
             for (EDIFCellInst cellInstInGrp : grpCellInsts) {
                 NetlistUtils.getLeafCellUtils(cellInstInGrp.getCellType(), primCellUtilMap);
             }
-            group2LeafCellUtils.add(primCellUtilMap);
-            group2ResUtils.add(NetlistUtils.getResTypeUtils(primCellUtilMap));
-            
             Integer primCellNum = primCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
             group2LeafCellNum.add(primCellNum);
+
+            NetlistUtils.calibrateLUTUtils(grpCellInsts, primCellUtilMap); // calibrate usage of LUTs
+
+            group2LeafCellUtils.add(primCellUtilMap);
+            group2ResUtils.add(NetlistUtils.getResTypeUtils(primCellUtilMap));
         }
 
         int grpCellInstsNum = cellInst2GroupIdMap.size();

@@ -2,7 +2,6 @@ package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -14,33 +13,48 @@ import java.io.FileWriter;
 import java.nio.file.Path;
 
 public class HyperGraph {
-    private int nodeNum;
-    private int edgeNum;
+    protected int nodeNum;
+    protected int edgeNum;
 
-    private int nodeWeightDim;
-    private int edgeWeightDim;
+    protected int nodeWeightDim;
+    protected int edgeWeightDim;
 
-    private List<Double> nodeWeightFactor;
-    private List<Double> edgeWeightFactor;
+    protected List<Double> nodeWeightFactor;
+    protected List<Double> edgeWeightFactor;
 
-    private List<List<Integer>> edge2Nodes;
-    private List<List<Double>> edge2Weights;
+    protected List<List<Integer>> edge2Nodes;
+    protected List<List<Double>> edge2Weights;
 
-    private List<List<Integer>> node2Edges;
-    private List<List<Double>> node2Weights;
+    protected List<List<Integer>> node2Edges;
+    protected List<List<Double>> node2Weights;
 
-    public HyperGraph(int nodeWeightDim, int edgeWeightDim) {
+    public HyperGraph(List<Double> nodeWeightFactor, List<Double> edgeWeightFactor) {
         this.nodeNum = 0;
         this.edgeNum = 0;
 
-        this.edgeWeightDim = edgeWeightDim;
-        this.nodeWeightDim = nodeWeightDim;
+        this.edgeWeightDim = edgeWeightFactor.size();
+        this.nodeWeightDim = nodeWeightFactor.size();
+
+        this.nodeWeightFactor = new ArrayList<>(nodeWeightFactor);
+        this.edgeWeightFactor = new ArrayList<>(edgeWeightFactor); 
 
         edge2Nodes = new ArrayList<>();
         edge2Weights = new ArrayList<>();
 
         node2Edges = new ArrayList<>();
         node2Weights = new ArrayList<>();
+    }
+
+    public void setEdgeWeights(int edgeId, List<Double> weights) {
+        assert weights.size() == edgeWeightDim;
+        assert edgeId < edgeNum;
+        edge2Weights.set(edgeId, new ArrayList<>(weights));
+    }
+
+    public void setNodeWeights(int nodeId, List<Double> weights) {
+        assert weights.size() == nodeWeightDim;
+        assert nodeId < nodeNum;
+        node2Weights.set(nodeId, new ArrayList<>(weights));
     }
 
     public int addNode(List<Double> weights) {
@@ -79,12 +93,28 @@ public class HyperGraph {
         edgeWeightFactor = new ArrayList<>(weightFactor);
     }
 
+    public List<Double> getNodeWeightsFactor() {
+        return Collections.unmodifiableList(nodeWeightFactor);
+    }
+
+    public List<Double> getEdgeWeightsFactor() {
+        return Collections.unmodifiableList(edgeWeightFactor);
+    }
+
     public Double getEdgeWeightsSum(List<Double> edgeWeights) {
         return getWeightsSum(edgeWeights, edgeWeightFactor);
     }
 
     public Double getNodeWeightsSum(List<Double> nodeWeights) {
         return getWeightsSum(nodeWeights, nodeWeightFactor);
+    }
+
+    public Double getNodeWeightsSum(int nodeId) {
+        return getNodeWeightsSum(getWeightsOfNode(nodeId));
+    }
+
+    public Double getEdgeWeightsSum(int edgeId) {
+        return getEdgeWeightsSum(getWeightsOfEdge(edgeId));
     }
 
     public List<Double> getCutSize(List<Integer> partResult) {
@@ -195,45 +225,46 @@ public class HyperGraph {
         }
     }
 
-    public HyperGraph createClusteredHyperGraph(List<List<Integer>> cluster2Nodes) {
-        HyperGraph clsHyperGraph = new HyperGraph(nodeWeightDim, edgeWeightDim);
-        List<Integer> node2Cluster = new ArrayList<>(Collections.nCopies(nodeNum, -1));
+    public HierHyperGraph createClusteredChildGraph(List<List<Integer>> cluster2Nodes) {
+        return new HierHyperGraph(this, cluster2Nodes);
+        // HyperGraph clsHyperGraph = new HyperGraph(nodeWeightFactor, edgeWeightFactor);
+        // List<Integer> node2Cluster = new ArrayList<>(Collections.nCopies(nodeNum, -1));
 
-        for (int clusterId = 0; clusterId < cluster2Nodes.size(); clusterId++) {
-            for (int nodeId : cluster2Nodes.get(clusterId)) {
-                assert node2Cluster.get(nodeId) == -1: String.format("Node %d is already included in a cluster", nodeId);
-                node2Cluster.set(nodeId, clusterId);
-            }
-        }
+        // for (int clusterId = 0; clusterId < cluster2Nodes.size(); clusterId++) {
+        //     for (int nodeId : cluster2Nodes.get(clusterId)) {
+        //         assert node2Cluster.get(nodeId) == -1: String.format("Node %d is already included in a cluster", nodeId);
+        //         node2Cluster.set(nodeId, clusterId);
+        //     }
+        // }
 
-        // check all nodes included in the cluster
-        for (int nodeId = 0; nodeId < nodeNum; nodeId++) {
-            assert node2Cluster.get(nodeId) != -1;
-        }
+        // // check all nodes included in the cluster
+        // for (int nodeId = 0; nodeId < nodeNum; nodeId++) {
+        //     assert node2Cluster.get(nodeId) != -1;
+        // }
 
-        // add nodes to clsHyperGraph
-        for (List<Integer> nodes : cluster2Nodes) {
-            List<Double> weights = new ArrayList<>(Collections.nCopies(nodeWeightDim, 0.0));
-            for (int nodeId : nodes) {
-                accuWeights(weights, node2Weights.get(nodeId));
-            }
-            clsHyperGraph.addNode(weights);
-        }
+        // // add nodes to clsHyperGraph
+        // for (List<Integer> nodes : cluster2Nodes) {
+        //     List<Double> weights = new ArrayList<>(Collections.nCopies(nodeWeightDim, 0.0));
+        //     for (int nodeId : nodes) {
+        //         accuWeights(weights, node2Weights.get(nodeId));
+        //     }
+        //     clsHyperGraph.addNode(weights);
+        // }
 
-        // add edges to clsHyperGraph
-        for (int edgeId = 0; edgeId < edgeNum; edgeId++) {
-            Set<Integer> clusterIds = new HashSet<>();
-            for (int nodeId : edge2Nodes.get(edgeId)) {
-                clusterIds.add(node2Cluster.get(nodeId));
-            }
+        // // add edges to clsHyperGraph
+        // for (int edgeId = 0; edgeId < edgeNum; edgeId++) {
+        //     Set<Integer> clusterIds = new HashSet<>();
+        //     for (int nodeId : edge2Nodes.get(edgeId)) {
+        //         clusterIds.add(node2Cluster.get(nodeId));
+        //     }
 
-            if (clusterIds.size() > 1) {
-                List<Double> weights = new ArrayList<>(edge2Weights.get(edgeId));
-                clsHyperGraph.addEdge(clusterIds, weights);
-            }
-        }
+        //     if (clusterIds.size() > 1) {
+        //         List<Double> weights = new ArrayList<>(edge2Weights.get(edgeId));
+        //         clsHyperGraph.addEdge(clusterIds, weights);
+        //     }
+        // }
 
-        return clsHyperGraph;
+        // return clsHyperGraph;
     }
 
     public int getEdgeNum() {
@@ -266,6 +297,14 @@ public class HyperGraph {
 
     public List<Double> getWeightsOfEdge(int edgeId) {
         return Collections.unmodifiableList(edge2Weights.get(edgeId));
+    }
+
+    public List<Double> getTotalNodeWeightsOfEdge(int edgeId) {
+        List<Double> weights = new ArrayList<>(Collections.nCopies(nodeWeightDim, 0.0));
+        for (int nodeId : edge2Nodes.get(edgeId)) {
+            accuWeights(weights, node2Weights.get(nodeId));
+        }
+        return weights;
     }
 
     public List<Integer> getNeighborsOfNode(int nodeId) {
