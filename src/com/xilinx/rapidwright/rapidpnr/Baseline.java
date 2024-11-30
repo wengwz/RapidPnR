@@ -57,7 +57,7 @@ public class Baseline {
         tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
         tclCmdFile.addCmd(VivadoTclCmd.placeDesign());
-        tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
+        tclCmdFile.addCmd(VivadoTclCmd.routeDesign());
         tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
         tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, "timing.rpt"));
         tclCmdFile.addCmd(VivadoTclCmd.writeCheckpoint(true, null, VivadoProject.OUTPUT_DCP_NAME));

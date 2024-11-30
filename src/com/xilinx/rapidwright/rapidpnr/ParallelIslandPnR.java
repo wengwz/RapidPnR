@@ -3,18 +3,15 @@ package com.xilinx.rapidwright.rapidpnr;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 
+
 import com.xilinx.rapidwright.design.Design;
-import com.xilinx.rapidwright.design.NetType;
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFLibrary;
-import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFNetlist;
-import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFTools;
 import com.xilinx.rapidwright.edif.EDIFHierCellInst;
 import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
@@ -191,7 +188,7 @@ public class ParallelIslandPnR extends PhysicalImpl{
         tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
         tclCmdFile.addCmd(VivadoTclCmd.placeDesign());
-        tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
+        tclCmdFile.addCmd(VivadoTclCmd.routeDesign());
         tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
 
         String timingRptPath = addSuffixRpt("timing_summary");
@@ -317,7 +314,7 @@ public class ParallelIslandPnR extends PhysicalImpl{
         tclCmdFile.addCmd(VivadoTclCmd.readCheckpoint(cellInst2DcpMap));
         //tclCmdFile.addCmd(VivadoTclCmd.placeDesign(null));
         //tclCmdFile.addCmd(VivadoTclCmd.physOptDesign());
-        tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
+        tclCmdFile.addCmd(VivadoTclCmd.routeDesign());
         //tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
         String timingRptPath = addSuffixRpt("timing_summary");
         tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, timingRptPath));

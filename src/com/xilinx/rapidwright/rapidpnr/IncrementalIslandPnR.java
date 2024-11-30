@@ -178,7 +178,7 @@ public class IncrementalIslandPnR extends PhysicalImpl{
         }
 
         tclCmdFile.addCmd(VivadoTclCmd.placeDesign());
-        tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null));
+        tclCmdFile.addCmd(VivadoTclCmd.routeDesign());
         tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
 
         String timingRptPath = addSuffixRpt("timing_summary");

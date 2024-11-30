@@ -1,5 +1,7 @@
 package com.xilinx.rapidwright.rapidpnr;
 
+import java.util.function.Consumer;
+
 import com.xilinx.rapidwright.util.Pair;
 
 public class Coordinate2D extends Pair<Integer, Integer> {
@@ -32,5 +34,12 @@ public class Coordinate2D extends Pair<Integer, Integer> {
         return new Coordinate2D(x, y);
     }
 
+    public void traverse(Consumer<Coordinate2D> operation) {
+        for (int x = 0; x < getX(); x++) {
+            for (int y = 0; y < getY(); y++) {
+                operation.accept(Coordinate2D.of(x, y));
+            }
+        }
+    }
 
 }

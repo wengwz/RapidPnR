@@ -41,6 +41,13 @@ public class VivadoTclUtils {
 
     public static class VivadoTclCmd  {
 
+        public static class RouteType {
+            public static final String Antennas = "ANTENNAS";
+            public static final String Conflicts = "CONFLICTS";
+            public static final String Partial = "PARTIAL";
+            public static final String Unplaced = "UNPLACED";
+            public static final String Unrouted = "UNROUTED";
+        }
         public static class IncrImplDirective {
             public static final String RuntimeOpt = "RuntimeOptimized";
             public static final String TimingClosure = "TimingClosure";
@@ -51,6 +58,13 @@ public class VivadoTclUtils {
             public static final String Default = "Default";
             public static final String RuntimeOpt = "RuntimeOptimized";
             public static final String Quick = "Quick";
+            public static final String SpreadLogicHigh = "AltSpreadLogic_high";
+        }
+
+        public static class LockDesignLevel {
+            public static final String Logic = "logic";
+            public static final String Placement = "placement";
+            public static final String Routing = "routing";
         }
 
         public static String createPblock(String pblockName) {
@@ -294,16 +308,34 @@ public class VivadoTclUtils {
             return placeDesign(null, false);
         }
     
-        public static String routeDesign(String directive) {
+        public static String routeDesign(String directive, Boolean ultraThreads) {
             String cmdString = "route_design";
             if (directive != null) {
                 cmdString += " -directive " + directive;
+            }
+
+            if (ultraThreads) {
+                cmdString += "ultrathreads";
+            }
+
+            return cmdString;
+        }
+
+        public static String routeDesignPartial(String target, Boolean delayEn) {
+            String cmdString = String.format("route_design -nets [%s]", target);
+            if (delayEn) {
+                cmdString += " -delay";
             }
             return cmdString;
         }
 
         public static String routeDesign() {
-            return routeDesign(null);
+            return routeDesign(null, false);
+        }
+
+        public static String routeUnroutedNetsWithMinDelay() {
+            String target = reportRouteStatus(RouteType.Unrouted, true);
+            return routeDesignPartial(target, true);
         }
     
         public static String physOptDesign() {
@@ -324,6 +356,17 @@ public class VivadoTclUtils {
             } else {
                 return String.format("report_timing_summary -max %d -file %s", maxPathNum, filePath);
             }
+        }
+
+        public static String reportRouteStatus(String routeType, Boolean returnNets) {
+            String cmdStr = "report_route_status";
+            if (routeType != null) {
+                cmdStr += " -route_type " + routeType;
+            }
+            if (returnNets) {
+                cmdStr += " -return_nets";
+            }
+            return cmdStr;
         }
     
         public static String updateCellBlackbox(String cellInstName) {
@@ -413,6 +456,13 @@ public class VivadoTclUtils {
             cmds.add("close $fd");
             return cmds;
         }
-    
+
+        public static String deletePblock(String pblockName) {
+            return String.format("delete_pblock %s", pblockName);
+        }
+
+        public static String deletePblock() {
+            return "delete_pblock *";
+        }
     }
 }

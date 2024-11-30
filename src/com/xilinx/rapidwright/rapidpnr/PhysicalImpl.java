@@ -20,7 +20,6 @@ import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.edif.EDIFTools;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
 
 import static com.xilinx.rapidwright.rapidpnr.NameConvention.*;
 
@@ -541,11 +540,16 @@ abstract public class PhysicalImpl {
         EDIFLibrary cellLib = cellType.getLibrary();
         assert cellLib.getNetlist() != newNetlist;
 
-        EDIFLibrary targetLib = cellLib.isWorkLibrary() ? newWorkLib : newPrimLib;
-        EDIFCell newCellType = targetLib.getCell(cellType.getName());
-        if (newCellType == null) { // copy cellType if it's not found in new netlist
-            newCellType = new EDIFCell(targetLib, cellType, cellType.getName());
+        //EDIFLibrary targetLib = cellLib.isWorkLibrary() ? newWorkLib : newPrimLib;
+        // EDIFCell newCellType = targetLib.getCell(cellType.getName());
+        // if (newCellType == null) { // copy cellType if it's not found in new netlist
+        //     newCellType = new EDIFCell(targetLib, cellType, cellType.getName());
+        // }
+        EDIFCell newCellType = newNetlist.getCell(cellType.getName());
+        if (newCellType == null) {
+            newNetlist.copyCellAndSubCells(cellType);
         }
+        newCellType = newNetlist.getCell(cellType.getName());
 
         EDIFCellInst newCellInst = newCell.createChildCellInst(cellInst.getName(), newCellType);
         newCellInst.setPropertiesMap(cellInst.createDuplicatePropertiesMap());
@@ -692,19 +696,53 @@ abstract public class PhysicalImpl {
         for (EDIFCellInst cellInst : newTopCell.getCellInsts()) {
             EDIFCell newCell = cellInst.getCellType();
             if (newCell.isStaticSource()) continue; // Skip static source cells
+            
             for (EDIFPort port : newCell.getPorts()) {
-                String portName = port.getName();
-                String netName = portName;
-                EDIFNet originNet = originTopCell.getNet(portName);
-                assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
-                if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
-                    netName = resetPortName;
+
+                Map<Integer, String> index2PortInstName = new HashMap<>();
+                if (port.isBus()) {
+                    for (int i = 0; i < port.getWidth(); i++) {
+                        String portInstName = port.getPortInstNameFromPort(i);
+                        if (newCell.getInternalNet(portInstName) != null) {
+                            index2PortInstName.put(i, portInstName);
+                        }
+                    }
+                } else {
+                    index2PortInstName.put(0, port.getName());
                 }
-                EDIFNet newNet = newTopCell.getNet(netName);
-                if (newNet == null) {
-                    newNet = newTopCell.createNet(netName);
+
+                for (Map.Entry<Integer, String> entry : index2PortInstName.entrySet()) {
+                    String netName = entry.getValue();
+                    EDIFNet originNet = originTopCell.getNet(netName);
+                    assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", netName, cellInst.getName());
+                    
+                    if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
+                        netName = resetPortName;
+                    }
+
+                    EDIFNet newNet = newTopCell.getNet(netName);
+                    if (newNet == null) {
+                        newNet = newTopCell.createNet(netName);
+                    }
+
+                    if (port.isBus()) {
+                        newNet.createPortInst(port, entry.getKey(), cellInst);
+                    } else {
+                        newNet.createPortInst(port, cellInst);
+                    }
                 }
-                newNet.createPortInst(port, cellInst);
+                // String portName = port.getName();
+                // String netName = portName;
+                // EDIFNet originNet = originTopCell.getNet(portName);
+                // assert originNet != null: String.format("Net correspond to port %s on %s not found in originTopCell", portName, cellInst.getName());
+                // if (netlistDB.isGlobalResetNet(originNet)) { // TODO: to be modified
+                //     netName = resetPortName;
+                // }
+                // EDIFNet newNet = newTopCell.getNet(netName);
+                // if (newNet == null) {
+                //     newNet = newTopCell.createNet(netName);
+                // }
+                // newNet.createPortInst(port, cellInst);
             }
         }
 
@@ -717,6 +755,19 @@ abstract public class PhysicalImpl {
     }
 
     // Helper functions
+
+    protected Boolean isNeighborVertBoundary(Coordinate2D island, Coordinate2D boundary) {
+        Boolean yMatch = island.getY() == boundary.getY();
+        Boolean xMatch = island.getX() == boundary.getX() || island.getX() == boundary.getX() + 1;
+        return xMatch && yMatch;
+    }
+
+    protected Boolean isNeighborHoriBoundary(Coordinate2D island, Coordinate2D boundary) {
+        Boolean xMatch = island.getX() == boundary.getX();
+        Boolean yMatch = island.getY() == boundary.getY() || island.getY() == boundary.getY() + 1;
+        return xMatch && yMatch;
+    }
+    
     protected int getIslandIdFromLoc(Coordinate2D loc) {
         return loc.getX() + loc.getY() * gridDim.getX();
     }
@@ -849,24 +900,36 @@ abstract public class PhysicalImpl {
         return pblockName2RangeMap.get(pblockName);
     }
 
+    protected String getPblockRangeOfHoriBoundary(int x, int y) {
+        String pblockName = getHoriBoundaryName(x, y);
+        String pblockRange = getPblockRange(pblockName);
+        assert pblockRange != null;
+        return pblockRange;
+    }
+
     protected String getPblockRangeOfHoriBoundary(Coordinate2D loc) {
-        String pblockName = getHoriBoundaryName(loc);
+        return getPblockRangeOfHoriBoundary(loc.getX(), loc.getY());
+    }
+
+    protected String getPblockRangeOfVertBoundary(int x, int y) {
+        String pblockName = getVertBoundaryName(x, y);
         String pblockRange = getPblockRange(pblockName);
         assert pblockRange != null;
         return pblockRange;
     }
 
     protected String getPblockRangeOfVertBoundary(Coordinate2D loc) {
-        String pblockName = getVertBoundaryName(loc);
+        return getPblockRangeOfVertBoundary(loc.getX(), loc.getY());
+    }
+
+    protected String getPblockRangeOfIsland(int x, int y) {
+        String pblockName = getIslandName(x, y);
         String pblockRange = getPblockRange(pblockName);
         assert pblockRange != null;
         return pblockRange;
     }
 
     protected String getPblockRangeOfIsland(Coordinate2D loc) {
-        String pblockName = getIslandName(loc);
-        String pblockRange = getPblockRange(pblockName);
-        assert pblockRange != null;
-        return pblockRange;
+        return getPblockRangeOfIsland(loc.getX(), loc.getY());
     }
 }

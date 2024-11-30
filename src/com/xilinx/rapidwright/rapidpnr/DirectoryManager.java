@@ -37,6 +37,6 @@ public class DirectoryManager {
     }
 
     public Path getSubDir(String subDirName) {
-        return name2SubDirMap.get(subDirName);
+        return addSubDir(subDirName);
     }
 }
