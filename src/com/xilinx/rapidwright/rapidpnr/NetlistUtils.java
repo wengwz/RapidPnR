@@ -158,6 +158,17 @@ public class NetlistUtils {
         return inputPortInsts;
     }
 
+    public static Integer getLeafCellNum(EDIFCell cell) {
+        Map<EDIFCell, Integer> leafCellUtilMap = new HashMap<>();
+        getLeafCellUtils(cell, leafCellUtilMap);
+        Integer leafCellNum = 0;
+        for (Integer amount : leafCellUtilMap.values()) {
+            leafCellNum += amount;
+        }
+        return leafCellNum;
+    }
+        
+
     public static void getLeafCellUtils(EDIFCell cell, Map<EDIFCell, Integer> leafCellUtilMap) {
         assert leafCellUtilMap != null;
         if (cell.isLeafCellOrBlackBox() || pseudoLeafCellNames.contains(cell.getName())) {

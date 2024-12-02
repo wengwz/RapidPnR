@@ -43,6 +43,11 @@ public class DesignParams {
     private Path extIslandPlacerPath;
     private Path islandPlaceResPath = null;
 
+    // Physical Implementation Parameters
+    private Boolean fullRouteMerge = false;
+    private Integer boundaryNeighborSize = 5000;
+
+
 
     private class ParamsJson {
         public String designName;
@@ -67,6 +72,8 @@ public class DesignParams {
         public String extIslandPlacerPath;
         public String islandPlaceResPath;
 
+        public Boolean fullRouteMerge;
+        public Integer boundaryNeighborSize;
     }
 
     public DesignParams(Path jsonFilePath) {
@@ -149,6 +156,14 @@ public class DesignParams {
 
             if (params.imbalanceFac != null) {
                 this.imbalanceFac = params.imbalanceFac;
+            }
+
+            // set parameters related with Physical Implementation
+            if (params.fullRouteMerge != null) {
+                this.fullRouteMerge = params.fullRouteMerge;
+            }
+            if (params.boundaryNeighborSize != null) {
+                this.boundaryNeighborSize = params.boundaryNeighborSize;
             }
 
         } catch (Exception e) {
@@ -253,6 +268,14 @@ public class DesignParams {
 
     public Double getImbalanceFac() {
         return imbalanceFac;
+    }
+
+    public boolean isFullRouteMerge() {
+        return fullRouteMerge;
+    }
+
+    public int getBoundaryNeighborSize() {
+        return boundaryNeighborSize;
     }
 
     public static void main(String[] args) {

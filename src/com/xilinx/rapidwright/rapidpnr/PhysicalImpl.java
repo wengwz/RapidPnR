@@ -8,6 +8,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.design.NetType;
@@ -20,6 +22,7 @@ import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.edif.EDIFTools;
+import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
 
 import static com.xilinx.rapidwright.rapidpnr.NameConvention.*;
 
@@ -28,6 +31,7 @@ abstract public class PhysicalImpl {
     protected DirectoryManager dirManager;
 
     // origin netlist database
+    protected DesignParams designParams;
     protected NetlistDatabase netlistDB;
 
     // Design Parameters
@@ -61,12 +65,46 @@ abstract public class PhysicalImpl {
     protected Map<EDIFCellInst, Coordinate2D> cellInst2VertBoundaryLocMap;
     protected Map<EDIFCellInst, Coordinate2D> cellInst2HoriBoundaryLocMap;
 
+    class CreateCellInstOfLoc implements Consumer<Coordinate2D> {
+
+        public Design design;
+
+        public Set<EDIFCellInst>[][] loc2CellInsts;
+        public Function<Coordinate2D, String> loc2CellName;
+        public Function<Coordinate2D, String> loc2PblockRange = null;
+        public Boolean setDontTouch = false;
+            
+        public void accept(Coordinate2D loc) {
+            EDIFNetlist netlist = design.getNetlist();
+            EDIFLibrary workLib = netlist.getWorkLibrary();
+            EDIFCell topCell = netlist.getTopCell();
+
+            String cellName = loc2CellName.apply(loc);
+
+            Set<EDIFCellInst> subCellInsts = loc2CellInsts[loc.getX()][loc.getY()];
+            if (subCellInsts.isEmpty()) return;
+
+            EDIFCell newCell = new EDIFCell(workLib, cellName);
+            copyPartialNetlistToCell(newCell, netlistDB.originTopCell, subCellInsts);
+
+            EDIFCellInst cellInst = newCell.createCellInst(cellName, topCell);
+            if (loc2PblockRange != null) {
+                String pblockRange = loc2PblockRange.apply(loc);
+                VivadoTclCmd.addStrictCellPblockConstr(design, cellInst, pblockRange);    
+            }
+
+            if (setDontTouch) {
+                VivadoTclCmd.setPropertyDontTouch(design, cellInst);
+            }
+        }
+    }
 
     public PhysicalImpl(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams, NetlistDatabase netlistDB) {
         this.logger = logger;
         this.dirManager = dirManager;
 
         // Parse Design Parameters
+        this.designParams = designParams;
         designName = designParams.getDesignName();
         gridDim = designParams.getGridDim();
         vertBoundaryDim = designParams.getVertBoundaryDim();
@@ -289,35 +327,24 @@ abstract public class PhysicalImpl {
         EDIFCell topCell = topNetlist.getTopCell();
 
         // add island cells
-        for (int x = 0; x < gridDim.getX(); x++) {
-            for (int y = 0; y < gridDim.getY(); y++) {
-                Coordinate2D loc = Coordinate2D.of(x, y);
-                EDIFCell islandCell = new EDIFCell(workLib, getIslandName(loc));
-                copyPartialNetlistToCell(islandCell, netlistDB.originTopCell, getCellInstsOfIsland(loc));
-                islandCell.createCellInst(getIslandName(loc), topCell);
-            }
-        }
+        CreateCellInstOfLoc createCellInst = new CreateCellInstOfLoc();
+        createCellInst.design = topDesign;
+
+        createCellInst.loc2CellInsts = island2CellInsts;
+        createCellInst.loc2CellName = NameConvention::getIslandName;
+        gridDim.traverse(createCellInst);
 
         if (hasBoundaryCell) {
+
             // add vertical boundary cells
-            for (int x = 0; x < vertBoundaryDim.getX(); x++) {
-                for (int y = 0; y < vertBoundaryDim.getY(); y++) {
-                    Coordinate2D loc = Coordinate2D.of(x, y);
-                    EDIFCell newCell = new EDIFCell(workLib, getVertBoundaryName(loc));
-                    copyPartialNetlistToCell(newCell, netlistDB.originTopCell, getCellInstsOfVertBoundary(loc));
-                    newCell.createCellInst(getVertBoundaryName(loc), topCell);
-                }
-            }
+            createCellInst.loc2CellInsts = vertBoundary2CellInsts;
+            createCellInst.loc2CellName = NameConvention::getVertBoundaryName;
+            vertBoundaryDim.traverse(createCellInst);
     
             // add horizontal boundary cells
-            for (int x = 0; x < horiBoundaryDim.getX(); x++) {
-                for (int y = 0; y < horiBoundaryDim.getY(); y++) {
-                    Coordinate2D loc = Coordinate2D.of(x, y);
-                    EDIFCell newCell = new EDIFCell(workLib, getHoriBoundaryName(loc));
-                    copyPartialNetlistToCell(newCell, netlistDB.originTopCell, getCellInstsOfHoriBoundary(loc));
-                    newCell.createCellInst(getHoriBoundaryName(loc), topCell);
-                }
-            }
+            createCellInst.loc2CellInsts = horiBoundary2CellInsts;
+            createCellInst.loc2CellName = NameConvention::getHoriBoundaryName;
+            horiBoundaryDim.traverse(createCellInst);
         }
 
         connectCellInstsOfTopCell(topCell, netlistDB.originTopCell);
@@ -886,6 +913,22 @@ abstract public class PhysicalImpl {
 
     protected Set<EDIFCellInst> getCellInstsOfVertBoundary(Coordinate2D loc) {
         return getCellInstsOfVertBoundary(loc.getX(), loc.getY());
+    }
+
+    protected Boolean isVertBoundaryExist(int x, int y) {
+        return vertBoundary2Nets[x][y].size() > 0;
+    }
+
+    protected Boolean isVertBoundaryExist(Coordinate2D loc) {
+        return isVertBoundaryExist(loc.getX(), loc.getY());
+    }
+
+    protected Boolean isHoriBoundaryExist(int x, int y) {
+        return horiBoundary2Nets[x][y].size() > 0;
+    }
+
+    protected Boolean isHoriBoundaryExist(Coordinate2D loc) {
+        return isHoriBoundaryExist(loc.getX(), loc.getY());
     }
 
     protected Set<EDIFCellInst> getCellInstsOfHoriBoundary(int x, int y) {

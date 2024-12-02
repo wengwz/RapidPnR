@@ -17,10 +17,17 @@ import com.xilinx.rapidwright.util.RuntimeTracker;
 
 public class CompletePnR extends PhysicalImpl {
 
-    private boolean extractBoundaryCell = false;
+    private boolean extractBoundaryCell = true;
 
-    public CompletePnR(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams, NetlistDatabase netlistDB) {
+    public CompletePnR(
+        HierarchicalLogger logger, 
+        DirectoryManager dirManager, 
+        DesignParams designParams, 
+        NetlistDatabase netlistDB,
+        boolean extractBoundaryCell
+    ) {
         super(logger, dirManager, designParams, netlistDB);
+        this.extractBoundaryCell = extractBoundaryCell;
     }
 
     public void run(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
@@ -40,20 +47,20 @@ public class CompletePnR extends PhysicalImpl {
         Job vivadoJob = vivadoProject.createVivadoJob();
 
         // create island designs
-        for (int x = 0; x < gridDim.getX(); x++) {
-            for (int y = 0; y < gridDim.getY(); y++) {
-                Design islandDesign = createIslandDesign(Coordinate2D.of(x, y));
-                Path dcpPath = workDir.resolve(getIslandDcpName(x, y));
-                islandDesign.writeCheckpoint(dcpPath.toString());
-            }
-        }
+        // for (int x = 0; x < gridDim.getX(); x++) {
+        //     for (int y = 0; y < gridDim.getY(); y++) {
+        //         Design islandDesign = createIslandDesign(Coordinate2D.of(x, y));
+        //         Path dcpPath = workDir.resolve(getIslandDcpName(x, y));
+        //         islandDesign.writeCheckpoint(dcpPath.toString());
+        //     }
+        // }
 
         JobQueue jobQueue = new JobQueue();
         jobQueue.addJob(vivadoJob);
 
         RuntimeTracker timer = new RuntimeTracker("PnR of complete design", (short) 0);
         timer.start();
-        //jobQueue.runAllToCompletion();
+        jobQueue.runAllToCompletion();
         timer.stop();
 
         logger.endSubStep();
@@ -85,26 +92,25 @@ public class CompletePnR extends PhysicalImpl {
                 String pblockRange = getPblockRangeOfIsland(Coordinate2D.of(x, y));
                 tclCmdFile.addCmds(VivadoTclCmd.addCellPblockConstr(cellName, pblockRange, false, false, true));
                 //tclCmdFile.addCmd(VivadoTclCmd.setPropertyDontTouch(true, cellName));
-                tclCmdFile.addCmd(VivadoTclCmd.setPropertyHDReConfig(true, cellName));
+                //tclCmdFile.addCmd(VivadoTclCmd.setPropertyHDReConfig(true, cellName));
             }
         }
 
         if (hasBoundaryCell) {
-            for (int x = 0; x < vertBoundaryDim.getX(); x++) {
-                for (int y = 0; y < vertBoundaryDim.getY(); y++) {
-                    String cellName = getVertBoundaryName(x, y);
-                    String pblockRange = getPblockRangeOfVertBoundary(Coordinate2D.of(x, y));
-                    tclCmdFile.addCmds(VivadoTclCmd.addCellPblockConstr(cellName, pblockRange, false, false, true));
-                }
-            }
 
-            for (int x = 0; x < horiBoundaryDim.getX(); x++) {
-                for (int y = 0; y < horiBoundaryDim.getY(); y++) {
-                    String cellName = getHoriBoundaryName(x, y);
-                    String pblockRange = getPblockRangeOfHoriBoundary(Coordinate2D.of(x, y));
-                    tclCmdFile.addCmds(VivadoTclCmd.addCellPblockConstr(cellName, pblockRange, false, false, true));
-                }
-            }
+            vertBoundaryDim.traverse((Coordinate2D loc) -> {
+                if (!isVertBoundaryExist(loc)) return;
+                String cellName = getVertBoundaryName(loc);
+                String pblockRange = getPblockRangeOfVertBoundary(loc);
+                tclCmdFile.addCmds(VivadoTclCmd.addCellPblockConstr(cellName, pblockRange, false, false, true));
+            });
+
+            horiBoundaryDim.traverse((Coordinate2D loc) -> {
+                if (!isHoriBoundaryExist(loc)) return;
+                String cellName = getHoriBoundaryName(loc);
+                String pblockRange = getPblockRangeOfHoriBoundary(loc);
+                tclCmdFile.addCmds(VivadoTclCmd.addCellPblockConstr(cellName, pblockRange, false, false, true));
+            });
         }
 
         // run PnR flow

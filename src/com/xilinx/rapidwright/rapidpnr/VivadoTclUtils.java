@@ -315,7 +315,7 @@ public class VivadoTclUtils {
             }
 
             if (ultraThreads) {
-                cmdString += "ultrathreads";
+                cmdString += " -ultrathreads";
             }
 
             return cmdString;

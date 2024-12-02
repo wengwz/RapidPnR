@@ -34,8 +34,6 @@ import com.xilinx.rapidwright.util.RuntimeTrackerTree;
 
 public class FastParallelIslandPnR extends PhysicalImpl{
 
-    private int boundaryNeighborSize = 5000;
-
     Design completeDesign;
 
     public FastParallelIslandPnR(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams, NetlistDatabase netlistDB) {
@@ -114,16 +112,20 @@ public class FastParallelIslandPnR extends PhysicalImpl{
     private Design createBoundaryDesign() {
         Design design = new Design("boundary", netlistDB.partName);
         EDIFNetlist netlist = design.getNetlist();
-        EDIFLibrary workLib = netlist.getWorkLibrary();
+        //EDIFLibrary workLib = netlist.getWorkLibrary();
         EDIFCell topCell = netlist.getTopCell();
 
         Queue<EDIFCellInst> searchCellInstQ = new LinkedList<>();
+        Integer[][] partialIslandSizes = new Integer[gridDim.getX()][gridDim.getY()];
         Set<EDIFCellInst>[][] partialIslands = new HashSet[gridDim.getX()][gridDim.getY()];
         Set<EDIFCellInst> visitedCellInsts = new HashSet<>();
         Set<EDIFNet> visitedNets = new HashSet<>();
 
         // initialize partialIslands
-        gridDim.traverse((Coordinate2D loc) -> {partialIslands[loc.getX()][loc.getY()] = new HashSet<>();});
+        gridDim.traverse((Coordinate2D loc) -> {
+            partialIslands[loc.getX()][loc.getY()] = new HashSet<>();
+            partialIslandSizes[loc.getX()][loc.getY()] = 0;
+        });
 
         horiBoundaryDim.traverse(
             (Coordinate2D loc) -> {
@@ -166,8 +168,13 @@ public class FastParallelIslandPnR extends PhysicalImpl{
                     assert loc != null;
 
                     Set<EDIFCellInst> partialIsland = partialIslands[loc.getX()][loc.getY()];
-                    if (partialIsland.size() < boundaryNeighborSize) {
+                    if (partialIslandSizes[loc.getX()][loc.getY()] < designParams.getBoundaryNeighborSize()) {
                         partialIsland.add(expandCellInst);
+
+                        Integer primCellNum = NetlistUtils.getLeafCellNum(expandCellInst.getCellType());
+                        partialIslandSizes[loc.getX()][loc.getY()] += primCellNum;
+
+                        // searchCellInstQ.add(expandCellInst);
                     }
                     // island2PartialCellInsts[loc.getX()][loc.getY()].add(expandCellInst);
                     // Boolean isBoundaryCell = cellInst2VertBoundaryLocMap.containsKey(expandCellInst) ||
@@ -176,34 +183,43 @@ public class FastParallelIslandPnR extends PhysicalImpl{
                     // if (isBoundaryCell || !isRegCell) {
                     //     searchCellInstQ.add(expandCellInst);
                     // }
+                    //searchCellInstQ.add(expandCellInst);
                     searchCellInstQ.add(expandCellInst);
                 }
             }
         }
 
-        class CreateCellInst implements Consumer<Coordinate2D> {
+        // class CreateCellInst implements Consumer<Coordinate2D> {
 
-            public Set<EDIFCellInst>[][] loc2CellInsts;
-            public Function<Coordinate2D, String> loc2CellName;
-            public Function<Coordinate2D, String> loc2PblockRange;
-            public Boolean setDontTouch = false;
+        //     public Set<EDIFCellInst>[][] loc2CellInsts;
+        //     public Function<Coordinate2D, String> loc2CellName;
+        //     public Function<Coordinate2D, String> loc2PblockRange = null;
+        //     public Boolean setDontTouch = false;
             
-            public void accept(Coordinate2D loc) {
-                String cellName = loc2CellName.apply(loc);
-                EDIFCell newCell = new EDIFCell(workLib, cellName);
-                copyPartialNetlistToCell(newCell, netlistDB.originTopCell, loc2CellInsts[loc.getX()][loc.getY()]);
+        //     public void accept(Coordinate2D loc) {
+        //         String cellName = loc2CellName.apply(loc);
 
-                EDIFCellInst cellInst = newCell.createCellInst(cellName, topCell);
-                String pblockRange = loc2PblockRange.apply(loc);
-                VivadoTclCmd.addStrictCellPblockConstr(design, cellInst, pblockRange);
-                if (setDontTouch) {
-                    VivadoTclCmd.setPropertyDontTouch(design, cellInst);
-                }
-            }
+        //         Set<EDIFCellInst> subCellInsts = loc2CellInsts[loc.getX()][loc.getY()];
+        //         if (subCellInsts.isEmpty()) return;
 
-        }
+        //         EDIFCell newCell = new EDIFCell(workLib, cellName);
+        //         copyPartialNetlistToCell(newCell, netlistDB.originTopCell, subCellInsts);
 
-        CreateCellInst createCellInst = new CreateCellInst();
+        //         EDIFCellInst cellInst = newCell.createCellInst(cellName, topCell);
+        //         if (loc2PblockRange != null) {
+        //             String pblockRange = loc2PblockRange.apply(loc);
+        //             VivadoTclCmd.addStrictCellPblockConstr(design, cellInst, pblockRange);    
+        //         }
+
+        //         if (setDontTouch) {
+        //             VivadoTclCmd.setPropertyDontTouch(design, cellInst);
+        //         }
+        //     }
+        // }
+
+        CreateCellInstOfLoc createCellInst = new CreateCellInstOfLoc();
+        createCellInst.design = design;
+
         createCellInst.loc2CellInsts = partialIslands;
         createCellInst.loc2CellName = NameConvention::getIslandName;
         createCellInst.loc2PblockRange = this::getPblockRangeOfIsland;
@@ -214,7 +230,6 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         createCellInst.loc2PblockRange = this::getPblockRangeOfHoriBoundary;
         createCellInst.setDontTouch = true;
         horiBoundaryDim.traverse(createCellInst);
-
 
         createCellInst.loc2CellInsts = vertBoundary2CellInsts;
         createCellInst.loc2CellName = NameConvention::getVertBoundaryName;
@@ -243,13 +258,17 @@ public class FastParallelIslandPnR extends PhysicalImpl{
 
         horiBoundaryDim.traverse((Coordinate2D loc) -> {
                 String cellName = getHoriBoundaryName(loc);
-                tclFile.addCmd(VivadoTclCmd.writeCheckpoint(true, cellName, cellName + ".dcp"));
+                if (isHoriBoundaryExist(loc)) {
+                    tclFile.addCmd(VivadoTclCmd.writeCheckpoint(true, cellName, cellName + ".dcp"));
+                }
             }
         );
 
         vertBoundaryDim.traverse((Coordinate2D loc) -> {
                 String cellName = getVertBoundaryName(loc);
-                tclFile.addCmd(VivadoTclCmd.writeCheckpoint(true, cellName, cellName + ".dcp"));
+                if (isVertBoundaryExist(loc)) {
+                    tclFile.addCmd(VivadoTclCmd.writeCheckpoint(true, cellName, cellName + ".dcp"));
+                }
             }
         );
 
@@ -276,6 +295,8 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         newIslandCell.createCellInst(getIslandName(islandLoc), topCell);
 
         horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            if (!isHoriBoundaryExist(loc)) return; // skip if no anchor cells in this boundary
+
             if (isNeighborHoriBoundary(islandLoc, loc)) {
                 String cellName = getHoriBoundaryName(loc);
                 EDIFCell boundaryCell = completeDesign.getNetlist().getCell(cellName);
@@ -285,6 +306,10 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         });
 
         vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            if (!isVertBoundaryExist(loc)) return; // skip if no anchor cells in this boundary
+
+            logger.info("Create blackbox cell for vertical boundary" + loc.toString());
+
             if (isNeighborVertBoundary(islandLoc, loc)) {
                 String cellName = getVertBoundaryName(loc);
                 EDIFCell boundaryCell = completeDesign.getNetlist().getCell(cellName);
@@ -414,6 +439,7 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         horiBoundaryDim.traverse((Coordinate2D loc) -> {
             String cellName = getHoriBoundaryName(loc);
             EDIFCell cellType = boundaryDesign.getNetlist().getCell(cellName);
+            if (cellType == null) return; // skip if boundary cell doesn't exist
 
             netlist.copyCellAndSubCells(cellType);
             EDIFCell newCellType = netlist.getCell(cellName);
@@ -424,6 +450,7 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         vertBoundaryDim.traverse((Coordinate2D loc) -> {
             String cellName = getVertBoundaryName(loc);
             EDIFCell cellType = boundaryDesign.getNetlist().getCell(cellName);
+            if (cellType == null) return; // skip if boundary cell doesn't exist
 
             netlist.copyCellAndSubCells(cellType);
             EDIFCell newCellType = netlist.getCell(cellName);
@@ -467,8 +494,11 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
-        //tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null, true));
-        tclCmdFile.addCmd(VivadoTclCmd.routeUnroutedNetsWithMinDelay());
+        if (designParams.isFullRouteMerge()) {
+            tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null, true));
+        } else {
+            tclCmdFile.addCmd(VivadoTclCmd.routeUnroutedNetsWithMinDelay());
+        }
 
         String timingRptPath = addSuffixRpt("timing_summary");
         tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, timingRptPath));
