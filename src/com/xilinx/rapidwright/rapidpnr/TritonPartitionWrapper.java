@@ -28,7 +28,7 @@ public class TritonPartitionWrapper {
     private Path workDir;
 
     private int blockNum = 2;
-    private int randomSeed = 100;
+    private int randomSeed = 999;
     private double balanceConstr = 1.0;
     private Map<Integer, Integer> fixedNodes = null;
 

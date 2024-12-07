@@ -103,7 +103,7 @@ public class IslandPlacer extends AbstractIslandPlacer{
         logger.info("External island placer finished");
 
         List<Coordinate2D> placeResults = readIslandPlaceResultJson(outputJsonPath);
-        assert placeResults.size() == abstractNetlist.getGroupNum(): "Num of groups in Json file: " + placeResults.size() + " Num of groups in abstract netlist: " + abstractNetlist.getGroupNum();
+        assert placeResults.size() == abstractNetlist.getNodeNum(): "Num of groups in Json file: " + placeResults.size() + " Num of groups in abstract netlist: " + abstractNetlist.getNodeNum();
 
         logger.endSubStep();
         logger.info("Complete running island placer");
@@ -117,21 +117,20 @@ public class IslandPlacer extends AbstractIslandPlacer{
         inputJson.gridHeight = gridDim.getY();
         inputJson.gridLimit = gridLimit;
 
-        inputJson.totalGroupNum = abstractNetlist.getGroupNum();
+        inputJson.totalGroupNum = abstractNetlist.getNodeNum();
         List<IslandPlacerInputJson.AbstractGroup> abstractGroups = new ArrayList<>();
-        for (int i = 0; i < abstractNetlist.getGroupNum(); i++) {
+        for (int i = 0; i < abstractNetlist.getNodeNum(); i++) {
             IslandPlacerInputJson.AbstractGroup group = new IslandPlacerInputJson.AbstractGroup();
 
             group.id = i;
-            group.primCellNum = abstractNetlist.group2LeafCellNum.get(i);
-            Map<String, Integer> resTypeUtil = NetlistUtils.getResTypeUtils(abstractNetlist.group2LeafCellUtils.get(i));
-            group.resTypeUtil = resTypeUtil;
+            group.primCellNum = abstractNetlist.getLeafCellNumOfNode(i);
+            group.resTypeUtil = abstractNetlist.getResUtilOfNode(i);
 
             abstractGroups.add(group);
         }
         inputJson.abstractGroups = abstractGroups;
 
-        Map<Set<Integer>, List<Integer>> incidentGroup2EdgeIdMap = compressAbstractEdges(abstractNetlist.edge2GroupIds);
+        Map<Set<Integer>, List<Integer>> incidentGroup2EdgeIdMap = compressAbstractEdges(abstractNetlist.edge2NodeIds);
         inputJson.totalEdgeNum = incidentGroup2EdgeIdMap.size();
         
         List<IslandPlacerInputJson.AbstractEdge> abstractEdges = new ArrayList<>();

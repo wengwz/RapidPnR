@@ -1,12 +1,18 @@
 package com.xilinx.rapidwright.rapidpnr;
 
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 
 import com.xilinx.rapidwright.design.Design;
+import com.xilinx.rapidwright.edif.EDIFCell;
 
 
 public class RapidPnR {
@@ -22,8 +28,7 @@ public class RapidPnR {
 
     private Design outputDesign;
 
-
-    public RapidPnR(String jsonFilePath) {
+    public RapidPnR(String jsonFilePath, Boolean enableLogger) {
         // read design parameters from json file
         Path jsonPath = Path.of(jsonFilePath).toAbsolutePath();
         designParams = new DesignParams(jsonPath);
@@ -32,13 +37,17 @@ public class RapidPnR {
         dirManager = new DirectoryManager(designParams.getWorkDir());
 
         // setup logger
-        setupLogger();
+        setupLogger(enableLogger);
 
     }
 
-    private void setupLogger() {
+    private void setupLogger(Boolean enableLogger) {
         logger = new HierarchicalLogger("RapidPnR");
         logger.setUseParentHandlers(false);
+
+        if (!enableLogger) {
+            return;
+        }
 
         Path logFilePath = dirManager.getRootDir().resolve("rapidPnR.log");
         
@@ -88,7 +97,10 @@ public class RapidPnR {
     }
 
     private void runNetlistAbstraction() {
-        abstractNetlist = new AbstractNetlist(logger, netlistDatabase);
+        //abstractNetlist = new EdgeBasedClustering(logger, EdgeBasedClustering.CLBBasedFilter);
+        abstractNetlist = new EdgeBasedClustering(logger);
+        abstractNetlist.buildAbstractNetlist(netlistDatabase);
+
         abstractNetlist.printAbstractNetlistInfo();
     }
 
@@ -101,15 +113,13 @@ public class RapidPnR {
     private void runPhysicalImplementation() {
         PhysicalImpl physicalImpl;
 
-        physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase);
+        //physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase, true);
+        //physicalImpl = new IncrementalIslandPnR(logger, dirManager, designParams, netlistDatabase);
+        //physicalImpl = new ParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
+        physicalImpl = new FastParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
+        
         physicalImpl.run(abstractNetlist, groupPlaceResults);
-
-        // physicalImpl = new ParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
-        // physicalImpl.run(abstractNetlist, groupPlaceResults);
-
-        // physicalImpl = new IncrementalIslandPnR(logger, dirManager, designParams, netlistDatabase);
-        // physicalImpl.run(abstractNetlist, groupPlaceResults);
-        //parallelPnR.run3x2();
+        
     }
 
     public void run(RapidPnRStep endStep) {
@@ -161,18 +171,72 @@ public class RapidPnR {
         run(RapidPnRStep.getLastStep());
     }
 
+    public static void reportResUtilsInBatch(Path outputPath, List<String> jsonFiles) {
+        Map<String, Map<String, Integer>> design2ResUtilsMap = new HashMap<>();
+        String reportContent = "";
+
+        for (String jsonFilePath : jsonFiles) {
+            RapidPnR rapidPnR = new RapidPnR(jsonFilePath, false);
+            rapidPnR.run(RapidPnRStep.DATABASE_SETUP);
+            String designName = rapidPnR.designParams.getDesignName();
+            Map<EDIFCell, Integer> resUtils = rapidPnR.netlistDatabase.netlistLeafCellUtilMap;
+            Map<String, Integer> resUtilsMap = NetlistUtils.getResTypeUtils(resUtils);
+            Integer totalLeafCellNum = rapidPnR.netlistDatabase.netlistLeafCellNum;
+            resUtilsMap.put("Total", totalLeafCellNum);
+
+            design2ResUtilsMap.put(designName, resUtilsMap);
+        }
+
+        for (String designName : design2ResUtilsMap.keySet()) {
+            Map<String, Integer> resUtilsMap = design2ResUtilsMap.get(designName);
+            reportContent += designName + ":\n";
+            for (String resType : resUtilsMap.keySet()) {
+                Integer resNum = resUtilsMap.get(resType);
+                reportContent += "  " + resType + ": " + resNum + "\n";
+            }
+        }
+
+        try (BufferedWriter writer = Files.newBufferedWriter(outputPath)) {
+            writer.write(reportContent);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        
+    }
+
     public static void main(String[] args) {
-        String jsonFilePath = "workspace/json/blue-rdma-3n.json";
-        //String jsonFilePath = "workspace/json/nvdla-opt.json";
+        //String jsonFilePath = "workspace/json/nvdla-small.json";
+        //String jsonFilePath = "workspace/json/nvdla-small-256.json"; //seed=1001
+        //String jsonFilePath = "workspace/json/nvdla-small-256-full.json";
+        String jsonFilePath = "workspace/json/blue-rdma.json";
+        //String jsonFilePath = "workspace/json/corundum.json";
+        //String jsonFilePath = "workspace/json/ntt-large.json";
+        //String jsonFilePath = "workspace/json/ntt-small.json";
+        
         //String jsonFilePath = "workspace/json/cnn13x2.json";
         //String jsonFilePath = "workspace/json/miaow.json";
-        //String jsonFilePath = "workspace/json/nvdla-small-256-full.json";
-        // String jsonFilePath = "workspace/json/mm_int16.json";
+        //String jsonFilePath = "workspace/json/mm_int16.json";
+        //String jsonFilePath = "workspace/json/hardcaml-ntt.json";
+        //String jsonFilePath = "workspace/json/minimap.json";
+        //String jsonFilePath = "workspace/json/minimap-tapa.json";
+        //String jsonFilePath = "workspace/json/isp.json";
         
-        RapidPnR rapidPnR = new RapidPnR(jsonFilePath);
+        RapidPnR rapidPnR = new RapidPnR(jsonFilePath, true);
         //rapidPnR.run(RapidPnRStep.NETLIST_ABSTRACTION);
         rapidPnR.run(RapidPnRStep.ISLAND_PLACEMENT);
         //rapidPnR.run(RapidPnRStep.PHYSICAL_IMPLEMENTATION);
+
+        // Path outputPath = Path.of("workspace/report/res_utils.txt");
+        // List<String> jsonFiles = List.of(
+        //     "workspace/json/nvdla-small.json",
+        //     "workspace/json/nvdla-small-256.json",
+        //     "workspace/json/nvdla-small-256-full.json",
+        //     "workspace/json/blue-rdma.json",
+        //     "workspace/json/corundum.json",
+        //     "workspace/json/supranational-ntt.json",
+        //     "workspace/json/ntt-small.json"
+        // );
+        // reportResUtilsInBatch(outputPath, jsonFiles);
     }
 
 }

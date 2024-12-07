@@ -155,9 +155,9 @@ abstract public class PhysicalImpl {
         }
         cellInst2IslandLocMap = new HashMap<>();
 
-        for (int i = 0; i < abstractNetlist.getGroupNum(); i++) {
+        for (int i = 0; i < abstractNetlist.getNodeNum(); i++) {
             Coordinate2D islandLoc = groupLocs.get(i);
-            Set<EDIFCellInst> cellInstSet = abstractNetlist.getCellInstsOfGroup(i);
+            Set<EDIFCellInst> cellInstSet = abstractNetlist.getCellInstsOfNode(i);
             for (EDIFCellInst cellInst : cellInstSet) {
                 assert getCellInstsOfIsland(islandLoc).contains(cellInst) == false;
                 island2CellInsts[islandLoc.getX()][islandLoc.getY()].add(cellInst);

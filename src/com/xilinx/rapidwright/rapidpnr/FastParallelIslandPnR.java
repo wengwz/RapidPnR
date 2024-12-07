@@ -14,7 +14,6 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 
 import com.xilinx.rapidwright.design.Design;
@@ -109,85 +108,173 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         logger.info(runtimeTrackerTree.toString());
     }
 
+    private Set<EDIFCellInst>[][] buildPartialIslands() {
+        Set<EDIFCellInst>[][] partialIslands = new HashSet[gridDim.getX()][gridDim.getY()];
+        
+        gridDim.traverse((Coordinate2D loc) -> {
+            partialIslands[loc.getX()][loc.getY()] = new HashSet<>();
+        });
+
+        Set<EDIFCellInst> boundaryCellInsts = new HashSet<>();
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            boundaryCellInsts.addAll(getCellInstsOfHoriBoundary(loc));
+        });
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            boundaryCellInsts.addAll(getCellInstsOfVertBoundary(loc));
+        });
+
+        Set<EDIFNet> ignoredNets = new HashSet<>();
+        ignoredNets.addAll(netlistDB.globalClockNets);
+        ignoredNets.addAll(netlistDB.globalResetNets);
+        ignoredNets.addAll(netlistDB.ignoreNets);
+        ignoredNets.addAll(netlistDB.illegalNets);
+
+        class BreadthFirstExpansion implements Consumer<Coordinate2D> {
+            Set<EDIFCellInst>[][] loc2CellInsts;
+
+            public void accept(Coordinate2D boundaryLoc) {
+                Set<EDIFCellInst> visitedCellInsts = new HashSet<>();
+                Set<EDIFNet> visitedNets = new HashSet<>();
+                Queue<EDIFCellInst> searchCellInstQ = new LinkedList<>();
+                Integer neighborSize;
+
+                visitedCellInsts.addAll(boundaryCellInsts);
+                visitedNets.addAll(ignoredNets);
+                searchCellInstQ.addAll(loc2CellInsts[boundaryLoc.getX()][boundaryLoc.getY()]);
+                neighborSize = searchCellInstQ.size();
+
+                while (!searchCellInstQ.isEmpty()) {
+                    EDIFCellInst searchCellInst = searchCellInstQ.poll();
+        
+                    for (EDIFPortInst searchPortInst : searchCellInst.getPortInsts()) {
+                        EDIFNet expandNet = searchPortInst.getNet();
+        
+                        if (visitedNets.contains(expandNet)) continue;
+                        if (expandNet.isGND() || expandNet.isVCC()) continue;
+        
+                        visitedNets.add(expandNet);
+        
+                        for (EDIFPortInst expandPortInst : expandNet.getPortInsts()) {
+                            EDIFCellInst expandCellInst = expandPortInst.getCellInst();
+        
+                            if (expandCellInst == null) continue;
+                            if (visitedCellInsts.contains(expandCellInst)) continue;
+        
+                            visitedCellInsts.add(expandCellInst);
+                            Coordinate2D loc = cellInst2IslandLocMap.get(expandCellInst);
+                            assert loc != null;
+        
+                            if (neighborSize < designParams.getBoundaryNeighborSize()) {
+                                partialIslands[loc.getX()][loc.getY()].add(expandCellInst);
+        
+                                Integer primCellNum = NetlistUtils.getLeafCellNum(expandCellInst.getCellType());
+                                neighborSize += primCellNum;
+        
+                                searchCellInstQ.add(expandCellInst);
+                            }
+
+                            // if (!NetlistUtils.isRegisterCellInst(expandCellInst)) {
+                            //     partialIslands[loc.getX()][loc.getY()].add(expandCellInst);
+                            //     searchCellInstQ.add(expandCellInst);
+                            // } else {
+                            //     partialIslands[loc.getX()][loc.getY()].add(expandCellInst);
+                            // }
+                        }
+                    }
+                }
+            }
+
+        }
+
+        BreadthFirstExpansion expandBoundary = new BreadthFirstExpansion();
+        expandBoundary.loc2CellInsts = horiBoundary2CellInsts;
+        horiBoundaryDim.traverse(expandBoundary);
+
+        expandBoundary.loc2CellInsts = vertBoundary2CellInsts;
+        vertBoundaryDim.traverse(expandBoundary);
+
+        return partialIslands;
+    }
+
     private Design createBoundaryDesign() {
         Design design = new Design("boundary", netlistDB.partName);
         EDIFNetlist netlist = design.getNetlist();
         //EDIFLibrary workLib = netlist.getWorkLibrary();
         EDIFCell topCell = netlist.getTopCell();
 
-        Queue<EDIFCellInst> searchCellInstQ = new LinkedList<>();
-        Integer[][] partialIslandSizes = new Integer[gridDim.getX()][gridDim.getY()];
-        Set<EDIFCellInst>[][] partialIslands = new HashSet[gridDim.getX()][gridDim.getY()];
-        Set<EDIFCellInst> visitedCellInsts = new HashSet<>();
-        Set<EDIFNet> visitedNets = new HashSet<>();
+        Set<EDIFCellInst>[][] partialIslands;
+        //Integer[][] partialIslandSizes = new Integer[gridDim.getX()][gridDim.getY()];
+        // Queue<EDIFCellInst> searchCellInstQ = new LinkedList<>();
+        // Set<EDIFCellInst> visitedCellInsts = new HashSet<>();
+        // Set<EDIFNet> visitedNets = new HashSet<>();
 
-        // initialize partialIslands
-        gridDim.traverse((Coordinate2D loc) -> {
-            partialIslands[loc.getX()][loc.getY()] = new HashSet<>();
-            partialIslandSizes[loc.getX()][loc.getY()] = 0;
-        });
+        // // initialize partialIslands
+        // gridDim.traverse((Coordinate2D loc) -> {
+        //     partialIslands[loc.getX()][loc.getY()] = new HashSet<>();
+        //     partialIslandSizes[loc.getX()][loc.getY()] = 0;
+        // });
 
-        horiBoundaryDim.traverse(
-            (Coordinate2D loc) -> {
-                searchCellInstQ.addAll(getCellInstsOfHoriBoundary(loc));
-                visitedCellInsts.addAll(getCellInstsOfHoriBoundary(loc));
-            }
-        );
+        // horiBoundaryDim.traverse(
+        //     (Coordinate2D loc) -> {
+        //         searchCellInstQ.addAll(getCellInstsOfHoriBoundary(loc));
+        //         visitedCellInsts.addAll(getCellInstsOfHoriBoundary(loc));
+        //     }
+        // );
 
-        vertBoundaryDim.traverse(
-            (Coordinate2D loc) -> {
-                searchCellInstQ.addAll(getCellInstsOfVertBoundary(loc));
-                visitedCellInsts.addAll(getCellInstsOfVertBoundary(loc));
-            }
-        );
+        // vertBoundaryDim.traverse(
+        //     (Coordinate2D loc) -> {
+        //         searchCellInstQ.addAll(getCellInstsOfVertBoundary(loc));
+        //         visitedCellInsts.addAll(getCellInstsOfVertBoundary(loc));
+        //     }
+        // );
 
-        visitedNets.addAll(netlistDB.globalClockNets);
-        visitedNets.addAll(netlistDB.globalResetNets);
-        visitedNets.addAll(netlistDB.ignoreNets);
-        visitedNets.addAll(netlistDB.illegalNets);
+        // visitedNets.addAll(netlistDB.globalClockNets);
+        // visitedNets.addAll(netlistDB.globalResetNets);
+        // visitedNets.addAll(netlistDB.ignoreNets);
+        // visitedNets.addAll(netlistDB.illegalNets);
 
-        while (!searchCellInstQ.isEmpty()) {
-            EDIFCellInst searchCellInst = searchCellInstQ.poll();
+        // while (!searchCellInstQ.isEmpty()) {
+        //     EDIFCellInst searchCellInst = searchCellInstQ.poll();
 
-            for (EDIFPortInst searchPortInst : searchCellInst.getPortInsts()) {
-                EDIFNet expandNet = searchPortInst.getNet();
+        //     for (EDIFPortInst searchPortInst : searchCellInst.getPortInsts()) {
+        //         EDIFNet expandNet = searchPortInst.getNet();
 
-                if (visitedNets.contains(expandNet)) continue;
-                if (expandNet.isGND() || expandNet.isVCC()) continue;
+        //         if (visitedNets.contains(expandNet)) continue;
+        //         if (expandNet.isGND() || expandNet.isVCC()) continue;
 
-                visitedNets.add(expandNet);
+        //         visitedNets.add(expandNet);
 
-                for (EDIFPortInst expandPortInst : expandNet.getPortInsts()) {
-                    EDIFCellInst expandCellInst = expandPortInst.getCellInst();
+        //         for (EDIFPortInst expandPortInst : expandNet.getPortInsts()) {
+        //             EDIFCellInst expandCellInst = expandPortInst.getCellInst();
 
-                    if (expandCellInst == null) continue;
-                    if (visitedCellInsts.contains(expandCellInst)) continue;
+        //             if (expandCellInst == null) continue;
+        //             if (visitedCellInsts.contains(expandCellInst)) continue;
 
-                    visitedCellInsts.add(expandCellInst);
-                    Coordinate2D loc = cellInst2IslandLocMap.get(expandCellInst);
-                    assert loc != null;
+        //             visitedCellInsts.add(expandCellInst);
+        //             Coordinate2D loc = cellInst2IslandLocMap.get(expandCellInst);
+        //             assert loc != null;
 
-                    Set<EDIFCellInst> partialIsland = partialIslands[loc.getX()][loc.getY()];
-                    if (partialIslandSizes[loc.getX()][loc.getY()] < designParams.getBoundaryNeighborSize()) {
-                        partialIsland.add(expandCellInst);
+        //             Set<EDIFCellInst> partialIsland = partialIslands[loc.getX()][loc.getY()];
+        //             if (partialIslandSizes[loc.getX()][loc.getY()] < designParams.getBoundaryNeighborSize()) {
+        //                 partialIsland.add(expandCellInst);
 
-                        Integer primCellNum = NetlistUtils.getLeafCellNum(expandCellInst.getCellType());
-                        partialIslandSizes[loc.getX()][loc.getY()] += primCellNum;
+        //                 Integer primCellNum = NetlistUtils.getLeafCellNum(expandCellInst.getCellType());
+        //                 partialIslandSizes[loc.getX()][loc.getY()] += primCellNum;
 
-                        // searchCellInstQ.add(expandCellInst);
-                    }
-                    // island2PartialCellInsts[loc.getX()][loc.getY()].add(expandCellInst);
-                    // Boolean isBoundaryCell = cellInst2VertBoundaryLocMap.containsKey(expandCellInst) ||
-                    //                            cellInst2HoriBoundaryLocMap.containsKey(expandCellInst);
-                    // Boolean isRegCell = NetlistUtils.isRegisterCellInst(expandCellInst);
-                    // if (isBoundaryCell || !isRegCell) {
-                    //     searchCellInstQ.add(expandCellInst);
-                    // }
-                    //searchCellInstQ.add(expandCellInst);
-                    searchCellInstQ.add(expandCellInst);
-                }
-            }
-        }
+        //                 // searchCellInstQ.add(expandCellInst);
+        //             }
+        //             // island2PartialCellInsts[loc.getX()][loc.getY()].add(expandCellInst);
+        //             // Boolean isBoundaryCell = cellInst2VertBoundaryLocMap.containsKey(expandCellInst) ||
+        //             //                            cellInst2HoriBoundaryLocMap.containsKey(expandCellInst);
+        //             // Boolean isRegCell = NetlistUtils.isRegisterCellInst(expandCellInst);
+        //             // if (isBoundaryCell || !isRegCell) {
+        //             //     searchCellInstQ.add(expandCellInst);
+        //             // }
+        //             //searchCellInstQ.add(expandCellInst);
+        //             searchCellInstQ.add(expandCellInst);
+        //         }
+        //     }
+        // }
 
         // class CreateCellInst implements Consumer<Coordinate2D> {
 
@@ -216,6 +303,8 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         //         }
         //     }
         // }
+
+        partialIslands = buildPartialIslands();
 
         CreateCellInstOfLoc createCellInst = new CreateCellInstOfLoc();
         createCellInst.design = design;
@@ -252,7 +341,10 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         tclFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
-        tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicHigh, false));
+        //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicHigh, false));
+        //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
+        //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.Quick, false));
+        tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.RuntimeOpt, false));
 
         tclFile.addCmd(VivadoTclCmd.deletePblock());
 
@@ -372,7 +464,13 @@ public class FastParallelIslandPnR extends PhysicalImpl{
             }
         });
 
-        VivadoTclCmd.createClocks(design, clkName2PeriodMap);
+
+        Map<String, Double> newClkName2PeriodMap = new HashMap<>(clkName2PeriodMap);
+        for (String clkName : newClkName2PeriodMap.keySet()) {
+            Double period = newClkName2PeriodMap.get(clkName) - designParams.getIslandPeriodDecrement();
+            newClkName2PeriodMap.replace(clkName, period);
+        }
+        VivadoTclCmd.createClocks(design, newClkName2PeriodMap);
         VivadoTclCmd.setAsyncClockGroupsForEachClk(design, clkName2PeriodMap.keySet());
     }
 
@@ -414,6 +512,7 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         }
 
         tclCmdFile.addCmd(VivadoTclCmd.placeDesign());
+        //tclCmdFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
         tclCmdFile.addCmd(VivadoTclCmd.routeDesign());
         tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
 
@@ -495,9 +594,9 @@ public class FastParallelIslandPnR extends PhysicalImpl{
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
         if (designParams.isFullRouteMerge()) {
-            tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null, true));
+            tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null, false));
         } else {
-            tclCmdFile.addCmd(VivadoTclCmd.routeUnroutedNetsWithMinDelay());
+            tclCmdFile.addCmds(VivadoTclCmd.routeUnroutedNetsWithMinDelay());
         }
 
         String timingRptPath = addSuffixRpt("timing_summary");
@@ -510,15 +609,35 @@ public class FastParallelIslandPnR extends PhysicalImpl{
 
 
     public static void main(String[] args) {
-        String dcpFilePath = "./workspace/nvdla-small-new/merged/.dcp";
-        Design inputDesign = Design.readCheckpoint(dcpFilePath);
+        // String dcpFilePath = "./workspace/nvdla-small-new/merged/.dcp";
+        // Design inputDesign = Design.readCheckpoint(dcpFilePath);
 
-        for (EDIFLibrary lib : inputDesign.getNetlist().getLibraries()) {
-            System.out.println("Library:" + lib.getName());
-            for (EDIFCell cell : lib.getCells()) {
-                System.out.println("Cell:" + cell.getName());
-            }
+        // for (EDIFLibrary lib : inputDesign.getNetlist().getLibraries()) {
+        //     System.out.println("Library:" + lib.getName());
+        //     for (EDIFCell cell : lib.getCells()) {
+        //         System.out.println("Cell:" + cell.getName());
+        //     }
+        // }
+
+        Map<String, Double> clkName2PeriodMap = new HashMap<>();
+        clkName2PeriodMap.put("clk1", 10.0);
+        clkName2PeriodMap.put("clk2", 20.0);
+
+        Map<String, Double> newClkName2PeriodMap = new HashMap<>(clkName2PeriodMap);
+        newClkName2PeriodMap.replace("clk1", 2.0);
+        newClkName2PeriodMap.replace("clk2", 30.0);
+
+        System.out.println(clkName2PeriodMap);
+        System.out.println(newClkName2PeriodMap);
+
+
+        for (String clk : newClkName2PeriodMap.keySet()) {
+            newClkName2PeriodMap.replace(clk, newClkName2PeriodMap.get(clk) - 1.0);            
         }
+
+        System.out.println(clkName2PeriodMap);
+        System.out.println(newClkName2PeriodMap);
     }
+
 
 }

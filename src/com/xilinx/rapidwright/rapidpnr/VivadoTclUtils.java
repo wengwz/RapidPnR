@@ -59,6 +59,8 @@ public class VivadoTclUtils {
             public static final String RuntimeOpt = "RuntimeOptimized";
             public static final String Quick = "Quick";
             public static final String SpreadLogicHigh = "AltSpreadLogic_high";
+            public static final String SpreadLogicMedium = "AltSpreadLogic_medium";
+            public static final String SpreadLogicLow = "AltSpreadLogic_low";
         }
 
         public static class LockDesignLevel {
@@ -333,9 +335,12 @@ public class VivadoTclUtils {
             return routeDesign(null, false);
         }
 
-        public static String routeUnroutedNetsWithMinDelay() {
+        public static List<String> routeUnroutedNetsWithMinDelay() {
+            List<String> cmds = new ArrayList<>();
             String target = reportRouteStatus(RouteType.Unrouted, true);
-            return routeDesignPartial(target, true);
+            cmds.add(String.format("set unrouted_nets [%s]", target));
+            cmds.add(routeDesignPartial(target, true));
+            return cmds;
         }
     
         public static String physOptDesign() {

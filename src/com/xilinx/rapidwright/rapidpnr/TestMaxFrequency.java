@@ -9,7 +9,6 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 
@@ -313,8 +312,8 @@ public class TestMaxFrequency {
     }
 
     public static void main(String[] args) {
-        Path jsonFilePath = Path.of("workspace", "max-freq-runtime.json");
-        Boolean isParallel = false;
+        Path jsonFilePath = Path.of("workspace/report", "max-freq-no-runtime.json");
+        Boolean isParallel = true;
 
         TestMaxFrequency tester = new TestMaxFrequency(jsonFilePath);
 
@@ -325,18 +324,23 @@ public class TestMaxFrequency {
 
         //benchmarkDB.addBenchmark("corundum", 3.8, 3.0, 0.1, "main_clk");
 
-        //tester.addBenchmark("supranational-ntt", 4.0, 2.3, 0.2, "clk_i");
+        //tester.addBenchmark("supranational-ntt", 4.0, 1.4, 0.1, "clk_i");
         //tester.addBenchmark("hardcaml-ntt", 2.9, 2.6, 0.1, "ap_clk");
 
-        tester.addBenchmark("blue-rdma", 4.0, 3.4, 0.2, "CLK");
-        tester.addBenchmark("nvdla-small", 4.4, 3.9, 0.2, "core_clk");
-        tester.addBenchmark("nvdla-small-256", 6.0, 5.2, 0.2, "core_clk");
-        tester.addBenchmark("nvdla-small-256-full", 5.8, 5.0, 0.2, "core_clk");
+        //tester.addBenchmark("blue-rdma", 3.8, 3.7, 0.2, "CLK");
+        //tester.addBenchmark("nvdla-small", 4.0, 3.9, 0.1, "core_clk");
+        //tester.addBenchmark("nvdla-small-256", 5.4, 5.3, 0.2, "core_clk");
+        //tester.addBenchmark("nvdla-small-256-full", 5.2, 5.1, 0.2, "core_clk");
 
         // tester.addBenchmark("corundum", 3.8, 3.0, 0.2, "main_clk");
 
         // tester.addBenchmark("supranational-ntt", 4.0, 2.3, 0.2, "clk_i");
         // tester.addBenchmark("hardcaml-ntt", 4.5, 3.5, 0.2, "ap_clk");
+
+        //tester.addBenchmark("corundum", 4.0, 3.8, 0.2, "main_clk");
+        //tester.addBenchmark("supranational-ntt", 2.2, 1.8, 0.4, "clk_i");
+        //tester.addBenchmark("ntt-small", 1.9, 1.6, 0.1, "clk_i");
+        //tester.addBenchmark("corundum", 3.6, 3.4, 0.1, "main_clk");
         
         if (isParallel) {
             tester.parallelUpdate();

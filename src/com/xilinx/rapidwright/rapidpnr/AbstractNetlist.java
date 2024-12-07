@@ -2,197 +2,86 @@ package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFNet;
-import com.xilinx.rapidwright.edif.EDIFPortInst;
 
-public class AbstractNetlist {
+abstract public class AbstractNetlist {
+
+    public static boolean calibrateLUTUtils = true;
     
-    private HierarchicalLogger logger;
-    private NetlistDatabase netlistDatabase;
+    protected HierarchicalLogger logger;
+    protected NetlistDatabase netlistDatabase;
 
-    public List<Set<EDIFCellInst>> group2CellInsts;
-    public Map<EDIFCellInst, Integer> cellInst2GroupIdMap;
+    //
+    public List<Set<EDIFCellInst>> node2CellInsts;
+    public Map<EDIFCellInst, Integer> cellInst2NodeIdMap;
 
-    public List<Set<Integer>> edge2GroupIds;
-    public List<Set<Integer>> group2EdgeIds;
+    //
+    public List<Set<Integer>> edge2NodeIds;
+    public List<Set<Integer>> node2EdgeIds;
     public List<EDIFNet> edge2OriginNet;
 
-    public List<Map<EDIFCell, Integer>> group2LeafCellUtils;
-    public List<Integer> group2LeafCellNum;
-    public List<Map<String, Integer>> group2ResUtils;
+    // Resource utilization of abstract nodes
+    public List<Map<EDIFCell, Integer>> node2LeafCellUtils;
+    public List<Integer> node2LeafCellNum;
+    public List<Map<String, Integer>> node2ResUtils;
 
-    public AbstractNetlist(HierarchicalLogger logger, NetlistDatabase netlistDatabase) {
+    public AbstractNetlist(HierarchicalLogger logger) {
         this.logger = logger;
-        this.netlistDatabase = netlistDatabase;
-
-        buildAbstractNetlist();
     }
 
-    public void buildAbstractNetlist() {
+    public void buildAbstractNetlist(NetlistDatabase netlistDatabase) {
         logger.info("Start building abstract netlist:");
         logger.newSubStep();
 
-        buildCellInst2GroupMap();
+        this.netlistDatabase = netlistDatabase;
 
-        buildEdge2GroupMap();
+        buildNode2CellInstsMap();
 
-        
+        buildEdge2NodeMap();
+
+        buildNode2ResUtilMap();
+
         logger.endSubStep();
         logger.info("Complete building abstract netlist");
     }
 
+    abstract protected void buildNode2CellInstsMap();
 
-    private void buildCellInst2GroupMap() {
+    abstract protected void buildEdge2NodeMap();
 
-        logger.info("Start building timing-path-aware cellInst-group map:");
+    protected void buildNode2ResUtilMap() {
+        logger.info("Start building resource utilization of abstract nodes:");
+        node2LeafCellUtils = new ArrayList<>();
+        node2LeafCellNum = new ArrayList<>();
+        node2ResUtils = new ArrayList<>();
 
-        cellInst2GroupIdMap = new HashMap<>();
-        group2CellInsts = new ArrayList<>();
-        group2EdgeIds = new ArrayList<>();
-        group2LeafCellUtils = new ArrayList<>();
-        group2LeafCellNum = new ArrayList<>();
-        group2ResUtils = new ArrayList<>();
+        for (Set<EDIFCellInst> nodeCellInsts : node2CellInsts) {
 
-
-        Set<EDIFNet> visitedNetsCls = new HashSet<>();
-
-        
-        // Remove global clock/reset nets and ignore nets
-        visitedNetsCls.addAll(netlistDatabase.globalClockNets);
-        visitedNetsCls.addAll(netlistDatabase.globalResetNets);
-        visitedNetsCls.addAll(netlistDatabase.illegalNets);
-        // for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
-        //     if (visitedNetsCls.contains(net)) continue;
-
-        //     if (net.getPortInsts().size() > 1000) {
-        //         netlistDatabase.ignoreNets.add(net);
-        //     }
-        // }
-        visitedNetsCls.addAll(netlistDatabase.ignoreNets);
-
-        // Remove static nets and reg-fanout nets
-        for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
-            boolean staticNet = net.isVCC() || net.isGND();
-            if (visitedNetsCls.contains(net)) continue;
-
-            List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
-            assert srcPortInsts.size() == 1;
-            
-            EDIFPortInst srcPortInst = srcPortInsts.get(0);
-            EDIFCellInst srcCellInst = srcPortInst.getCellInst();
-            
-            boolean isRegFanoutNet = false;
-            if (srcCellInst != null) {
-                isRegFanoutNet = NetlistUtils.isRegisterCellInst(srcCellInst);
-            }
-
-            if (staticNet || isRegFanoutNet) {
-                visitedNetsCls.add(net);
-            }
-        }
-        logger.info("The number of visited nets before expansion: " + visitedNetsCls.size());
-
-        for (EDIFCellInst cellInst : netlistDatabase.originTopCell.getCellInsts()) {
-            if (netlistDatabase.globalResetTreeCellInsts.contains(cellInst)) continue;
-            if (netlistDatabase.staticSourceCellInsts.contains(cellInst)) continue;
-            if (cellInst2GroupIdMap.containsKey(cellInst)) continue;
-
-            Integer grpIdx = group2CellInsts.size();
-            Set<EDIFCellInst> grpCellInsts = new HashSet<>();
-            Queue<EDIFCellInst> cellInstToSearch =  new LinkedList<>();
-
-            grpCellInsts.add(cellInst);
-            cellInst2GroupIdMap.put(cellInst, grpIdx);
-            cellInstToSearch.add(cellInst);
-
-            while (!cellInstToSearch.isEmpty()) {
-                EDIFCellInst expandCellInst = cellInstToSearch.poll();
-                
-                for (EDIFPortInst expandPortInst : expandCellInst.getPortInsts()) {
-                    EDIFNet expandNet = expandPortInst.getNet();
-                    if (visitedNetsCls.contains(expandNet)) continue;
-                    visitedNetsCls.add(expandNet);
-
-                    for (EDIFPortInst portInst : expandNet.getPortInsts()) {
-                        EDIFCellInst portCellInst = portInst.getCellInst();
-                        if (portCellInst == null) continue; // Skip toplevel ports
-                        if (cellInst2GroupIdMap.containsKey(portCellInst)) continue;
-
-                        cellInst2GroupIdMap.put(portCellInst, grpIdx);
-                        grpCellInsts.add(portCellInst);
-                        cellInstToSearch.add(portCellInst);
-                    }
-                }
-            }
-
-            group2CellInsts.add(grpCellInsts);
-            group2EdgeIds.add(new HashSet<>());
             Map<EDIFCell, Integer> primCellUtilMap = new HashMap<>();
-            for (EDIFCellInst cellInstInGrp : grpCellInsts) {
-                NetlistUtils.getLeafCellUtils(cellInstInGrp.getCellType(), primCellUtilMap);
+            for (EDIFCellInst cellInst : nodeCellInsts) {
+                NetlistUtils.getLeafCellUtils(cellInst.getCellType(), primCellUtilMap);
             }
+
             Integer primCellNum = primCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
-            group2LeafCellNum.add(primCellNum);
+            node2LeafCellNum.add(primCellNum);
 
-            NetlistUtils.calibrateLUTUtils(grpCellInsts, primCellUtilMap); // calibrate usage of LUTs
-
-            group2LeafCellUtils.add(primCellUtilMap);
-            group2ResUtils.add(NetlistUtils.getResTypeUtils(primCellUtilMap));
-        }
-
-        int grpCellInstsNum = cellInst2GroupIdMap.size();
-        int rstTreeCellInstsNum = netlistDatabase.globalResetTreeCellInsts.size();
-        int totalCellInstsNum = netlistDatabase.originTopCell.getCellInsts().size();
-        int staticSourceCellInstsNum = netlistDatabase.staticSourceCellInsts.size();
-        assert totalCellInstsNum == grpCellInstsNum + rstTreeCellInstsNum + staticSourceCellInstsNum;
-
-        logger.info("Complete building timing-path-aware cellInst-group map");
-    }
-
-    private void buildEdge2GroupMap() {
-        logger.info("Start building timing-path-aware edge-group map:");
-        edge2GroupIds = new ArrayList<>();
-        edge2OriginNet = new ArrayList<>();
-        
-        for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
-            if (net.isVCC() || net.isGND()) continue;
-            if (netlistDatabase.globalClockNets.contains(net)) continue;
-            if (netlistDatabase.globalResetNets.contains(net)) continue;
-            if (netlistDatabase.ignoreNets.contains(net)) continue;
-
-            Set<Integer> incidentGrpIds = new HashSet<>();
-            for (EDIFPortInst portInst : net.getPortInsts()) {
-                EDIFCellInst cellInst = portInst.getCellInst();
-                if (cellInst == null) continue; // Skip toplevel ports
-                assert cellInst2GroupIdMap.containsKey(cellInst);
-                Integer groupIdx = cellInst2GroupIdMap.get(cellInst);
-                incidentGrpIds.add(groupIdx);
+            if (calibrateLUTUtils) {
+                NetlistUtils.calibrateLUTUtils(nodeCellInsts, primCellUtilMap); // calibrate usage of LUTs
             }
 
-            if (incidentGrpIds.size() > 1) {
-                assert NetlistUtils.isRegFanoutNet(net);
-                edge2GroupIds.add(incidentGrpIds);
-                for (Integer groupIdx : incidentGrpIds) {
-                    group2EdgeIds.get(groupIdx).add(edge2GroupIds.size() - 1);
-                }
-                edge2OriginNet.add(net);
-            }
+            node2LeafCellUtils.add(primCellUtilMap);
+            node2ResUtils.add(NetlistUtils.getResTypeUtils(primCellUtilMap));
         }
-
-        logger.info("Complete building timing-path-aware edge-group map");
     }
-
 
     public void printAbstractNetlistInfo() {
         printAbstractGroupsInfo();
@@ -203,7 +92,7 @@ public class AbstractNetlist {
         logger.info("Abstract Group Info:");
         logger.newSubStep();
 
-        Integer totalAbstractGroupNum = group2CellInsts.size();
+        Integer totalAbstractGroupNum = node2CellInsts.size();
         logger.info("Total Number of Abstract Groups: " + totalAbstractGroupNum);
 
         Map<Integer, Integer> leafCellNum2AmountMap = new HashMap<>();
@@ -211,12 +100,12 @@ public class AbstractNetlist {
         Map<Integer, Integer> lutNum2AmountMap = new HashMap<>();
 
 
-        for (int i = 0; i < group2CellInsts.size(); i++){
-            Set<Integer> grpIncidnetEdges = group2EdgeIds.get(i);
-            Integer grpPrimCellNum = group2LeafCellNum.get(i);
+        for (int i = 0; i < node2CellInsts.size(); i++){
+            Set<Integer> grpIncidnetEdges = node2EdgeIds.get(i);
+            Integer grpPrimCellNum = node2LeafCellNum.get(i);
             Integer grpLutNum = 0;
-            if (group2ResUtils.get(i).get("LUT") != null) {
-                grpLutNum = group2ResUtils.get(i).get("LUT");
+            if (node2ResUtils.get(i).get("LUT") != null) {
+                grpLutNum = node2ResUtils.get(i).get("LUT");
             }
 
             if (leafCellNum2AmountMap.containsKey(grpPrimCellNum)) {
@@ -242,7 +131,7 @@ public class AbstractNetlist {
             }
         }
 
-        Integer totalLeafCellNum = group2LeafCellNum.stream().mapToInt(Integer::intValue).sum();
+        Integer totalLeafCellNum = node2LeafCellNum.stream().mapToInt(Integer::intValue).sum();
         List<Map.Entry<Integer, Integer>> sortedLeafCellNum2AmountMap = leafCellNum2AmountMap.entrySet()
         .stream()
         .sorted(Map.Entry.<Integer, Integer>comparingByKey())
@@ -254,12 +143,12 @@ public class AbstractNetlist {
         for (Map.Entry<Integer, Integer> entry : sortedLeafCellNum2AmountMap) {
             float singleGroupRatio = (float)entry.getKey() / totalLeafCellNum * 100;
             float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalLeafCellNum * 100;
-            logger.info(String.format("Number of groups with %d leaf cells(%f): %d (%f)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
+            logger.info(String.format("Number of groups with %d leaf cells(%.2f%%): %d (%.2f%%)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
         }
         logger.endSubStep();
 
 
-        Integer totalLUTNum = group2ResUtils.stream().mapToInt(map -> (map.get("LUT") == null) ? 0 : map.get("LUT")).sum();
+        Integer totalLUTNum = node2ResUtils.stream().mapToInt(map -> (map.get("LUT") == null) ? 0 : map.get("LUT")).sum();
         logger.info("Total Num of LUTs: " + totalLUTNum);
         logger.info("Group LUT Num Distribution:");
         List<Map.Entry<Integer, Integer>> sortedLUTNum2AmountMap = lutNum2AmountMap.entrySet()
@@ -270,12 +159,12 @@ public class AbstractNetlist {
         for (Map.Entry<Integer, Integer> entry : sortedLUTNum2AmountMap) {
             float singleGroupRatio = (float)entry.getKey() / totalLUTNum * 100;
             float totalGroupsRatio = (float)entry.getKey() * (float)entry.getValue() / totalLUTNum * 100;
-            logger.info(String.format("Number of groups with %d LUTs(%f): %d (%f)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
+            logger.info(String.format("Number of groups with %d LUTs(%.2f%%): %d (%.2f%%)", entry.getKey(), singleGroupRatio, entry.getValue(), totalGroupsRatio));
         }
         logger.endSubStep();
     
 
-        Integer totalEdgeNum = edge2GroupIds.size();
+        Integer totalEdgeNum = edge2NodeIds.size();
         List<Map.Entry<Integer, Integer>> sortedIncidentEdgeNum2AmountMap = incidentEdgeNum2AmountMap.entrySet()
         .stream()
         .sorted(Map.Entry.<Integer, Integer>comparingByKey())
@@ -287,7 +176,7 @@ public class AbstractNetlist {
         for (Map.Entry<Integer, Integer> entry : sortedIncidentEdgeNum2AmountMap) {
             float edgeNumRatio = (float)entry.getKey() / totalEdgeNum * 100;
             float groupNumRatio = (float)entry.getValue() / totalAbstractGroupNum * 100;
-            logger.info(String.format("Number of Groups Incident with %d(%f) Edges: %d (%f)", entry.getKey(), edgeNumRatio, entry.getValue(), groupNumRatio));
+            logger.info(String.format("Number of Groups Incident with %d(%.2f%%) Edges: %d (%.2f%%)", entry.getKey(), edgeNumRatio, entry.getValue(), groupNumRatio));
         }
         logger.endSubStep();
 
@@ -298,11 +187,11 @@ public class AbstractNetlist {
         logger.info("Abstract Edges Info:");
         logger.newSubStep();
         
-        logger.info("Total Number of Abstract Edges: " + edge2GroupIds.size());
+        logger.info("Total Number of Abstract Edges: " + edge2NodeIds.size());
 
         Map<Integer, Integer> degree2AmountMap = new HashMap<>();
-        for (int i = 0; i < edge2GroupIds.size(); i++) {
-            Set<Integer> groupIds = edge2GroupIds.get(i);
+        for (int i = 0; i < edge2NodeIds.size(); i++) {
+            Set<Integer> groupIds = edge2NodeIds.get(i);
 
             Integer edgeDegree = (groupIds.size() / 10) * 10;
 
@@ -322,7 +211,7 @@ public class AbstractNetlist {
 
         logger.newSubStep();
         for (Map.Entry<Integer, Integer> entry : sortedDegree2AmountMap) {
-            float edgeNumRatio = (float) entry.getValue() / edge2GroupIds.size() * 100;
+            float edgeNumRatio = (float) entry.getValue() / edge2NodeIds.size() * 100;
             logger.info(String.format("Degree from %d to %d: %d (%.2f%%)", entry.getKey(), entry.getKey() + 10, entry.getValue(), edgeNumRatio));
         }
         logger.endSubStep();
@@ -330,24 +219,24 @@ public class AbstractNetlist {
         logger.endSubStep();
     }
 
-    int getGroupNum() {
-        return group2CellInsts.size();
+    public int getNodeNum() {
+        return node2CellInsts.size();
     }
 
-    int getEdgeNum() {
-        return edge2GroupIds.size();
+    public int getEdgeNum() {
+        return edge2NodeIds.size();
     }
 
-    int getLeafCellNumOfGroup(int id) {
-        return group2LeafCellNum.get(id);
+    public int getLeafCellNumOfNode(int id) {
+        return node2LeafCellNum.get(id);
     }
 
-    Map<String, Integer> getResUtilOfGroup(int id) {
-        return group2ResUtils.get(id);
+    public Map<String, Integer> getResUtilOfNode(int id) {
+        return node2ResUtils.get(id);
     }
 
-    Set<EDIFCellInst> getCellInstsOfGroup(int grpId) {
-        return group2CellInsts.get(grpId);
+    public Set<EDIFCellInst> getCellInstsOfNode(int grpId) {
+        return node2CellInsts.get(grpId);
     }
 
 }

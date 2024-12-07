@@ -46,6 +46,7 @@ public class DesignParams {
     // Physical Implementation Parameters
     private Boolean fullRouteMerge = false;
     private Integer boundaryNeighborSize = 5000;
+    private Double islandPeriodDecrement = 0.0;
 
 
 
@@ -74,6 +75,7 @@ public class DesignParams {
 
         public Boolean fullRouteMerge;
         public Integer boundaryNeighborSize;
+        public Double islandPeriodDecrement;
     }
 
     public DesignParams(Path jsonFilePath) {
@@ -164,6 +166,9 @@ public class DesignParams {
             }
             if (params.boundaryNeighborSize != null) {
                 this.boundaryNeighborSize = params.boundaryNeighborSize;
+            }
+            if (params.islandPeriodDecrement != null) {
+                this.islandPeriodDecrement = params.islandPeriodDecrement;
             }
 
         } catch (Exception e) {
@@ -276,6 +281,10 @@ public class DesignParams {
 
     public int getBoundaryNeighborSize() {
         return boundaryNeighborSize;
+    }
+
+    public double getIslandPeriodDecrement() {
+        return islandPeriodDecrement;
     }
 
     public static void main(String[] args) {

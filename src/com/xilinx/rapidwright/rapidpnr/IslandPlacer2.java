@@ -778,12 +778,12 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         HyperGraph netlistGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
         //HyperGraph netlistGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0, 0.03));
 
-        for (int groupId = 0; groupId < netlist.getGroupNum(); groupId++) {
-            List<Double> weights = Arrays.asList((double) abstractNetlist.getLeafCellNumOfGroup(groupId));
+        for (int groupId = 0; groupId < netlist.getNodeNum(); groupId++) {
+            List<Double> weights = Arrays.asList((double) abstractNetlist.getLeafCellNumOfNode(groupId));
             netlistGraph.addNode(weights);
         }
 
-        Map<Set<Integer>, List<Integer>> compressedEdges = compressAbstractEdges(abstractNetlist.edge2GroupIds);
+        Map<Set<Integer>, List<Integer>> compressedEdges = compressAbstractEdges(abstractNetlist.edge2NodeIds);
 
         for (Map.Entry<Set<Integer>, List<Integer>> entry : compressedEdges.entrySet()) {
             Set<Integer> groupIds = entry.getKey();
