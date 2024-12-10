@@ -7,93 +7,35 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.ConsoleHandler;
-import java.util.logging.FileHandler;
-import java.util.logging.Level;
 
-import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.edif.EDIFCell;
 
 
-public class RapidPnR {
+public class RapidPnR extends AbstractApplication {
+    
+    public enum RapidPnRStep {
+        READ_DESIGN,
+        DATABASE_SETUP,
+        NETLIST_ABSTRACTION,
+        ISLAND_PLACEMENT,
+        PHYSICAL_IMPLEMENTATION;
+    
+        public static RapidPnRStep[] getOrderedSteps() {
+            return new RapidPnRStep[] {
+                READ_DESIGN, DATABASE_SETUP, NETLIST_ABSTRACTION, ISLAND_PLACEMENT, PHYSICAL_IMPLEMENTATION
+            };
+        }
+    
+        public static RapidPnRStep getLastStep() {
+            return PHYSICAL_IMPLEMENTATION;
+        }
+    };
 
-    private DesignParams designParams;
-    private DirectoryManager dirManager;
-    private HierarchicalLogger logger;
-
-    private Design inputDesign;
-    private NetlistDatabase netlistDatabase;
     private AbstractNetlist abstractNetlist;
     private List<Coordinate2D> groupPlaceResults;
 
-    private Design outputDesign;
-
     public RapidPnR(String jsonFilePath, Boolean enableLogger) {
-        // read design parameters from json file
-        Path jsonPath = Path.of(jsonFilePath).toAbsolutePath();
-        designParams = new DesignParams(jsonPath);
-
-        // setup directory manager
-        dirManager = new DirectoryManager(designParams.getWorkDir());
-
-        // setup logger
-        setupLogger(enableLogger);
-
-    }
-
-    private void setupLogger(Boolean enableLogger) {
-        logger = new HierarchicalLogger("RapidPnR");
-        logger.setUseParentHandlers(false);
-
-        if (!enableLogger) {
-            return;
-        }
-
-        Path logFilePath = dirManager.getRootDir().resolve("rapidPnR.log");
-        
-        // Setup Logger
-        try {
-            FileHandler fileHandler = new FileHandler(logFilePath.toString(), false);
-            fileHandler.setFormatter(new CustomFormatter());
-            logger.addHandler(fileHandler);
-
-            ConsoleHandler consoleHandler = new ConsoleHandler();
-            consoleHandler.setFormatter(new CustomFormatter());
-            logger.addHandler(consoleHandler);
-        } catch (Exception e) {
-            System.out.println("Fail to open log file: " + logFilePath.toString());
-        }
-        logger.setLevel(Level.INFO);
-
-        logger.info("Setup hierarchical logger for RapidPnR successfully");
-    }
-
-    private void readInputDesign() {
-        logger.info("Reading input design checkpoint: " + designParams.getInputDcpPath().toString());
-
-        inputDesign = Design.readCheckpoint(designParams.getInputDcpPath().toString());
-
-        logger.info("Read input design checkpoint successfully");
-    }
-
-    private void writeOutputDesign() {
-        Path rootDir = dirManager.getRootDir();
-        Path outputDcpPath = rootDir.resolve(designParams.getDesignName());
-        logger.info("Writing output design checkpoint: " + outputDcpPath.toString());
-
-        outputDesign.writeCheckpoint(outputDcpPath.toString());
-
-        logger.info("Write output design checkpoint successfully");
-    }
-
-    public void setupNetlistDatabase() {
-        netlistDatabase = new NetlistDatabase(logger, inputDesign, designParams);
-        
-        logger.info("Information of netlist database:");
-        logger.newSubStep();
-        netlistDatabase.printCellLibraryInfo();
-        netlistDatabase.printNetlistInfo();
-        logger.endSubStep();
+        super(jsonFilePath, enableLogger);
     }
 
     private void runNetlistAbstraction() {
@@ -148,10 +90,6 @@ public class RapidPnR {
                 
                 case PHYSICAL_IMPLEMENTATION:
                     runPhysicalImplementation();
-                    break;
-
-                case WRITE_DESIGN:
-                    writeOutputDesign();
                     break;
                 
                 default:

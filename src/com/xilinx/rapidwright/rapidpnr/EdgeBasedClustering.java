@@ -46,8 +46,6 @@ public class EdgeBasedClustering extends AbstractNetlist {
 
         return isFiltered;
     };
-    
-    private Predicate<EDIFNet> netFilter;
 
     public EdgeBasedClustering(HierarchicalLogger logger) {
         this(logger, FFBasedNetFilter);
@@ -56,7 +54,7 @@ public class EdgeBasedClustering extends AbstractNetlist {
     public EdgeBasedClustering(HierarchicalLogger logger, Predicate<EDIFNet> netFilter) {
         super(logger);
 
-        this.netFilter = netFilter;;
+        this.netFilter = netFilter;
     }
 
     public void setNetFilter(Predicate<EDIFNet> netFilter) {
@@ -64,12 +62,10 @@ public class EdgeBasedClustering extends AbstractNetlist {
     }
 
     protected void buildNode2CellInstsMap() {
-
-        logger.info("Start building node2CellInstsMap based on edge-based method:");
+        logger.info("Start building mapping between nodes and cellInsts");
 
         cellInst2NodeIdMap = new HashMap<>();
         node2CellInsts = new ArrayList<>();
-        node2EdgeIds = new ArrayList<>();
 
 
         Set<EDIFNet> visitedNetsCls = new HashSet<>();
@@ -127,7 +123,6 @@ public class EdgeBasedClustering extends AbstractNetlist {
             }
 
             node2CellInsts.add(grpCellInsts);
-            node2EdgeIds.add(new HashSet<>());
         }
 
         int grpCellInstsNum = cellInst2NodeIdMap.size();
@@ -136,39 +131,6 @@ public class EdgeBasedClustering extends AbstractNetlist {
         int staticSourceCellInstsNum = netlistDatabase.staticSourceCellInsts.size();
         assert totalCellInstsNum == grpCellInstsNum + rstTreeCellInstsNum + staticSourceCellInstsNum;
 
-        logger.info("Complete building node2CellInstsMap based on edge-based method");
-    }
-
-    protected void buildEdge2NodeMap() {
-        logger.info("Start building mapping between edges and abstract nodes:");
-        edge2NodeIds = new ArrayList<>();
-        edge2OriginNet = new ArrayList<>();
-        
-        for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
-            if (net.isVCC() || net.isGND()) continue;
-            if (netlistDatabase.globalClockNets.contains(net)) continue;
-            if (netlistDatabase.globalResetNets.contains(net)) continue;
-            if (netlistDatabase.ignoreNets.contains(net)) continue;
-
-            Set<Integer> incidentGrpIds = new HashSet<>();
-            for (EDIFPortInst portInst : net.getPortInsts()) {
-                EDIFCellInst cellInst = portInst.getCellInst();
-                if (cellInst == null) continue; // Skip toplevel ports
-                assert cellInst2NodeIdMap.containsKey(cellInst);
-                Integer groupIdx = cellInst2NodeIdMap.get(cellInst);
-                incidentGrpIds.add(groupIdx);
-            }
-
-            if (incidentGrpIds.size() > 1) {
-                assert netFilter.test(net);
-                edge2NodeIds.add(incidentGrpIds);
-                for (Integer groupIdx : incidentGrpIds) {
-                    node2EdgeIds.get(groupIdx).add(edge2NodeIds.size() - 1);
-                }
-                edge2OriginNet.add(net);
-            }
-        }
-
-        logger.info("Complete building mapping between edges and abstract nodes");
+        logger.info("Complete building mapping between nodes and cellInsts");
     }
 }

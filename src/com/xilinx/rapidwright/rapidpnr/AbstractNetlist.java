@@ -2,6 +2,7 @@ package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -12,6 +13,7 @@ import java.util.stream.Collectors;
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFNet;
+import com.xilinx.rapidwright.edif.EDIFPortInst;
 
 abstract public class AbstractNetlist {
 
@@ -19,6 +21,8 @@ abstract public class AbstractNetlist {
     
     protected HierarchicalLogger logger;
     protected NetlistDatabase netlistDatabase;
+
+    protected Predicate<EDIFNet> netFilter = net -> true;
 
     //
     public List<Set<EDIFCellInst>> node2CellInsts;
@@ -56,7 +60,43 @@ abstract public class AbstractNetlist {
 
     abstract protected void buildNode2CellInstsMap();
 
-    abstract protected void buildEdge2NodeMap();
+    protected void buildEdge2NodeMap() {
+        logger.info("Start building mapping between edges and nodes:");
+        edge2NodeIds = new ArrayList<>();
+        edge2OriginNet = new ArrayList<>();
+
+        for (int i = 0; i < node2CellInsts.size(); i++) {
+            node2EdgeIds.add(new HashSet<>());
+        }
+        
+        for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
+            if (net.isVCC() || net.isGND()) continue;
+            if (netlistDatabase.globalClockNets.contains(net)) continue;
+            if (netlistDatabase.globalResetNets.contains(net)) continue;
+            if (netlistDatabase.ignoreNets.contains(net)) continue;
+            if (netlistDatabase.illegalNets.contains(net)) continue;
+
+            Set<Integer> incidentGrpIds = new HashSet<>();
+            for (EDIFPortInst portInst : net.getPortInsts()) {
+                EDIFCellInst cellInst = portInst.getCellInst();
+                if (cellInst == null) continue; // Skip toplevel ports
+                assert cellInst2NodeIdMap.containsKey(cellInst);
+                Integer groupIdx = cellInst2NodeIdMap.get(cellInst);
+                incidentGrpIds.add(groupIdx);
+            }
+
+            if (incidentGrpIds.size() > 1) {
+                assert netFilter.test(net);
+                edge2NodeIds.add(incidentGrpIds);
+                for (Integer groupIdx : incidentGrpIds) {
+                    node2EdgeIds.get(groupIdx).add(edge2NodeIds.size() - 1);
+                }
+                edge2OriginNet.add(net);
+            }
+        }
+
+        logger.info("Complete building mapping between edges and nodes");
+    }
 
     protected void buildNode2ResUtilMap() {
         logger.info("Start building resource utilization of abstract nodes:");

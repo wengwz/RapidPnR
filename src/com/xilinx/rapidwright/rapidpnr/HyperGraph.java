@@ -93,6 +93,7 @@ public class HyperGraph {
         edgeWeightFactor = new ArrayList<>(weightFactor);
     }
 
+    // getters
     public List<Double> getNodeWeightsFactor() {
         return Collections.unmodifiableList(nodeWeightFactor);
     }
@@ -177,94 +178,6 @@ public class HyperGraph {
         }
 
         return edge2Blocks.size() > 1;
-    }
-
-    public void saveGraphInHmetisFormat(Path outputFilePath) {
-        
-        try (BufferedWriter writer = new BufferedWriter(new FileWriter(outputFilePath.toFile()))) {
-            writer.write(String.format("%d %d 11", edgeNum, nodeNum));
-            writer.newLine();
-
-            // save edges
-            for (int edgeId = 0; edgeId < edgeNum; edgeId++) {
-                String edgeLineString = "";
-
-                for (double weight : edge2Weights.get(edgeId)) {
-                    if (edgeLineString.length() != 0) {
-                        edgeLineString += " ";
-                    }
-                    edgeLineString += String.format("%.2f", weight);
-                }
-
-                for (int nodeId : edge2Nodes.get(edgeId)) {
-                    nodeId += 1;
-                    edgeLineString += String.format(" %d", nodeId);
-                }
-
-                writer.write(edgeLineString);
-                writer.newLine();
-            }
-
-            // save nodes
-            for (int nodeId = 0; nodeId < nodeNum; nodeId++) {
-                String nodeLineString = "";
-
-                for (double weight : node2Weights.get(nodeId)) {
-                    if (nodeLineString.length() != 0) {
-                        nodeLineString += " ";
-                    }
-                    nodeLineString += String.format("%.2f", weight);
-                }
-                writer.write(nodeLineString);
-                writer.newLine();
-            }
-
-        } catch (Exception e) {
-            // TODO: handle exception
-            e.printStackTrace();
-        }
-    }
-
-    public HierHyperGraph createClusteredChildGraph(List<List<Integer>> cluster2Nodes) {
-        return new HierHyperGraph(this, cluster2Nodes);
-        // HyperGraph clsHyperGraph = new HyperGraph(nodeWeightFactor, edgeWeightFactor);
-        // List<Integer> node2Cluster = new ArrayList<>(Collections.nCopies(nodeNum, -1));
-
-        // for (int clusterId = 0; clusterId < cluster2Nodes.size(); clusterId++) {
-        //     for (int nodeId : cluster2Nodes.get(clusterId)) {
-        //         assert node2Cluster.get(nodeId) == -1: String.format("Node %d is already included in a cluster", nodeId);
-        //         node2Cluster.set(nodeId, clusterId);
-        //     }
-        // }
-
-        // // check all nodes included in the cluster
-        // for (int nodeId = 0; nodeId < nodeNum; nodeId++) {
-        //     assert node2Cluster.get(nodeId) != -1;
-        // }
-
-        // // add nodes to clsHyperGraph
-        // for (List<Integer> nodes : cluster2Nodes) {
-        //     List<Double> weights = new ArrayList<>(Collections.nCopies(nodeWeightDim, 0.0));
-        //     for (int nodeId : nodes) {
-        //         accuWeights(weights, node2Weights.get(nodeId));
-        //     }
-        //     clsHyperGraph.addNode(weights);
-        // }
-
-        // // add edges to clsHyperGraph
-        // for (int edgeId = 0; edgeId < edgeNum; edgeId++) {
-        //     Set<Integer> clusterIds = new HashSet<>();
-        //     for (int nodeId : edge2Nodes.get(edgeId)) {
-        //         clusterIds.add(node2Cluster.get(nodeId));
-        //     }
-
-        //     if (clusterIds.size() > 1) {
-        //         List<Double> weights = new ArrayList<>(edge2Weights.get(edgeId));
-        //         clsHyperGraph.addEdge(clusterIds, weights);
-        //     }
-        // }
-
-        // return clsHyperGraph;
     }
 
     public int getEdgeNum() {
@@ -370,6 +283,54 @@ public class HyperGraph {
         return dist2Nodes;
     }
 
+    // IO
+    public void saveGraphInHmetisFormat(Path outputFilePath) {
+        
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(outputFilePath.toFile()))) {
+            writer.write(String.format("%d %d 11", edgeNum, nodeNum));
+            writer.newLine();
+
+            // save edges
+            for (int edgeId = 0; edgeId < edgeNum; edgeId++) {
+                String edgeLineString = "";
+
+                for (double weight : edge2Weights.get(edgeId)) {
+                    if (edgeLineString.length() != 0) {
+                        edgeLineString += " ";
+                    }
+                    edgeLineString += String.format("%.2f", weight);
+                }
+
+                for (int nodeId : edge2Nodes.get(edgeId)) {
+                    nodeId += 1;
+                    edgeLineString += String.format(" %d", nodeId);
+                }
+
+                writer.write(edgeLineString);
+                writer.newLine();
+            }
+
+            // save nodes
+            for (int nodeId = 0; nodeId < nodeNum; nodeId++) {
+                String nodeLineString = "";
+
+                for (double weight : node2Weights.get(nodeId)) {
+                    if (nodeLineString.length() != 0) {
+                        nodeLineString += " ";
+                    }
+                    nodeLineString += String.format("%.2f", weight);
+                }
+                writer.write(nodeLineString);
+                writer.newLine();
+            }
+
+        } catch (Exception e) {
+            // TODO: handle exception
+            e.printStackTrace();
+        }
+    }
+
+    // 
     public static void accuWeights(List<Double> target, List<Double> source) {
         assert target.size() == source.size();
         for (int i = 0; i < target.size(); i++) {

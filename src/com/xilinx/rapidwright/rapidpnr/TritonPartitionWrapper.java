@@ -122,6 +122,17 @@ public class TritonPartitionWrapper {
             partitionCmd += String.format(" -fixed_file %s", FIXED_FILE_NAME);
         }
 
+        if (hyperGraph.getEdgeWeightDim() > 1) {
+            String edgeWeightFac = "";
+            for (Double factor : hyperGraph.getEdgeWeightsFactor()) {
+                if (edgeWeightFac.length() > 0) {
+                    edgeWeightFac += " ";
+                }
+                edgeWeightFac += String.format("%.2f", factor);
+            }
+            partitionCmd += String.format(" -e_wt_factors { %s }", edgeWeightFac);
+        }
+
         tclCmdFile.addCmd(partitionCmd);
         tclCmdFile.addCmd("exit");
 

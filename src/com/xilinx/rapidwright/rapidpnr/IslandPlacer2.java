@@ -11,7 +11,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
-//import java.util.Random;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -21,7 +20,7 @@ import java.nio.file.Path;
 public class IslandPlacer2 extends AbstractIslandPlacer {
 
     //
-    HyperGraph netlistGraph;
+    HierHyperGraph netlistGraph;
     HyperGraph islandGraph;
     // place results
     private List<Coordinate2D> node2IslandLoc;
@@ -71,7 +70,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         List<Integer> partResultDim0 = partitioner.run();
 
         List<List<Integer>> cluster2Nodes = clusterNodesOfCutEdges(netlistGraph, partResultDim0);
-        HierHyperGraph clsHyperGraph = netlistGraph.createClusteredChildGraph(cluster2Nodes);
+        HierHyperGraph clsHyperGraph = netlistGraph.createClusteredChildGraph(cluster2Nodes, false);
         printHyperGraphInfo(clsHyperGraph);
         partitioner = new TritonPartitionWrapper(logger, clsHyperGraph, workDir);
         //partitioner = new FMPartitioner(logger, clsHyperGraph, 0.05);
@@ -137,7 +136,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
                 }
             }
 
-            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes);
+            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
@@ -158,7 +157,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
                 }
             }
 
-            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes);
+            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
@@ -204,7 +203,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
                 }
             }
 
-            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes);
+            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
             FMPartitioner fmPartitioner = new FMPartitioner(logger, subGraph, 0.08);
@@ -267,7 +266,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
                 }
             }
 
-            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes);
+            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
@@ -321,7 +320,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
                 }
             }
 
-            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes);
+            HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
@@ -774,8 +773,8 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         return Coordinate2D.of(index / gridDim.getY(), index % gridDim.getY());
     }
 
-    private HyperGraph convertNetlist2HyperGraph(AbstractNetlist netlist) {
-        HyperGraph netlistGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
+    private HierHyperGraph convertNetlist2HyperGraph(AbstractNetlist netlist) {
+        HierHyperGraph netlistGraph = new HierHyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
         //HyperGraph netlistGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0, 0.03));
 
         for (int groupId = 0; groupId < netlist.getNodeNum(); groupId++) {
