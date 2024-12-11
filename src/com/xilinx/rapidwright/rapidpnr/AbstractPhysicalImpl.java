@@ -1,7 +1,5 @@
 package com.xilinx.rapidwright.rapidpnr;
 
-import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -22,11 +20,16 @@ import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.edif.EDIFTools;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
 
 import static com.xilinx.rapidwright.rapidpnr.NameConvention.*;
 
-abstract public class PhysicalImpl {
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd;
+
+abstract public class AbstractPhysicalImpl {
     protected HierarchicalLogger logger;
     protected DirectoryManager dirManager;
 
@@ -99,7 +102,7 @@ abstract public class PhysicalImpl {
         }
     }
 
-    public PhysicalImpl(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams, NetlistDatabase netlistDB) {
+    public AbstractPhysicalImpl(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams, NetlistDatabase netlistDB) {
         this.logger = logger;
         this.dirManager = dirManager;
 

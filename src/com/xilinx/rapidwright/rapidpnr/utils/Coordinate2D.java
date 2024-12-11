@@ -1,4 +1,4 @@
-package com.xilinx.rapidwright.rapidpnr;
+package com.xilinx.rapidwright.rapidpnr.utils;
 
 import java.util.function.Consumer;
 

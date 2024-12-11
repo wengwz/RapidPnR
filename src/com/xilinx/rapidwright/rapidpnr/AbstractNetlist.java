@@ -14,6 +14,8 @@ import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 
 abstract public class AbstractNetlist {
 
@@ -63,6 +65,7 @@ abstract public class AbstractNetlist {
     protected void buildEdge2NodeMap() {
         logger.info("Start building mapping between edges and nodes:");
         edge2NodeIds = new ArrayList<>();
+        node2EdgeIds = new ArrayList<>();
         edge2OriginNet = new ArrayList<>();
 
         for (int i = 0; i < node2CellInsts.size(); i++) {

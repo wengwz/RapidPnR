@@ -9,10 +9,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-
-import org.python.modules.math;
-
 import java.util.LinkedList;
+
+import com.xilinx.rapidwright.rapidpnr.partitioner.TritonPartitionWrapper;
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierHyperGraph;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 
 public class RecursiveTreePlacer extends AbstractIslandPlacer{
 
@@ -98,7 +101,6 @@ public class RecursiveTreePlacer extends AbstractIslandPlacer{
                     if (internalNodeLoc == -1) {
                         internalNodeLoc = loc;
                     } else {
-                        logger.info("Previous location: " + internalNodeLoc + " Current location: " + loc);
                         assert internalNodeLoc == loc: "inconsistent location of internal nodes";
                     }
                 }
@@ -117,7 +119,7 @@ public class RecursiveTreePlacer extends AbstractIslandPlacer{
                 int blkId = dist > 0 ? 1 : 0;
                 fixedNode2Blk.put(nodeId, blkId);
 
-                Double weightFac = math.pow(2.0, Math.abs(dist));
+                Double weightFac = Math.pow(2.0, Math.abs(dist));
                 for (int edgeId : curHyperGraph.getEdgesOfNode(nodeId)) {
                     if (!edge2ScaleFac.containsKey(edgeId)) {
                         edge2ScaleFac.put(edgeId, weightFac);
@@ -169,11 +171,11 @@ public class RecursiveTreePlacer extends AbstractIslandPlacer{
             logger.info("Num of nodes in right child: " + rightChildNodes.size());
 
             // construct new child nodes
-            HierHyperGraph leftChildGraph = curHyperGraph.createClusteredChildGraph(leftChildNodes, true);
+            HierHyperGraph leftChildGraph = curHyperGraph.createClusteredChildGraph(leftChildNodes, false);
             PartitionTreeNode leftChildNode = curNode.createLeftChild(leftChildGraph);
             logger.info("Num of nodes in left child graph: " + leftChildGraph.getNodeNum());
 
-            HierHyperGraph rightChildGraph = curHyperGraph.createClusteredChildGraph(rightChildNodes, true);
+            HierHyperGraph rightChildGraph = curHyperGraph.createClusteredChildGraph(rightChildNodes, false);
             PartitionTreeNode rightChildNode = curNode.createRightChild(rightChildGraph);
             logger.info("Num of nodes in right child graph: " + rightChildGraph.getNodeNum());
 

@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Map;
 
 import com.xilinx.rapidwright.edif.EDIFCell;
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 
 
 public class RapidPnR extends AbstractApplication {
@@ -53,7 +55,7 @@ public class RapidPnR extends AbstractApplication {
     }
 
     private void runPhysicalImplementation() {
-        PhysicalImpl physicalImpl;
+        AbstractPhysicalImpl physicalImpl;
 
         //physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase, true);
         //physicalImpl = new IncrementalIslandPnR(logger, dirManager, designParams, netlistDatabase);

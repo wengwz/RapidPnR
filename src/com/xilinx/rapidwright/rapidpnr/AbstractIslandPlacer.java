@@ -10,6 +10,9 @@ import java.util.Set;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 
 import java.io.FileReader;
 import java.io.IOException;

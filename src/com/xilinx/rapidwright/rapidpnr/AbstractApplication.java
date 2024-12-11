@@ -1,11 +1,10 @@
 package com.xilinx.rapidwright.rapidpnr;
 
 import java.nio.file.Path;
-import java.util.logging.ConsoleHandler;
-import java.util.logging.FileHandler;
-import java.util.logging.Level;
 
 import com.xilinx.rapidwright.design.Design;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 
 
 public class AbstractApplication {
@@ -29,28 +28,13 @@ public class AbstractApplication {
     }
 
     protected void setupLogger(Boolean enableLogger) {
-        logger = new HierarchicalLogger("RapidPnR");
-        logger.setUseParentHandlers(false);
-
-        if (!enableLogger) {
-            return;
-        }
-
         Path logFilePath = dirManager.getRootDir().resolve("rapidPnR.log");
-        
-        // Setup Logger
-        try {
-            FileHandler fileHandler = new FileHandler(logFilePath.toString(), false);
-            fileHandler.setFormatter(new CustomFormatter());
-            logger.addHandler(fileHandler);
 
-            ConsoleHandler consoleHandler = new ConsoleHandler();
-            consoleHandler.setFormatter(new CustomFormatter());
-            logger.addHandler(consoleHandler);
-        } catch (Exception e) {
-            System.out.println("Fail to open log file: " + logFilePath.toString());
+        if (enableLogger) {
+            logger = HierarchicalLogger.createLogger("application", logFilePath, true);
+        } else {
+            logger = HierarchicalLogger.createPseduoLogger("application");
         }
-        logger.setLevel(Level.INFO);
 
         logger.info("Setup hierarchical logger for RapidPnR successfully");
     }

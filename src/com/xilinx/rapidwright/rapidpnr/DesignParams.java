@@ -11,10 +11,12 @@ import java.util.Set;
 import java.util.HashSet;
 import java.lang.reflect.Type;
 
-
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
+
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoProject;
 
 
 

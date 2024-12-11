@@ -1,7 +1,8 @@
 package com.xilinx.rapidwright.rapidpnr;
 
-import java.util.Arrays;
 import java.util.List;
+
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
 
 
 public class RecursiveFloorPlacer extends AbstractApplication {
@@ -42,7 +43,7 @@ public class RecursiveFloorPlacer extends AbstractApplication {
     }
 
     public void runPhysicalImplementation() {
-        PhysicalImpl physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase, false);
+        AbstractPhysicalImpl physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase, false);
         physicalImpl.run(abstractNetlist, islandPlaceResults);
     }
 

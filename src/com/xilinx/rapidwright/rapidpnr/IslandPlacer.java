@@ -3,18 +3,18 @@ package com.xilinx.rapidwright.rapidpnr;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.HashMap;
 import java.nio.file.Path;
-import java.io.FileReader;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.io.IOException;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.xilinx.rapidwright.util.LocalJob;
 
+import com.xilinx.rapidwright.util.LocalJob;
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 
 public class IslandPlacer extends AbstractIslandPlacer{
 

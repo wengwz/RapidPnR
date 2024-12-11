@@ -1,4 +1,4 @@
-package com.xilinx.rapidwright.rapidpnr;
+package com.xilinx.rapidwright.rapidpnr.utils;
 
 import java.nio.file.Path;
 import java.util.Map;

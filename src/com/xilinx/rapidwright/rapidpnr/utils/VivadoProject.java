@@ -1,4 +1,4 @@
-package com.xilinx.rapidwright.rapidpnr;
+package com.xilinx.rapidwright.rapidpnr.utils;
 
 import java.nio.file.Path;
 
@@ -6,8 +6,7 @@ import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.LocalJob;
 import com.xilinx.rapidwright.util.FileTools;
-
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
 
 public class VivadoProject {
     public static String VIVADO_CMD = "vivado";

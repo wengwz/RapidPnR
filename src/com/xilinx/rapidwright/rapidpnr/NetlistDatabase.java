@@ -21,6 +21,8 @@ import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 
 public class NetlistDatabase {
 

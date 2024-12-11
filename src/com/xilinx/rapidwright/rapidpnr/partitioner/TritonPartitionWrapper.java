@@ -1,4 +1,4 @@
-package com.xilinx.rapidwright.rapidpnr;
+package com.xilinx.rapidwright.rapidpnr.partitioner;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -10,12 +10,13 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.Map;
-import java.util.logging.ConsoleHandler;
 
 import com.xilinx.rapidwright.util.JobQueue;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.RuntimeTracker;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
 
 public class TritonPartitionWrapper {
     public static String OPENROAD_CMD = "openroad";
@@ -177,10 +178,7 @@ public class TritonPartitionWrapper {
     }
 
     public static void main(String[] args) {
-        HierarchicalLogger logger = new HierarchicalLogger("TestTritonPart");
-        ConsoleHandler consoleHandler = new ConsoleHandler();
-        consoleHandler.setFormatter(new CustomFormatter());
-        logger.addHandler(consoleHandler);
+        HierarchicalLogger logger = HierarchicalLogger.createLogger("TestTritonPart", null, true);
 
         HyperGraph hyperGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
 

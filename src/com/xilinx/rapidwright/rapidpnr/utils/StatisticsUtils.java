@@ -1,4 +1,4 @@
-package com.xilinx.rapidwright.rapidpnr;
+package com.xilinx.rapidwright.rapidpnr.utils;
 
 import java.util.List;
 import java.util.ArrayList;

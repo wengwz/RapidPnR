@@ -17,11 +17,12 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
 import com.xilinx.rapidwright.design.Design;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.RuntimeTracker;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoProject;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd;
 
 public class TestMaxFrequency {
     private static int MAX_PARALLEL_JOBS = 4;

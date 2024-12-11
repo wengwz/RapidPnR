@@ -24,14 +24,19 @@ import com.xilinx.rapidwright.edif.EDIFLibrary;
 import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.RuntimeTracker;
 import com.xilinx.rapidwright.util.RuntimeTrackerTree;
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoProject;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd;
 
-public class FastParallelIslandPnR extends PhysicalImpl{
+public class FastParallelIslandPnR extends AbstractPhysicalImpl{
 
     Design completeDesign;
 

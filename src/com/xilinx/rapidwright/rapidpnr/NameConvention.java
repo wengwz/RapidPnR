@@ -1,6 +1,6 @@
 package com.xilinx.rapidwright.rapidpnr;
 
-import java.util.List;
+import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
 
 public class NameConvention {
 

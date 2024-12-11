@@ -12,6 +12,8 @@ import java.util.function.Predicate;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 
 public class EdgeBasedClustering extends AbstractNetlist {
 

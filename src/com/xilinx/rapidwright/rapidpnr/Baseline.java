@@ -1,16 +1,16 @@
 package com.xilinx.rapidwright.rapidpnr;
 
 import java.nio.file.Path;
-import java.util.logging.ConsoleHandler;
-import java.util.logging.FileHandler;
-import java.util.logging.Level;
 
 import com.xilinx.rapidwright.design.Design;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.VivadoTclCmd;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.RuntimeTracker;
-import com.xilinx.rapidwright.rapidpnr.VivadoTclUtils.TclCmdFile;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoProject;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd;
 
 public class Baseline {
 
@@ -22,22 +22,9 @@ public class Baseline {
         DirectoryManager dirManager = new DirectoryManager(designParams.getWorkDir());
         Path workDir = dirManager.addSubDir("baseline");
 
-        HierarchicalLogger logger = new HierarchicalLogger("baseline");
-        logger.setUseParentHandlers(false);
+        //HierarchicalLogger logger = new HierarchicalLogger("baseline");
         Path logFilePath = workDir.resolve("baseline.log");
-        // setup logger
-        try {
-            FileHandler fileHandler = new FileHandler(logFilePath.toString(), false);
-            fileHandler.setFormatter(new CustomFormatter());
-            logger.addHandler(fileHandler);
-
-            ConsoleHandler consoleHandler = new ConsoleHandler();
-            consoleHandler.setFormatter(new CustomFormatter());
-            logger.addHandler(consoleHandler);
-        } catch (Exception e) {
-            System.out.println("Fail to open log file: " + logFilePath.toString());
-        }
-        logger.setLevel(Level.INFO);
+        HierarchicalLogger logger = HierarchicalLogger.createLogger("baseline", logFilePath, true);
 
         // prepare input design
         logger.info("Prepare input design");

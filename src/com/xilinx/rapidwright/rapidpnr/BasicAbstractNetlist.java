@@ -6,6 +6,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 import com.xilinx.rapidwright.edif.EDIFCellInst;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 
 public class BasicAbstractNetlist extends AbstractNetlist{
 
