@@ -141,7 +141,9 @@ public class RecursiveTreePlacer extends AbstractIslandPlacer{
             }
 
             // partition netlist
-            TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, curHyperGraph, placeDir);
+            TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config();
+            config.workDir = placeDir;
+            TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, curHyperGraph);
             if (fixedNode2Blk.size() > 0) {
                 partitioner.setFixedNodes(fixedNode2Blk);
             }

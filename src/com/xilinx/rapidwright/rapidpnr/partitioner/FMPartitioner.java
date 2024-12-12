@@ -6,114 +6,69 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
 
-public class FMPartitioner {
-    private final int blockNum = 2;
+public class FMPartitioner extends AbstractPartitioner {
 
-
-    private HierarchicalLogger logger;
-    private HyperGraph hyperGraph;
-    private Double imbalanceFac;
-
-    private List<Double> blockSizeUpperBound;
-    private List<Double> blockSizeLowerBound;
-
-    Map<Integer, Integer> oppositeNodesMap; 
-
-    // Partition states
-    private List<Integer> node2BlockId;
+    // partition states
     private Map<Integer, Double> node2GainMap;
-    private List<List<Double>> blockSizes;
-    private Double cutSize;
     
-    public FMPartitioner(HierarchicalLogger logger, HyperGraph hyperGraph, Double imbalanceFac) {
+    public FMPartitioner(HierarchicalLogger logger, Config config, HyperGraph hyperGraph) {
+        super(logger, config, hyperGraph);
 
-        this.logger = logger;
-        this.hyperGraph = hyperGraph;
-        this.imbalanceFac = imbalanceFac;
-        this.oppositeNodesMap = new HashMap<>();
-
-        List<Double> totalNodeWeights = hyperGraph.getTotalNodeWeight();
-
-        blockSizeUpperBound = new ArrayList<>();
-        blockSizeLowerBound = new ArrayList<>();
-        for (Double nodeWeight : totalNodeWeights) {
-            Double upperBound = nodeWeight * ((1.0 / blockNum) + imbalanceFac);
-            Double lowerBound = nodeWeight * ((1.0 / blockNum) - imbalanceFac);
-            blockSizeLowerBound.add(lowerBound);
-            blockSizeUpperBound.add(upperBound);
-        }
+        assert config.blockNum == 2: "FMPartitioner only supports 2-way partition currently";
     }
 
-    public void setConflictNodes(int nodeId1, int nodeId2) {
-        assert nodeId1 < hyperGraph.getNodeNum() && nodeId1 >= 0;
-        assert nodeId2 < hyperGraph.getNodeNum() && nodeId2 >= 0;
-
-        oppositeNodesMap.put(nodeId1, nodeId2);
-        oppositeNodesMap.put(nodeId2, nodeId1);
-    }
-
-    public List<Integer> run() {
-        logger.info("Start running FM Partitioner");
+    public List<Integer> run(List<Integer> initialPartRes) {
+        logger.info("Start running FM Partition");
         logger.newSubStep();
 
-        randomInitialPart();
+        if (initialPartRes != null) {
+            initialPartition(initialPartRes);
+            getNode2MoveGainMap(initialPartRes);
+            
+        } else {
+            randomInitialPart();
+        }
 
         vertexBasedRefine();
 
-        printPartResult();
+        printPartitionInfo();
 
         logger.endSubStep();
-        logger.info("Complete FM Partitioner");
+        logger.info("Complete FM Partition");
 
-        return node2BlockId;
+        return Collections.unmodifiableList(node2BlockId);
     }
 
-    public void printPartResult() {
-        logger.info("Partition Info:");
-        logger.info(String.format("Node Num=%d Total Node Weight=%s", hyperGraph.getNodeNum(), hyperGraph.getTotalNodeWeight()));
-        logger.info(String.format("Edge Num=%d Total Edge Weight=%s", hyperGraph.getEdgeNum(), hyperGraph.getTotalEdgeWeight()));
-        logger.info(String.format("Imbalance Factor=%.3f UpperBound=%s LowerBound=%s", imbalanceFac, blockSizeUpperBound, blockSizeLowerBound));
-        logger.info(String.format("Block Sizes=%s", blockSizes));
-        logger.info(String.format("Cut Size=%.3f", cutSize));
+    public List<Integer> run() {
+        return run(null);
     }
-
 
     private void randomInitialPart() {
         logger.info("Start random shuffling and greedy initial partition");
 
-        // random shuffling
+        // random shuffling nodes
         List<Integer> randomNodeSeq = new ArrayList<>();
         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
             randomNodeSeq.add(nodeId);
         }
-        Collections.shuffle(randomNodeSeq);
+        Collections.shuffle(randomNodeSeq, new Random(config.randomSeed));
 
-        node2BlockId = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeNum(), -1));
-        blockSizes = new ArrayList<>();
-        for (int blockId = 0; blockId < blockNum; blockId++) {
-            blockSizes.add(new ArrayList<>(Collections.nCopies(hyperGraph.getNodeWeightDim(), 0.0)));
+        // assgin fixed nodes
+        for (int nodeId : fixedNodes.keySet()) {
+            int blockId = fixedNodes.get(nodeId);
+
+            node2BlockId.set(nodeId, blockId);
+            List<Double> nodeWeights = hyperGraph.getWeightsOfNode(nodeId);
+            vecAccu(blockSizes.get(blockId), nodeWeights);
         }
-
-        // assgin opposite nodes to different blocks
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            if (oppositeNodesMap.containsKey(nodeId)) {
-                int opNodeId = oppositeNodesMap.get(nodeId);
-
-                int blockId = randomNodeSeq.indexOf(nodeId) % blockNum;
-                if (node2BlockId.get(opNodeId) != -1) {
-                    blockId = getOppositeBlkId(node2BlockId.get(opNodeId));
-                }
-
-                node2BlockId.set(nodeId, blockId);
-                HyperGraph.accuWeights(blockSizes.get(blockId), hyperGraph.getWeightsOfNode(nodeId));
-            }
-        }
+        assert checkSizeConstr(): "Fixed nodes constraints violate block size constraint";
 
         // greedy-based initial partition
         for (int nodeId : randomNodeSeq) {
@@ -121,8 +76,8 @@ public class FMPartitioner {
                 continue;
             }
 
-            List<Double> blkId2CutSizeIncr = new ArrayList<>(Collections.nCopies(blockNum, 0.0));
-            List<Boolean> blkId2Legality = new ArrayList<>(Collections.nCopies(blockNum, false));
+            List<Double> blkId2CutSizeIncr = new ArrayList<>(Collections.nCopies(config.blockNum, 0.0));
+            List<Boolean> blkId2Legality = new ArrayList<>(Collections.nCopies(config.blockNum, false));
 
             Set<Integer> alreadyCutEdge = new HashSet<>();
             for (int edgeId : hyperGraph.getEdgesOfNode(nodeId)) {
@@ -131,7 +86,7 @@ public class FMPartitioner {
                 }
             }
 
-            for (int blockId = 0; blockId < blockNum; blockId++) {
+            for (int blockId = 0; blockId < config.blockNum; blockId++) {
                 blkId2Legality.set(blockId, isMoveLegal(nodeId, blockId));
 
                 node2BlockId.set(nodeId, blockId);
@@ -171,16 +126,10 @@ public class FMPartitioner {
         node2GainMap = getNode2MoveGainMap(node2BlockId);
         cutSize = hyperGraph.getEdgeWeightsSum(hyperGraph.getCutSize(node2BlockId));
 
-        printPartResult();
+        printPartitionStates();
 
         logger.info("Complete random shuffling and greedy initial partition");
     }
-
-    private void ILPInitialPart() {
-        assert false; // TODO:
-    }
-
-    
 
     private void vertexBasedRefine() {
         logger.info("Start vertex-based cut size refinement");
@@ -266,9 +215,9 @@ public class FMPartitioner {
         // update block sizes
         List<Double> nodeWeight = hyperGraph.getWeightsOfNode(nodeId);
         if (fromBlkId != -1) {
-            blockSizes.set(fromBlkId, vecSub(blockSizes.get(fromBlkId), nodeWeight));
+            vecDec(blockSizes.get(fromBlkId), nodeWeight);
         }
-        blockSizes.set(toBlockId, vecAdd(blockSizes.get(toBlockId), nodeWeight));
+        vecAccu(blockSizes.get(toBlockId), nodeWeight);
 
         // update cut size
         cutSize -= node2GainMap.get(nodeId);
@@ -290,7 +239,7 @@ public class FMPartitioner {
             Double edgeWeight = hyperGraph.getEdgeWeightsSum(edgeId);
 
             List<List<Integer>> block2Nodes = new ArrayList<>();
-            for (int blockId = 0; blockId < blockNum; blockId++) {
+            for (int blockId = 0; blockId < config.blockNum; blockId++) {
                 block2Nodes.add(new ArrayList<>());
             }
 
@@ -337,19 +286,31 @@ public class FMPartitioner {
         }
     }
 
+    private List<Integer> getSortedNodes() {
+        return node2GainMap.entrySet()
+                           .stream()
+                           .sorted(Map.Entry.<Integer, Double>comparingByValue().reversed())
+                           .map(Map.Entry::getKey)
+                           .collect(Collectors.toList());
+    }
+
+    private static int getOppositeBlkId(Integer blkId) {
+        return blkId == 0 ? 1 : 0;
+    }
+
     private Map<Integer, Double> getNode2MoveGainMap(List<Integer> partResults) {
         List<Double> node2Gain = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeNum(), 0.0));
 
         for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
             Double edgeWeight = hyperGraph.getEdgeWeightsSum(edgeId);
             List<List<Integer>> block2Nodes = new ArrayList<>();
-            for (int blockId = 0; blockId < blockNum; blockId++) {
+            for (int blockId = 0; blockId < config.blockNum; blockId++) {
                 block2Nodes.add(new ArrayList<>());
             }
             
             for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
                 int blkId = partResults.get(nodeId);
-                assert blkId < blockNum && blkId >= 0;
+                assert isBlkIdLegal(blkId);
                 block2Nodes.get(blkId).add(nodeId);
             }
 
@@ -380,113 +341,6 @@ public class FMPartitioner {
         }
 
         return node2MoveGain;
-    }
-
-    private List<Integer> getSortedNodes() {
-        return node2GainMap.entrySet()
-                           .stream()
-                           .sorted(Map.Entry.<Integer, Double>comparingByValue().reversed())
-                           .map(Map.Entry::getKey)
-                           .collect(Collectors.toList());
-    }
-
-    private boolean isMoveLegal(int nodeId, int toBlockId) {
-        assert toBlockId < blockNum && toBlockId >= 0;
-        assert nodeId < hyperGraph.getNodeNum() && nodeId >= 0;
-
-        int fromBlkId = node2BlockId.get(nodeId);
-        if (fromBlkId == toBlockId) {
-            return true;
-        }
-
-        //List<Double> fromBlockSize = vecSub(blockSizes.get(fromBlkId), hyperGraph.getWeightsOfNode(nodeId));
-        List<Double> toBlockSize = vecAdd(hyperGraph.getWeightsOfNode(nodeId), blockSizes.get(toBlockId));
-
-        Boolean blockSizeConstr = vecLessEq(toBlockSize, blockSizeUpperBound);
-        Boolean oppositeNodeConstr = !oppositeNodesMap.containsKey(nodeId);
-        // if (oppositeNodesMap.containsKey(nodeId)) {
-        //     int oppositeNodeId = oppositeNodesMap.get(nodeId);
-        //     oppositeNodeConstr = node2BlockId.get(oppositeNodeId) != toBlockId;
-        // }
-        //return vecLessEq(toBlockSize, blockSizeUpperBound) && vecGreaterEq(fromBlockSize, blockSizeLowerBound);
-        return blockSizeConstr && oppositeNodeConstr;
-    }
-
-    // helper functions
-    public void checkPartitionResult() {
-        logger.info("Start checking partition result");
-
-        List<List<Double>> refBlockSizes = hyperGraph.getBlockSize(node2BlockId);
-        logger.info("Reference Block Sizes: " + refBlockSizes);
-        logger.info("Current Block Sizes: " + blockSizes);
-
-        Double refCutSize = hyperGraph.getEdgeWeightsSum(hyperGraph.getCutSize(node2BlockId));
-        logger.info("Reference Cut Size: " + refCutSize);
-        logger.info("Current Cut Size: " + cutSize);
-
-        // check cut size and node2GainMap
-        Map<Integer, Double> refNode2Gain = getNode2MoveGainMap(node2BlockId);
-
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            assert refNode2Gain.get(nodeId).equals(node2GainMap.get(nodeId));
-            if (refNode2Gain.get(nodeId) != node2GainMap.get(nodeId)) {
-                logger.info(String.format("Node-%d: ref_gain=%.3f current_gain=%.3f", nodeId, refNode2Gain.get(nodeId), node2GainMap.get(nodeId)));
-            }
-        }
-
-        logger.info("Complete checking partition result");
-    }
-
-    private static int getOppositeBlkId(Integer blkId) {
-        return blkId == 0 ? 1 : 0;
-    }
-
-    private static List<Double> vecAdd(List<Double> a, List<Double> b) {
-        assert a.size() == b.size(): String.format("Size of operand a and b: %d %d", a.size(), b.size());
-        List<Double> res = new ArrayList<>();
-        for (int i = 0; i < a.size(); i++) {
-            res.add(a.get(i) + b.get(i));
-        }
-        return res;
-    }
-
-    List<Double> vecSub(List<Double> a, List<Double> b) {
-        assert a.size() == b.size();
-        List<Double> res = new ArrayList<>();
-        for (int i = 0; i < a.size(); i++) {
-            res.add(a.get(i) - b.get(i));
-        }
-        return res;
-    }
-
-    boolean vecLessEq(List<Double> a, List<Double> b) {
-        assert a.size() == b.size();
-        for (int i = 0; i < a.size(); i++) {
-            if (a.get(i) > b.get(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    boolean vecGreaterEq(List<Double> a, List<Double> b) {
-        assert a.size() == b.size();
-        for (int i = 0; i < a.size(); i++) {
-            if (a.get(i) < b.get(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    boolean vecEq(List<Double> a, List<Double> b) {
-        assert a.size() == b.size();
-        for (int i = 0; i < a.size(); i++) {
-            if (a.get(i) != b.get(i)) {
-                return false;
-            }
-        }
-        return true;
     }
 
 }

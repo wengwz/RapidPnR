@@ -22,6 +22,7 @@ import com.xilinx.rapidwright.rapidpnr.utils.HierHyperGraph;
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
 import com.xilinx.rapidwright.rapidpnr.utils.StatisticsUtils;
+import com.xilinx.rapidwright.rapidpnr.partitioner.AbstractPartitioner;
 import com.xilinx.rapidwright.rapidpnr.partitioner.FMPartitioner;
 import com.xilinx.rapidwright.rapidpnr.partitioner.TritonPartitionWrapper;
 
@@ -71,8 +72,11 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         logger.info("Start initial island placement");
         Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
 
+        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config();
+        config.workDir = workDir;
+
         // perform partition in the first dimension
-        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, netlistGraph, workDir);
+        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, netlistGraph);
         //FMPartitioner partitioner = new FMPartitioner(logger, netlistGraph, 0.05);
         printHyperGraphInfo(netlistGraph);
         List<Integer> partResultDim0 = partitioner.run();
@@ -80,7 +84,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         List<List<Integer>> cluster2Nodes = clusterNodesOfCutEdges(netlistGraph, partResultDim0);
         HierHyperGraph clsHyperGraph = netlistGraph.createClusteredChildGraph(cluster2Nodes, false);
         printHyperGraphInfo(clsHyperGraph);
-        partitioner = new TritonPartitionWrapper(logger, clsHyperGraph, workDir);
+        partitioner = new TritonPartitionWrapper(logger, config, clsHyperGraph);
         //partitioner = new FMPartitioner(logger, clsHyperGraph, 0.05);
         List<Integer> clsPartResult = partitioner.run();
         //HyperGraph clsHyperGraph = netlistGraph.createClusteredHyperGraph(cluster2Nodes);
@@ -119,8 +123,10 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         logger.info("Start iterative min-cut-based placement");
         Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
 
+        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config();
+        config.workDir = workDir;
         // perform partition in the first dimension
-        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, netlistGraph, workDir);
+        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, netlistGraph);
         printHyperGraphInfo(netlistGraph);
         List<Integer> partResultDim0 = partitioner.run();
 
@@ -147,9 +153,10 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
-            partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
+            partitioner = new TritonPartitionWrapper(logger, config, subGraph);
             subGraph.getPartResultOfParent(partitioner.run(), partResultDim1);
         }
+
         // part1
         {
             List<List<Integer>> subCluster2Nodes = new ArrayList<>();
@@ -168,7 +175,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
-            partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
+            partitioner = new TritonPartitionWrapper(logger, config, subGraph);
             subGraph.getPartResultOfParent(partitioner.run(), partResultDim1);
         }
 
@@ -214,9 +221,11 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
-            FMPartitioner fmPartitioner = new FMPartitioner(logger, subGraph, 0.08);
-            fmPartitioner.setConflictNodes(island2ClsIdMap[0][0], island2ClsIdMap[0][1]);
-            fmPartitioner.setConflictNodes(island2ClsIdMap[1][0], island2ClsIdMap[1][1]);
+            AbstractPartitioner.Config partConfig = new AbstractPartitioner.Config();
+            partConfig.imbFactors = Arrays.asList(0.08);
+            FMPartitioner fmPartitioner = new FMPartitioner(logger, partConfig, subGraph);
+            // fmPartitioner.setFixedNode(island2ClsIdMap[0][0], island2ClsIdMap[0][1]);
+            // fmPartitioner.setFixedNode(island2ClsIdMap[1][0], island2ClsIdMap[1][1]);
 
             subGraph.getPartResultOfParent(fmPartitioner.run(), partResultDim1);
         }
@@ -239,13 +248,15 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
 
         // perform partition in the first dimension
-        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, netlistGraph, workDir);
+        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config();
+        config.workDir = workDir;
         if (designParams.getRandomSeed() != null) {
-            partitioner.setRandomSeed(designParams.getRandomSeed());
+            config.randomSeed = designParams.getRandomSeed();
         }
         if (designParams.getImbalanceFac() != null) {
-            partitioner.setBalanceConstr(designParams.getImbalanceFac());
+            config.imbFactors = Arrays.asList(designParams.getImbalanceFac());
         }
+        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, netlistGraph);
 
 
 
@@ -277,13 +288,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
-            partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
-            if (designParams.getRandomSeed() != null) {
-                partitioner.setRandomSeed(designParams.getRandomSeed());
-            }
-            if (designParams.getImbalanceFac() != null) {
-                partitioner.setBalanceConstr(designParams.getImbalanceFac());
-            }
+            partitioner = new TritonPartitionWrapper(logger, config, subGraph);
             subGraph.getPartResultOfParent(partitioner.run(), partResultDim1);
         }
 
@@ -331,14 +336,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
-            partitioner = new TritonPartitionWrapper(logger, subGraph, workDir);
-
-            if (designParams.getRandomSeed() != null) {
-                partitioner.setRandomSeed(designParams.getRandomSeed());
-            }
-            if (designParams.getImbalanceFac() != null) {
-                partitioner.setBalanceConstr(designParams.getImbalanceFac());
-            }
+            partitioner = new TritonPartitionWrapper(logger, config, subGraph);
             
             partitioner.setFixedNodes(fixNodes);
             

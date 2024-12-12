@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
-import java.util.Map;
 
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.Job;
@@ -18,53 +17,26 @@ import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
 import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
 
-public class TritonPartitionWrapper {
+public class TritonPartitionWrapper extends AbstractPartitioner {
     public static String OPENROAD_CMD = "openroad";
     public static String TCL_FILE_NAME = "openroad.tcl";
     public static String GRAPH_FILE_NAME = "input.hgr";
     public static String FIXED_FILE_NAME = "input.fixed";
 
-    private HierarchicalLogger logger;
-    private HyperGraph hyperGraph;
-    private Path workDir;
 
-    private int blockNum = 2;
-    private int randomSeed = 999;
-    private double balanceConstr = 1.0;
-    private Map<Integer, Integer> fixedNodes = null;
+    public TritonPartitionWrapper(HierarchicalLogger logger, Config config, HyperGraph hyperGraph) {
+        super(logger, config, hyperGraph);
 
-
-    public TritonPartitionWrapper(HierarchicalLogger logger, HyperGraph hyperGraph, Path workDir) {
-        this.logger = logger;
-        this.hyperGraph = hyperGraph;
-        this.workDir = workDir;
-    }
-
-    public void setFixedNodes(Map<Integer, Integer> fixedNodes) {
-        this.fixedNodes = fixedNodes;
-    }
-
-    public void setBlockNum(int blockNum) {
-        assert blockNum >= 2;
-        this.blockNum = blockNum;
-    }
-
-    public void setRandomSeed(int randomSeed) {
-        this.randomSeed = randomSeed;
-    }
-
-    public void setBalanceConstr(double balanceConstr) {
-        assert balanceConstr >= 0.0 && balanceConstr <= 1.0;
-        this.balanceConstr = balanceConstr * 100;
+        assert config.imbFactors.stream().distinct().count() == 1: "TritonPart only supports uniform imbalance factor";
     }
 
     public List<Integer> run() {
         logger.info("Start running TritonPart in OpenROAD");
 
         // write input files for TritonPart
-        hyperGraph.saveGraphInHmetisFormat(workDir.resolve(GRAPH_FILE_NAME));
+        hyperGraph.saveGraphInHmetisFormat(config.workDir.resolve(GRAPH_FILE_NAME));
         writeOpenroadTclCmdFile();
-        if (fixedNodes != null) {
+        if (fixedNodes.size() > 0) {
             writeFixedFile();
         }
         // TODO: other input files
@@ -72,7 +44,7 @@ public class TritonPartitionWrapper {
         // create job
         JobQueue jobQueue = new JobQueue();
         Job partitionJob = JobQueue.createJob();
-        partitionJob.setRunDir(workDir.toString());
+        partitionJob.setRunDir(config.workDir.toString());
         partitionJob.setCommand(dockerRunCommand());
         jobQueue.addJob(partitionJob);
 
@@ -94,7 +66,7 @@ public class TritonPartitionWrapper {
     }
 
     private void writeFixedFile() {
-        Path filePath = workDir.resolve(FIXED_FILE_NAME);
+        Path filePath = config.workDir.resolve(FIXED_FILE_NAME);
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath.toFile()))) {
             for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
                 if (fixedNodes.containsKey(nodeId)) {
@@ -109,14 +81,15 @@ public class TritonPartitionWrapper {
     }
 
     private void writeOpenroadTclCmdFile() {
-        Path filePath = workDir.resolve(TCL_FILE_NAME);
+        Path filePath = config.workDir.resolve(TCL_FILE_NAME);
         TclCmdFile tclCmdFile = new TclCmdFile();
 
         String partitionCmd = "triton_part_hypergraph";
-        partitionCmd += String.format(" -num_parts %d", blockNum);
+        partitionCmd += String.format(" -num_parts %d", config.blockNum);
+        Double balanceConstr = config.imbFactors.get(0) * 100; // convert to percentage for TritonPart
         partitionCmd += String.format(" -balance_constraint %.2f", balanceConstr);
         partitionCmd += String.format(" -hypergraph_file %s", GRAPH_FILE_NAME);
-        partitionCmd += String.format(" -seed %d", randomSeed);
+        partitionCmd += String.format(" -seed %d", config.randomSeed);
         partitionCmd += String.format(" -vertex_dimension %d", hyperGraph.getNodeWeightDim());
         partitionCmd += String.format(" -hyperedge_dimension %d", hyperGraph.getEdgeWeightDim());
         if (fixedNodes != null) {
@@ -141,7 +114,7 @@ public class TritonPartitionWrapper {
     }
 
     private List<Integer> readPartitionResults() {
-        Path filePath = workDir.resolve(GRAPH_FILE_NAME + ".part." + blockNum);
+        Path filePath = config.workDir.resolve(GRAPH_FILE_NAME + ".part." + config.blockNum);
         assert filePath.toFile().exists();
 
         List<Integer> blockIds = new ArrayList<>();
@@ -193,8 +166,9 @@ public class TritonPartitionWrapper {
         hyperGraph.addEdge(Set.of(1, 2, 4), Arrays.asList(1.0));
         hyperGraph.addEdge(Set.of(3, 4), Arrays.asList(1.0));
 
-        Path workDir = Path.of("workspace/tmp").toAbsolutePath();
-        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, hyperGraph, workDir);
+        Path workDir = Path.of("workspace/test").toAbsolutePath();
+        Config config = new Config(2, 999, Arrays.asList(0.01), workDir);
+        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, hyperGraph);
         partitioner.run();
 
         //TritonPartitionWrapper partitioner = new T

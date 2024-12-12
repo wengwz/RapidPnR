@@ -75,6 +75,7 @@ abstract public class AbstractPhysicalImpl {
         public Set<EDIFCellInst>[][] loc2CellInsts;
         public Function<Coordinate2D, String> loc2CellName;
         public Function<Coordinate2D, String> loc2PblockRange = null;
+        public Function<Coordinate2D, String> loc2PblockName = null;
         public Boolean setDontTouch = false;
             
         public void accept(Coordinate2D loc) {
@@ -93,7 +94,12 @@ abstract public class AbstractPhysicalImpl {
             EDIFCellInst cellInst = newCell.createCellInst(cellName, topCell);
             if (loc2PblockRange != null) {
                 String pblockRange = loc2PblockRange.apply(loc);
-                VivadoTclCmd.addStrictCellPblockConstr(design, cellInst, pblockRange);    
+                if (loc2PblockName != null) {
+                    String pblockName = loc2PblockName.apply(loc);
+                    VivadoTclCmd.addStrictCellPblockConstr(design, cellInst, pblockName, pblockRange);
+                } else {
+                    VivadoTclCmd.addStrictCellPblockConstr(design, cellInst, pblockRange);
+                }
             }
 
             if (setDontTouch) {

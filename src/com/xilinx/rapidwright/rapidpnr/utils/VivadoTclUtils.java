@@ -122,15 +122,25 @@ public class VivadoTclUtils {
             design.addXDCConstraint(addTopCellToPblock(pblockName));
         }
 
-        public static List<String> addCellPblockConstr(String cellInstName, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+        public static List<String> addCellPblockConstr(String cellInstName, String pblockName, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
             List<String> cmds = new ArrayList<>();
-            String pblockName = "pblock_" + cellInstName;
 
             cmds.addAll(drawPblock(pblockName, pblockRange));
             cmds.addAll(setPblockProperties(pblockName, isSoft, excludePlace, containRoute));
             cmds.add(addCellToPblock(pblockName, cellInstName));
 
             return cmds;
+        }
+
+        public static List<String> addCellPblockConstr(String cellInstName, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            String pblockName = "pblock_" + cellInstName;
+            return addCellPblockConstr(cellInstName, pblockName, pblockRange, isSoft, excludePlace, containRoute);
+        }
+
+        public static void addCellPblockConstr(Design design, EDIFCellInst cellInst, String pblockName, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
+            for (String cmd : addCellPblockConstr(cellInst.getName(), pblockName, pblockRange, isSoft, excludePlace, containRoute)) {
+                design.addXDCConstraint(cmd);
+            }
         }
 
         public static void addCellPblockConstr(Design design, EDIFCellInst cellInst, String pblockRange, Boolean isSoft, Boolean excludePlace, Boolean containRoute) {
@@ -166,6 +176,16 @@ public class VivadoTclUtils {
             }
         }
 
+        public static List<String> addStrictCellPblockConstr(String cellInstName, String pblockName, String pblockRange) {
+            return addCellPblockConstr(cellInstName, pblockName, pblockRange, false, true, true);
+        }
+
+        public static void addStrictCellPblockConstr(Design design, EDIFCellInst cellInst, String pblockName, String pblockRange) {
+            for (String cmd : addStrictCellPblockConstr(cellInst.getName(), pblockName, pblockRange)) {
+                design.addXDCConstraint(cmd);
+            }
+        }
+        
         public static List<String> addStrictTopCellPblockConstr(String pblockRange) {
             return addTopCellPblockConstr(pblockRange, false, true, true);
         }

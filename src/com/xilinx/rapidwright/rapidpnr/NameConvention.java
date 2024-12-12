@@ -18,6 +18,14 @@ public class NameConvention {
         return getIslandName(loc.getX(), loc.getY());
     }
 
+    public static String getPeriIslandName(int x, int y) {
+        return String.format("peri_island_%d_%d", x, y);
+    }
+
+    public static String getPeriIslandName(Coordinate2D loc) {
+        return getPeriIslandName(loc.getX(), loc.getY());
+    }
+
     public static String getIslandInstName(int x, int y) {
         return String.format("island_%d_%d_inst", x, y);
     }
