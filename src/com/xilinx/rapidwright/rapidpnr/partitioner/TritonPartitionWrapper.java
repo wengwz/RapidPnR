@@ -8,7 +8,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
 
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.Job;
@@ -60,7 +59,10 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
 
         // print statistics about tpartitio results
         logger.info(String.format("Complete running TritonPart in OpenROAD(Time Elapsed: %.2f sec)", timer.getTimeInSec()));
-        printPartitionResults(partResult);
+
+        setPartResult(partResult);
+
+        printPartitionInfo();
 
         return partResult;
     }
@@ -92,7 +94,7 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
         partitionCmd += String.format(" -seed %d", config.randomSeed);
         partitionCmd += String.format(" -vertex_dimension %d", hyperGraph.getNodeWeightDim());
         partitionCmd += String.format(" -hyperedge_dimension %d", hyperGraph.getEdgeWeightDim());
-        if (fixedNodes != null) {
+        if (fixedNodes.size() > 0) {
             partitionCmd += String.format(" -fixed_file %s", FIXED_FILE_NAME);
         }
 
@@ -140,37 +142,16 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
         return dockerCommand + " " + dockerOptions + " " + imageName + " " + dockerOperation;
     }
 
-    private void printPartitionResults(List<Integer> partResult) {
-        List<Double> cutSize = hyperGraph.getCutSize(partResult);
-        List<List<Double>> blockSizes = hyperGraph.getBlockSize(partResult);
-
-        logger.info("Cut size: " + cutSize.toString());
-        for (int i = 0; i < blockSizes.size(); i++) {
-            logger.info("Size of block-" + i + ": " + blockSizes.get(i).toString());
-        }
-    }
-
     public static void main(String[] args) {
+        Path inputGraphPath = Path.of("workspace/test/nvdla-tpw-cls.hgr").toAbsolutePath();
         HierarchicalLogger logger = HierarchicalLogger.createLogger("TestTritonPart", null, true);
 
-        HyperGraph hyperGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
-
-        hyperGraph.addNode(Arrays.asList(1.0));
-        hyperGraph.addNode(Arrays.asList(1.0));
-        hyperGraph.addNode(Arrays.asList(1.0));
-        hyperGraph.addNode(Arrays.asList(1.0));
-        hyperGraph.addNode(Arrays.asList(1.0));
-
-        hyperGraph.addEdge(Set.of(2, 4), Arrays.asList(1.0));
-        hyperGraph.addEdge(Set.of(0, 1), Arrays.asList(1.0));
-        hyperGraph.addEdge(Set.of(1, 2, 4), Arrays.asList(1.0));
-        hyperGraph.addEdge(Set.of(3, 4), Arrays.asList(1.0));
+        List<Double> weightFac = Arrays.asList(1.0);
+        HyperGraph hyperGraph = HyperGraph.readGraphFromHmetisFormat(inputGraphPath, weightFac, weightFac);
 
         Path workDir = Path.of("workspace/test").toAbsolutePath();
         Config config = new Config(2, 999, Arrays.asList(0.01), workDir);
         TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, hyperGraph);
         partitioner.run();
-
-        //TritonPartitionWrapper partitioner = new T
     }
 }

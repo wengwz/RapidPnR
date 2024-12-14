@@ -16,7 +16,7 @@ public class SortedList<T extends Comparable<T>> {
 
     private Comparator<Integer> idxCmp = (t1, t2) -> index2Value.get(t1).compareTo(index2Value.get(t2));
 
-    public SortedList(List<T> values) {
+    public SortedList(List<T> values, Boolean reverse) {
         this.index2Value = values;
         this.len = values.size();
 
@@ -24,6 +24,11 @@ public class SortedList<T extends Comparable<T>> {
         for (int i = 0; i < len; i++) {
             sortedIndices.add(i);
         }
+
+        if (reverse) {
+            idxCmp = idxCmp.reversed();
+        }
+
         sortedIndices.sort(idxCmp);
 
         index2Rank = new ArrayList<>(Collections.nCopies(len, 0));
@@ -105,9 +110,9 @@ public class SortedList<T extends Comparable<T>> {
 
         int len = 10000;
         List<Integer> randomIntegers = genRandomIntegers(len);
-        SortedList<Integer> sortedList = new SortedList<>(new ArrayList<>(randomIntegers));
+        SortedList<Integer> sortedList = new SortedList<>(new ArrayList<>(randomIntegers), true);
 
-        List<Integer> refSortedValues = randomIntegers.stream().sorted().collect(Collectors.toList());
+        List<Integer> refSortedValues = randomIntegers.stream().sorted(Comparator.reverseOrder()).collect(Collectors.toList());
 
         List<Integer> sortedValues = sortedList.getSortedValues();
         for (int i = 0; i < sortedValues.size(); i++) {
@@ -127,7 +132,7 @@ public class SortedList<T extends Comparable<T>> {
             }
         }
 
-        refSortedValues = randomIntegers.stream().sorted().collect(Collectors.toList());
+        refSortedValues = randomIntegers.stream().sorted(Comparator.reverseOrder()).collect(Collectors.toList());
 
         sortedValues = sortedList.getSortedValues();
         for (int i = 0; i < sortedValues.size(); i++) {

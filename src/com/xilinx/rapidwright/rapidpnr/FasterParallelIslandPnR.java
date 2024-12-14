@@ -6,6 +6,7 @@ import static com.xilinx.rapidwright.rapidpnr.NameConvention.getIslandName;
 import static com.xilinx.rapidwright.rapidpnr.NameConvention.getVertBoundaryName;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -13,8 +14,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-import java.util.function.Consumer;
-
 
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.design.DesignTools;
@@ -114,6 +113,8 @@ public class FasterParallelIslandPnR extends AbstractPhysicalImpl{
 
     private void buildCellInst2PeriIslandMap(int maxDepth) {
         logger.info("Start building cellInsts to peripheral islands map");
+
+        Set<String> expandCellNames = new HashSet<>(Arrays.asList("CARRY8", "MUXF7", "MUXF8"));
 
         periIsland2CellInsts = new HashSet[gridDim.getX()][gridDim.getY()];
         //Set<EDIFCellInst>[][] partialIslands = new HashSet[gridDim.getX()][gridDim.getY()];

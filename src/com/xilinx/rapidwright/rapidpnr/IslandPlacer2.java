@@ -154,7 +154,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, config, subGraph);
-            subGraph.getPartResultOfParent(partitioner.run(), partResultDim1);
+            subGraph.updatePartResultOfParent(partitioner.run(), partResultDim1);
         }
 
         // part1
@@ -176,7 +176,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, config, subGraph);
-            subGraph.getPartResultOfParent(partitioner.run(), partResultDim1);
+            subGraph.updatePartResultOfParent(partitioner.run(), partResultDim1);
         }
 
         // common clustered node refinement
@@ -227,7 +227,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             // fmPartitioner.setFixedNode(island2ClsIdMap[0][0], island2ClsIdMap[0][1]);
             // fmPartitioner.setFixedNode(island2ClsIdMap[1][0], island2ClsIdMap[1][1]);
 
-            subGraph.getPartResultOfParent(fmPartitioner.run(), partResultDim1);
+            subGraph.updatePartResultOfParent(fmPartitioner.run(), partResultDim1);
         }
 
         node2IslandLoc = new ArrayList<>();
@@ -289,7 +289,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, config, subGraph);
-            subGraph.getPartResultOfParent(partitioner.run(), partResultDim1);
+            subGraph.updatePartResultOfParent(partitioner.run(), partResultDim1);
         }
 
         // part1
@@ -357,7 +357,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
                 }
             }
 
-            subGraph.getPartResultOfParent(subGraphPartResult, partResultDim1);
+            subGraph.updatePartResultOfParent(subGraphPartResult, partResultDim1);
 
         }
 

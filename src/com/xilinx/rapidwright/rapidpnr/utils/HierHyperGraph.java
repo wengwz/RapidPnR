@@ -9,9 +9,9 @@ import java.util.HashSet;
 
 public class HierHyperGraph extends HyperGraph {
 
-    HierHyperGraph parentGraph;
-    List<List<Integer>> child2ParentMap;
-    List<Boolean> isExternalVirtualNode;
+    protected HierHyperGraph parentGraph;
+    protected List<List<Integer>> child2ParentMap;
+    protected List<Boolean> isExternalVirtualNode;
 
     public HierHyperGraph(List<Double> nodeWeightFac, List<Double> edgeWeightFac) {
         super(nodeWeightFac, edgeWeightFac);
@@ -27,10 +27,10 @@ public class HierHyperGraph extends HyperGraph {
         this.child2ParentMap = new ArrayList<>();
         this.isExternalVirtualNode = new ArrayList<>();
 
-        buildHyperGraph(child2Parent, addExtVirtualNodes);
+        buildChildGraph(child2Parent, addExtVirtualNodes);
     }
     
-    private void buildHyperGraph(List<List<Integer>> child2Parent, boolean addExtVirtualNodes) {
+    private void buildChildGraph(List<List<Integer>> child2Parent, boolean addExtVirtualNodes) {
         List<Integer> parent2Child = new ArrayList<>(Collections.nCopies(parentGraph.getNodeNum(), -1));
 
         for (int childId = 0; childId < child2Parent.size(); childId++) {
@@ -116,6 +116,10 @@ public class HierHyperGraph extends HyperGraph {
         return parentGraph == null;
     }
 
+    public HierHyperGraph getParentGraph() {
+        return parentGraph;
+    }
+
     public List<Integer> getParentsOfNode(int nodeId) {
         assert nodeId < nodeNum;
         return Collections.unmodifiableList(child2ParentMap.get(nodeId));
@@ -137,7 +141,7 @@ public class HierHyperGraph extends HyperGraph {
         return rootParents;
     }
 
-    public List<Integer> getPartResultOfParent(List<Integer> childPartResult, List<Integer> parentPartResult) {
+    public void updatePartResultOfParent(List<Integer> childPartResult, List<Integer> parentPartResult) {
         assert childPartResult.size() == nodeNum;
         assert parentPartResult.size() == parentGraph.getNodeNum();
         
@@ -146,7 +150,42 @@ public class HierHyperGraph extends HyperGraph {
                 parentPartResult.set(parentNodeId, childPartResult.get(childNodeId));
             }
         }
+    }
+
+    public List<Integer> getPartResultOfParent(List<Integer> partResult) {
+        assert partResult.size() == nodeNum: String.format("Number of nodes ");
+        
+        List<Integer> parentPartResult = new ArrayList<>(Collections.nCopies(parentGraph.getNodeNum(), -1));
+        
+        for (int childNodeId = 0; childNodeId < partResult.size(); childNodeId++) {
+            for (int parentNodeId : child2ParentMap.get(childNodeId)) {
+                parentPartResult.set(parentNodeId, partResult.get(childNodeId));
+            }
+        }
 
         return parentPartResult;
+    }
+
+    public static HierHyperGraph convertToHierHyperGraph(HyperGraph hyperGraph) {
+        HierHyperGraph hierHyperGraph = new HierHyperGraph(hyperGraph.getNodeWeightsFactor(), hyperGraph.getEdgeWeightsFactor());
+
+        hierHyperGraph.nodeNum = hyperGraph.nodeNum;
+        hierHyperGraph.edgeNum = hyperGraph.edgeNum;
+        
+        hierHyperGraph.node2Edges = hyperGraph.node2Edges;
+        hierHyperGraph.node2Weights = hyperGraph.node2Weights;
+        hierHyperGraph.edge2Nodes = hyperGraph.edge2Nodes;
+        hierHyperGraph.edge2Weights = hyperGraph.edge2Weights;
+
+        hierHyperGraph.parentGraph = null;
+        hierHyperGraph.child2ParentMap = new ArrayList<>();
+        hierHyperGraph.isExternalVirtualNode = new ArrayList<>();
+
+        for (int nodeId = 0; nodeId < hierHyperGraph.getNodeNum(); nodeId++) {
+            hierHyperGraph.child2ParentMap.add(new ArrayList<>());
+            hierHyperGraph.isExternalVirtualNode.add(false);
+        }
+
+        return hierHyperGraph;
     }
 }

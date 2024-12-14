@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
@@ -17,6 +18,7 @@ abstract public class AbstractPartitioner {
         public int randomSeed;
         public List<Double> imbFactors;
         public Path workDir; // work directory for launching external partitioner
+        public Boolean verbose; // verbose mode
 
         @Override
         public String toString() {
@@ -28,6 +30,7 @@ abstract public class AbstractPartitioner {
             this.randomSeed = seed;
             this.imbFactors = imbFactors;
             this.workDir = workDir;
+            this.verbose = false;
         }
 
         public Config() {
@@ -35,6 +38,7 @@ abstract public class AbstractPartitioner {
             randomSeed = 999;
             imbFactors = Arrays.asList(0.01);
             workDir = null;
+            verbose = false;
         }
     }
 
@@ -95,23 +99,105 @@ abstract public class AbstractPartitioner {
         }
     }
 
-    protected void initialPartition(List<Integer> initialPartRes) {
-        assert initialPartRes.size() == hyperGraph.getNodeNum();
-
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            int blockId = initialPartRes.get(nodeId);
-            assert isBlkIdLegal(blockId);
-
-            node2BlockId.set(nodeId, blockId);
-            vecAccu(blockSizes.get(blockId), hyperGraph.getWeightsOfNode(nodeId));
+    protected void moveNode(int nodeId, int toBlockId) {
+        int fromBlkId = node2BlockId.get(nodeId);
+        if (fromBlkId == toBlockId) {
+            return;
         }
 
-        assert checkSizeConstr(): "Initial partition violates block size constraint";
-        assert checkFixedNodesConstr(): "Initial partition violates fixed nodes constraint";
+        // update block sizes
+        List<Double> nodeWeight = hyperGraph.getWeightsOfNode(nodeId);
+        if (fromBlkId != -1) {
+            vecDec(blockSizes.get(fromBlkId), nodeWeight);
+        }
+        vecAccu(blockSizes.get(toBlockId), nodeWeight);
 
-        cutSize = hyperGraph.getEdgeWeightsSum(hyperGraph.getCutSize(node2BlockId));
+        // update node2BlockId & cut-size
+        List<Double> originCutSize = hyperGraph.getCutSizeOfNode(node2BlockId, nodeId);
+        node2BlockId.set(nodeId, toBlockId);
+        List<Double> newCutSize = hyperGraph.getCutSizeOfNode(node2BlockId, nodeId);
+        cutSize += hyperGraph.getEdgeWeightsSum(newCutSize) - hyperGraph.getEdgeWeightsSum(originCutSize);
     }
 
+    // refinement
+    protected void edgeBasedRefinement() {
+        logger.info("Start edge-based cut size refinement");
+        List<Integer> randEdgeIds = new ArrayList<>();
+        for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+            randEdgeIds.add(edgeId);
+        }
+        Collections.shuffle(randEdgeIds, new Random(config.randomSeed));
+
+        for (int edgeId : randEdgeIds) {
+            if (!hyperGraph.isCutEdge(edgeId, node2BlockId)) continue;
+            List<Double> moveGains = new ArrayList<>(Collections.nCopies(config.blockNum, 0.0));
+
+            // trial move
+            for (int blkId = 0; blkId < config.blockNum; blkId++) {
+                Map<Integer, Integer> movedNode2BlkId = new HashMap<>();
+
+                boolean isMoveLegal = true;
+                for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
+                    if (!isMoveLegal(nodeId, blkId)) {
+                        isMoveLegal = false;
+                        break;
+                    }
+                    movedNode2BlkId.put(nodeId, blkId);
+                }
+
+                if (isMoveLegal) {
+                    moveGains.set(blkId, getMoveGainOf(movedNode2BlkId));
+                } else {
+                    moveGains.set(blkId, Double.NEGATIVE_INFINITY);
+                }
+            }
+
+            int maxGainBlkId = -1;
+            Double maxGain = Double.NEGATIVE_INFINITY;
+            for (int blkId = 0; blkId < config.blockNum; blkId++) {
+                if (moveGains.get(blkId) > maxGain && moveGains.get(blkId) > 0) {
+                    maxGain = moveGains.get(blkId);
+                    maxGainBlkId = blkId;
+                }
+            }
+
+            if (maxGainBlkId != -1) {
+                logger.info(String.format("Move incident nodes of edge-%d to blk-%d", edgeId, maxGainBlkId));
+                for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
+                    moveNode(nodeId, maxGainBlkId);
+                }
+            }
+        }
+
+        logger.info("Complete edge-based cut size refinement");
+    }
+
+    protected Double getMoveGainOf(Map<Integer, Integer> movedNodes) {
+        Double moveGain = 0.0;
+        Map<Integer, Integer> fromBlkIds = new HashMap<>();
+
+        for (int nodeId : movedNodes.keySet()) {
+            int fromBlockId = node2BlockId.get(nodeId);
+            int toBlockId = movedNodes.get(nodeId);
+            if (toBlockId == fromBlockId) continue;
+
+            fromBlkIds.put(nodeId, fromBlockId);
+            List<Double> originCutSize = hyperGraph.getCutSizeOfNode(node2BlockId, nodeId);
+
+            node2BlockId.set(nodeId, toBlockId);
+            List<Double> curCutSize = hyperGraph.getCutSizeOfNode(node2BlockId, nodeId);
+
+            Double gain = hyperGraph.getEdgeWeightsSum(originCutSize) - hyperGraph.getEdgeWeightsSum(curCutSize);
+            moveGain += gain;
+        }
+
+        // recover node2BlockId
+        for (int nodeId : fromBlkIds.keySet()) {
+            node2BlockId.set(nodeId, fromBlkIds.get(nodeId));
+        }
+
+        return moveGain;
+    }
 
     // checkers
     protected boolean checkSizeConstr() {
@@ -119,7 +205,7 @@ abstract public class AbstractPartitioner {
         // check block size constraints
         for (int blockId = 0; blockId < config.blockNum; blockId++) {
             List<Double> blockSize = blockSizes.get(blockId);
-            if (!vecLessEq(blockSize, blockSizeUpperBound) || !vecGreaterEq(blockSize, blockSizeLowerBound)) {
+            if (!vecLessEq(blockSize, blockSizeUpperBound)) {
                 return false;
             }
         }
@@ -181,8 +267,30 @@ abstract public class AbstractPartitioner {
         return blkId >= 0 && blkId < config.blockNum;
     }
 
-
     // setters
+    protected void setPartResult(List<Integer> partRes) {
+        assert partRes.size() == hyperGraph.getNodeNum();
+
+        // clear block sizes
+        List<Double> zeroBlockSize = Collections.nCopies(hyperGraph.getNodeWeightDim(), 0.0);
+        for (int blockId = 0; blockId < config.blockNum; blockId++) {
+            blockSizes.set(blockId, new ArrayList<>(zeroBlockSize));
+        }
+
+        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+            int blockId = partRes.get(nodeId);
+            assert isBlkIdLegal(blockId);
+
+            node2BlockId.set(nodeId, blockId);
+            vecAccu(blockSizes.get(blockId), hyperGraph.getWeightsOfNode(nodeId));
+        }
+
+        assert checkSizeConstr(): "Partition results violates block size constraint";
+        //assert checkFixedNodesConstr(): "Initial partition violates fixed nodes constraint";
+
+        cutSize = hyperGraph.getEdgeWeightsSum(hyperGraph.getCutSize(node2BlockId));
+    }
+
     public void setFixedNodes(Map<Integer, Integer> fixedNodes) {
         this.fixedNodes = fixedNodes;
     }
@@ -212,12 +320,12 @@ abstract public class AbstractPartitioner {
 
     // getters
     public String getStatesInfo() {
-        String info = "Partition Results:\n";
-        info += String.format("Size of Blocks:\n");
+        String info = "Partition States:\n";
+        info += String.format("  Size of Blocks:\n");
         for (int blockId = 0; blockId < config.blockNum; blockId++) {
-            info += String.format("  Block-%d: %s\n", blockId, blockSizes.get(blockId));
+            info += String.format("    Block-%d: %s\n", blockId, blockSizes.get(blockId));
         }
-        info += String.format("Cut Size=%.3f\n", cutSize);
+        info += String.format("  Cut Size=%.3f", cutSize);
         return info;
     }
 
@@ -238,10 +346,13 @@ abstract public class AbstractPartitioner {
             List<Double> nodeWeights = hyperGraph.getWeightsOfNode(nodeId);
             vecAccu(blockSizeOfFixedNodes.get(blockId), nodeWeights);
         }
-        info += "Block Sizes of Fixed Nodes:\n";
+        info += "  Block Sizes of Fixed Nodes:\n";
 
         for (int blockId = 0; blockId < config.blockNum; blockId++) {
-            info += String.format("  Block-%d: %s\n", blockId, blockSizeOfFixedNodes.get(blockId));
+            info += String.format("    Block-%d: %s", blockId, blockSizeOfFixedNodes.get(blockId));
+            if (blockId != config.blockNum - 1) {
+                info += "\n";
+            }
         }
         return info;
     }
@@ -249,26 +360,25 @@ abstract public class AbstractPartitioner {
     public String getGraphInfo() {
         String info = "HyperGraph Information:\n";
         info += String.format("  NodeNum=%d Total Weight=%s\n", hyperGraph.getNodeNum(), hyperGraph.getTotalNodeWeight());
-        info += String.format("  Edge Num=%d Total Weight=%s\n", hyperGraph.getEdgeNum(), hyperGraph.getTotalEdgeWeight());
+        info += String.format("  Edge Num=%d Total Weight=%s", hyperGraph.getEdgeNum(), hyperGraph.getTotalEdgeWeight());
         return info;
     }
 
     public String getPartitionInfo() {
-        String info = "\nPartition Information:\n";
+        String info = "Partition Information:\n";
         info += config.toString() + "\n";
-        info += getGraphInfo();
-        info += getConstrInfo();
+        info += getGraphInfo() + "\n";
+        info += getConstrInfo() + "\n";
         info += getStatesInfo();
         return info;
     }
 
     public void printPartitionStates() {
-        logger.info("\n");
-        logger.info(getStatesInfo());
+        logger.info(getStatesInfo(), true);
     }
     
     public void printPartitionInfo() {
-        logger.info(getPartitionInfo());
+        logger.info(getPartitionInfo(), true);
     }
 
 
@@ -328,7 +438,7 @@ abstract public class AbstractPartitioner {
     protected static boolean vecEq(List<Double> a, List<Double> b) {
         assert a.size() == b.size();
         for (int i = 0; i < a.size(); i++) {
-            if (a.get(i) != b.get(i)) {
+            if (!a.get(i).equals(b.get(i))) {
                 return false;
             }
         }

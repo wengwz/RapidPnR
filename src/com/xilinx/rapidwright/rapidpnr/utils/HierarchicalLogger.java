@@ -56,6 +56,20 @@ public class HierarchicalLogger {
        this.log(Level.INFO, msg);
     }
 
+    public void info(String msg, boolean autoIndent) {
+        if (autoIndent) {
+            int idx = msg.indexOf('\n');
+            if (idx != -1 && idx != msg.length() - 1) {
+                String firstLine = msg.substring(0, idx + 1);
+                String rest = msg.substring(idx + 1);
+                int identNum = 7 + logHierDepth;
+
+                msg = firstLine + insertAtHeadOfEachLine(" ".repeat(identNum), rest);
+            }
+        }
+        this.log(Level.INFO, msg);
+    }
+
     public void config(String msg) {
        this.log(Level.CONFIG, msg);
     }
@@ -110,5 +124,30 @@ public class HierarchicalLogger {
 
     public static HierarchicalLogger createPseduoLogger(String logName) {
         return createLogger(logName, null, false);
+    }
+
+    public static String insertAtHeadOfEachLine(String head, String logInfo) {
+        String newLogInfo = "";
+        int start = 0;
+        int end = 0;
+        for (end = 0; end < logInfo.length(); end++) {
+            char ch = logInfo.charAt(end);
+            if (ch =='\n') {
+                newLogInfo += head + logInfo.substring(start, end + 1);
+                start = end + 1;
+            }
+        }
+
+        newLogInfo += head + logInfo.substring(start, end);
+
+        return newLogInfo;
+    }
+
+    public static void main(String[] args) {
+        String logInfo = "12345\n234588\n99998\n77778";
+        String newLogInfo = insertAtHeadOfEachLine("  ", logInfo);
+
+        System.out.println(logInfo);
+        System.out.println(newLogInfo);
     }
 }

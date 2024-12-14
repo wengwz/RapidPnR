@@ -8,7 +8,10 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.FileReader;
 import java.io.FileWriter;
 import java.nio.file.Path;
 
@@ -204,6 +207,21 @@ public class HyperGraph {
         return Collections.unmodifiableList(node2Edges.get(nodeId));
     }
 
+    public int getDegreeOfEdge(int edgeId) {
+        return edge2Nodes.get(edgeId).size();
+    }
+
+    public int getMaxEdgeDegree() {
+        List<Integer> edgeDegrees = edge2Nodes.stream().map(nodes -> nodes.size()).collect(Collectors.toList());
+        return Collections.max(edgeDegrees);
+    }
+
+    public int getMaxNodeWeight(int dim) {
+        assert dim < nodeWeightDim;
+        List<Double> nodeWeights = node2Weights.stream().map(weights -> weights.get(dim)).collect(Collectors.toList());
+        return Collections.max(nodeWeights).intValue();
+    }
+
     public List<Double> getWeightsOfNode(int nodeId) {
         return Collections.unmodifiableList(node2Weights.get(nodeId));
     }
@@ -283,6 +301,56 @@ public class HyperGraph {
         return dist2Nodes;
     }
 
+    public String getHyperGraphInfo(boolean verbose) {
+        String graphInfo = "";
+        graphInfo += String.format("Total number of nodes: %d\n", nodeNum);
+        graphInfo += String.format("Total number of edges: %d\n", edgeNum);
+        graphInfo += String.format("Total node weights: %s\n", getTotalNodeWeight());
+        List<Double> totalEdgeWeights = getTotalEdgeWeight();
+        graphInfo += String.format("Total edge weights: %.2f (%s)\n", getEdgeWeightsSum(totalEdgeWeights), totalEdgeWeights);
+
+        String distInfo;
+        // Node weight distribution
+        for (Integer dim = 0; dim < nodeWeightDim; dim++) {
+            List<Double> nodeWeights = new ArrayList<>();
+            for (int nodeId = 0; nodeId < getNodeNum(); nodeId++) {
+                nodeWeights.add(getWeightsOfNode(nodeId).get(dim));
+            }
+
+            if (verbose) {
+                distInfo = StatisticsUtils.getValueDistInfo(nodeWeights, 10);
+                distInfo = HierarchicalLogger.insertAtHeadOfEachLine("  ", distInfo);
+                graphInfo += String.format("Node weight distribution in dim-%d:\n%s\n", dim, distInfo);
+            } else {
+                distInfo = StatisticsUtils.getBasicValueDistInfo(nodeWeights);
+                graphInfo += String.format("Node weight in dim-%d: %s\n", dim, distInfo);
+            }
+        }
+
+        List<Double> edgeWeights = edge2Weights.stream().map(weights -> getEdgeWeightsSum(weights)).collect(Collectors.toList());
+        if (verbose) {
+            distInfo = StatisticsUtils.getValueDistInfo(edgeWeights, 6);
+            distInfo = HierarchicalLogger.insertAtHeadOfEachLine("  ", distInfo);
+            graphInfo += String.format("Edge weight distribution:\n%s\n", distInfo);
+        } else {
+            distInfo = StatisticsUtils.getBasicValueDistInfo(edgeWeights);
+            graphInfo += String.format("Edge weight: %s\n", distInfo);
+        }
+
+        List<Double> edgeDegrees = edge2Nodes.stream().map(nodes -> (double) nodes.size()).collect(Collectors.toList());
+        
+        if (verbose) {
+            distInfo = StatisticsUtils.getValueDistInfo(edgeDegrees, 6);
+            distInfo = HierarchicalLogger.insertAtHeadOfEachLine("  ", distInfo);
+            graphInfo += String.format("Edge degree distribution:\n%s", distInfo);
+        } else {
+            distInfo = StatisticsUtils.getBasicValueDistInfo(edgeDegrees);
+            graphInfo += String.format("Edge degree: %s", distInfo);
+        }
+
+        return graphInfo;
+    }
+
     // IO
     public void saveGraphInHmetisFormat(Path outputFilePath) {
         
@@ -330,11 +398,86 @@ public class HyperGraph {
         }
     }
 
+    public static HyperGraph readGraphFromHmetisFormat(Path inputFilePath, List<Double> nodeWeightFactor, List<Double> edgeWeightFactor) {
+        HyperGraph hyperGraph = new HyperGraph(nodeWeightFactor, edgeWeightFactor);
+        int edgeWeightDim = hyperGraph.getEdgeWeightDim();
+        int nodeWeightDim = hyperGraph.getNodeWeightDim();
+
+        List<List<Double>> edgeWeights = new ArrayList<>();
+        List<Set<Integer>> edge2NodeIds = new ArrayList<>();
+        List<List<Double>> nodeWeights = new ArrayList<>();
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(inputFilePath.toFile()))) {
+            String line;
+
+            // read header
+            line = reader.readLine();
+            String[] tokens = line.split(" ");
+            int edgeNum = Integer.parseInt(tokens[0]);
+            int nodeNum = Integer.parseInt(tokens[1]);
+            boolean hasEdgeWeights = false;
+            boolean hasNodeWeights = false;
+            if (tokens.length > 2) {
+                assert tokens[2].length() == 2;
+                hasEdgeWeights = tokens[2].charAt(0) == '1';
+                hasNodeWeights = tokens[2].charAt(1) == '1';
+            }
+
+            for (int i = 0; i < edgeNum; i++) {
+                line = reader.readLine();
+                assert line != null;
+                tokens = line.split(" ");
+
+                List<Double> weights = new ArrayList<>(Collections.nCopies(edgeWeightDim, 1.0));
+                if (hasEdgeWeights) {
+                    assert tokens.length > edgeWeightDim;
+                    for (int j = 0; j < edgeWeightDim; j++) {
+                        weights.set(j, Double.parseDouble(tokens[j]));
+                    }
+                }
+
+                int nodeIdsOffset = hasEdgeWeights ? edgeWeightDim : 0;
+                Set<Integer> nodeIds = new HashSet<>();
+                for (int j = nodeIdsOffset; j < tokens.length; j++) {
+                    nodeIds.add(Integer.parseInt(tokens[j]) - 1); // hmetis node index starts from 1
+                }
+
+                edgeWeights.add(weights);
+                edge2NodeIds.add(nodeIds);
+            }
+
+            for (int i = 0; i < nodeNum; i++) {
+                List<Double> weights = new ArrayList<>(Collections.nCopies(nodeWeightDim, 1.0));
+                if (hasNodeWeights) {
+                    line = reader.readLine();
+                    tokens = line.split(" ");
+                    assert tokens.length == nodeWeightDim;
+                    for (int j = 0; j < nodeWeightDim; j++) {
+                        weights.set(j, Double.parseDouble(tokens[j]));
+                    }
+                }
+                nodeWeights.add(weights);
+            }
+
+            for (int i = 0; i < nodeNum; i++) {
+                hyperGraph.addNode(nodeWeights.get(i));
+            }
+
+            for (int i = 0; i < edgeNum; i++) {
+                hyperGraph.addEdge(edge2NodeIds.get(i), edgeWeights.get(i));
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        return hyperGraph;
+    }
+
     // 
     public static void accuWeights(List<Double> target, List<Double> source) {
         assert target.size() == source.size();
         for (int i = 0; i < target.size(); i++) {
-
             target.set(i, target.get(i) + source.get(i));
         }
     }

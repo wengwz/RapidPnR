@@ -1,8 +1,11 @@
 package com.xilinx.rapidwright.rapidpnr.utils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 
 public class StatisticsUtils {
     public static Double getMean(List<Double> data) {
@@ -124,5 +127,55 @@ public class StatisticsUtils {
             stdVariances.add(getStandardVariance(row));
         }
         return stdVariances;
+    }
+
+    public static String getValueDistInfo(List<Double> values, int numBins) {
+        String distInfo = "";
+        Map<Double, Integer> value2Count = new HashMap<>();
+        for (Double value : values) {
+            value2Count.put(value, value2Count.getOrDefault(value, 0) + 1);
+        }
+
+        Double maxValue = Collections.max(value2Count.keySet());
+        Double minValue = Collections.min(value2Count.keySet());
+        Double totalValue = values.stream().reduce(0.0, Double::sum);
+
+        Double binWidth = (maxValue - minValue) / numBins;
+        List<Integer> binCounts = new ArrayList<>(Collections.nCopies(numBins, 0));
+        List<Double> binSizes = new ArrayList<>(Collections.nCopies(numBins, 0.0));
+
+        for (Double value : value2Count.keySet()) {
+            Double total = value2Count.get(value) * value;
+            int binIdx = (int) ((value - minValue) / binWidth);
+            if (binIdx == numBins) {
+                binIdx = numBins - 1;
+            }
+            
+            binCounts.set(binIdx, binCounts.get(binIdx) + value2Count.get(value));
+            binSizes.set(binIdx, binSizes.get(binIdx) + total);
+        }
+
+        for (int binIdx = 0; binIdx < numBins; binIdx++) {
+            Double lowerBound = minValue + binIdx * binWidth;
+            Double upperBound = minValue + (binIdx + 1) * binWidth;
+            if (upperBound > maxValue) {
+                upperBound = maxValue;
+            }
+
+            Double ratio = binSizes.get(binIdx) / totalValue * 100;
+            distInfo += String.format("%.2f ~ %.2f: %d (%.2f%%)", lowerBound, upperBound, binCounts.get(binIdx), ratio);
+            if (binIdx != numBins - 1) {
+                distInfo += "\n";
+            }
+        }
+        return distInfo;
+    }
+
+    public static String getBasicValueDistInfo(List<Double> data) {
+        Double avg = getMean(data);
+        Double min = Collections.min(data);
+        Double max = Collections.max(data);
+        Double stdVar = getStandardVariance(data);
+        return String.format(" Min=%.2f Max=%.2f Avg=%.2f StdVar=%.2f", min, max, avg, stdVar);
     }
 }
