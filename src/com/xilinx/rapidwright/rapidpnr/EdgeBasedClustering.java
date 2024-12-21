@@ -1,6 +1,7 @@
 package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -17,7 +18,7 @@ import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 
 public class EdgeBasedClustering extends AbstractNetlist {
 
-    public static final Predicate<EDIFNet> FFBasedNetFilter = net -> {
+    public static final Predicate<EDIFNet> FFNetFilter = net -> {
         List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
         assert srcPortInsts.size() == 1;
         
@@ -32,7 +33,11 @@ public class EdgeBasedClustering extends AbstractNetlist {
         return isRegFanoutNet;
     };
 
-    public static final Predicate<EDIFNet> CLBBasedFilter = net -> {
+    public static final Predicate<EDIFNet> LUTOrFFNetFilter = net -> {
+        //Set<String> bigLUTCellNames = new HashSet<>(Arrays.asList("LUT6", "LUT5", "LUT4"));
+        //Set<String> bigLUTCellNames = new HashSet<>(Arrays.asList("LUT6", "LUT5", "LUT4", "LUT3"));
+        Set<String> bigLUTCellNames = new HashSet<>(Arrays.asList("LUT6", "LUT5", "LUT4", "LUT3", "LUT2"));
+
         List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
         assert srcPortInsts.size() == 1;
         
@@ -42,15 +47,39 @@ public class EdgeBasedClustering extends AbstractNetlist {
         boolean isFiltered = false;
         if (srcCellInst != null) {
             boolean isRegFanoutNet = NetlistUtils.isRegisterCellInst(srcCellInst);
-            boolean isBigLUT = srcCellInst.getCellType().getName().equals("LUT6") || srcCellInst.getCellType().getName().equals("LUT5");
+            boolean isBigLUT = bigLUTCellNames.contains(srcCellInst.getCellName());//srcCellInst.getCellType().getName().equals("LUT6") || srcCellInst.getCellType().getName().equals("LUT5");
             isFiltered = isRegFanoutNet || isBigLUT;
         }
 
         return isFiltered;
     };
 
+    public static final Predicate<EDIFNet> nonCarryOrMuxNetFilter = net -> {
+        Set<String> carryOrMuxCellNames = new HashSet<>(Arrays.asList("CARRY8", "MUXF7", "MUXF8"));
+        boolean isCarryOrMuxNet = false;
+        for (EDIFPortInst portInst : net.getPortInsts()) {
+            EDIFCellInst cellInst = portInst.getCellInst();
+            if (cellInst == null) continue;
+            String cellTypeName = cellInst.getCellType().getName();
+
+            if (carryOrMuxCellNames.contains(cellTypeName)) {
+                isCarryOrMuxNet = true;
+                break;
+            }
+        }
+
+        return !isCarryOrMuxNet;
+    };
+
+    public static final Predicate<EDIFNet> CLBAwareFilter = net -> {
+        boolean isLUTOrFFNet = LUTOrFFNetFilter.test(net);
+        boolean nonCarryOrMuxNet = nonCarryOrMuxNetFilter.test(net);
+
+        return isLUTOrFFNet && nonCarryOrMuxNet;
+    };
+
     public EdgeBasedClustering(HierarchicalLogger logger) {
-        this(logger, FFBasedNetFilter);
+        this(logger, FFNetFilter);
     }
 
     public EdgeBasedClustering(HierarchicalLogger logger, Predicate<EDIFNet> netFilter) {
@@ -79,7 +108,7 @@ public class EdgeBasedClustering extends AbstractNetlist {
         visitedNetsCls.addAll(netlistDatabase.illegalNets);
         visitedNetsCls.addAll(netlistDatabase.ignoreNets);
 
-        // Remove static nets and reg-fanout nets
+        // Remove static nets and filtered nets
         for (EDIFNet net : netlistDatabase.originTopCell.getNets()) {
             boolean staticNet = net.isVCC() || net.isGND();
             if (visitedNetsCls.contains(net)) continue;

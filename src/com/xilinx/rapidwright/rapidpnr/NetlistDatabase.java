@@ -293,6 +293,10 @@ public class NetlistDatabase {
         return targetDevice;
     }
 
+    public EDIFNetlist getTopNetlist() {
+        return originNetlist;
+    }
+
     public boolean isGlobalClockNet(EDIFNet net) {
         return globalClockNets.contains(net);
     }

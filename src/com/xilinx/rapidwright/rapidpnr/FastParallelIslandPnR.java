@@ -6,6 +6,7 @@ import static com.xilinx.rapidwright.rapidpnr.NameConvention.getIslandName;
 import static com.xilinx.rapidwright.rapidpnr.NameConvention.getVertBoundaryName;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
@@ -23,11 +24,13 @@ import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFLibrary;
 import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFNetlist;
+import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.RuntimeTracker;
 import com.xilinx.rapidwright.util.RuntimeTrackerTree;
+import com.xilinx.rapidwright.rapidpnr.timing.SimpleTimingPredictor;
 import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
 import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
@@ -39,15 +42,34 @@ import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd;
 public class FastParallelIslandPnR extends AbstractPhysicalImpl{
 
     Design completeDesign;
+    SimpleTimingPredictor timingPredictor;
 
     public FastParallelIslandPnR(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams, NetlistDatabase netlistDB) {
         super(logger, dirManager, designParams, netlistDB);
     }
 
+    private void debugTimingPred() {
+        String cellInstName = "inst_61383";
+        EDIFCellInst cellInst = netlistDB.originTopCell.getCellInst(cellInstName);
+        assert cellInst != null;
+
+        for (EDIFPortInst portInst : cellInst.getPortInsts()) {
+            Double recvDelay = timingPredictor.getRecvDelayOf(portInst);
+            Double driveDelay = timingPredictor.getDriveDelayOf(portInst);
+            Integer recvFanout = timingPredictor.getRecvFanoutOf(portInst);
+            Integer driveFanout = timingPredictor.getDriveFanoutOf(portInst);
+            Integer recvLogicLevel = timingPredictor.getRecvLogicLevelOf(portInst);
+            Integer driveLogicLevel = timingPredictor.getDriveLogicLevelOf(portInst);
+
+            logger.info(String.format("PortInst %s: recvDelay=%.2f, driveDelay=%.2f, recvFanout=%d, driveFanout=%d, recvLogicLevel=%d, driveLogicLevel=%d",
+                portInst.getName(), recvDelay, driveDelay, recvFanout, driveFanout, recvLogicLevel, driveLogicLevel));
+        }
+    }
+
     public void run(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
         // load results of previous stages
         loadPreStepsResult(abstractNetlist, groupLocs, true);
-        
+
         JobQueue jobQueue = new JobQueue();
         RuntimeTrackerTree runtimeTrackerTree = new RuntimeTrackerTree("FastParallelIslandPnR", false);
         String rootTimerName = runtimeTrackerTree.getRootRuntimeTracker();
@@ -56,6 +78,14 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
 
         logger.info("Start running FastParallelIslandPnR");
         logger.newSubStep();
+
+        logger.info("Start building simple timing predictor");
+        subTimer = runtimeTrackerTree.createRuntimeTracker("delay predictor", rootTimerName);
+        subTimer.start();
+        timingPredictor = new SimpleTimingPredictor(logger, netlistDB);
+        debugTimingPred();
+        subTimer.stop();
+        logger.info(String.format("Complete building simple timing predictor in %.2f sec", subTimer.getTimeInSec()));
 
         logger.info("Start placement of boundary cells");
         Path boundaryPath = dirManager.addSubDir("boundary");
@@ -70,7 +100,7 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         success = jobQueue.runAllToCompletion();
         subTimer.stop();
         assert success: "Boundary placement failed";
-        logger.info("Complete placement of boundary cells in " + subTimer.getTimeInSec() + " seconds");
+        logger.info("Complete placement of boundary cells in " + subTimer.getTimeInSec() + " sec");
 
 
         logger.info("Start parallel PnR of islands");
@@ -90,7 +120,7 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         success = jobQueue.runAllToCompletion();
         subTimer.stop();
         assert success: "Parallel Island PnR failed";
-        logger.info("Complete parallel PnR of islands in " + subTimer.getTimeInSec() + " seconds");
+        logger.info("Complete parallel PnR of islands in " + subTimer.getTimeInSec() + " sec");
 
         logger.info("Start merging islands and boundaries");
         Path mergePath = dirManager.addSubDir("merged");
@@ -105,8 +135,7 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         success = jobQueue.runAllToCompletion();
         subTimer.stop();
         assert success: "Merge Islands and Boundaries failed";
-        logger.info("Complete merging islands and boundaries in " + subTimer.getTimeInSec() + " seconds");
-
+        logger.info("Complete merging islands and boundaries in " + subTimer.getTimeInSec() + " sec");
 
         logger.endSubStep();
         logger.info("Complete running FastParallelIslandPnR");
@@ -139,11 +168,15 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
 
             public void accept(Coordinate2D boundaryLoc) {
                 Set<EDIFCellInst> visitedCellInsts = new HashSet<>();
+                Map<EDIFCellInst, Integer> cellInst2DistMap = new HashMap<>();
                 Set<EDIFNet> visitedNets = new HashSet<>();
                 Queue<EDIFCellInst> searchCellInstQ = new LinkedList<>();
                 Integer neighborSize;
 
                 visitedCellInsts.addAll(boundaryCellInsts);
+                for (EDIFCellInst cellInst : boundaryCellInsts) {
+                    cellInst2DistMap.put(cellInst, 0);
+                }
                 visitedNets.addAll(ignoredNets);
                 searchCellInstQ.addAll(loc2CellInsts[boundaryLoc.getX()][boundaryLoc.getY()]);
                 neighborSize = searchCellInstQ.size();
@@ -166,10 +199,12 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
                             if (visitedCellInsts.contains(expandCellInst)) continue;
         
                             visitedCellInsts.add(expandCellInst);
+                            cellInst2DistMap.put(expandCellInst, cellInst2DistMap.get(searchCellInst) + 1);
                             Coordinate2D loc = cellInst2IslandLocMap.get(expandCellInst);
                             assert loc != null;
         
-                            if (neighborSize < designParams.getBoundaryNeighborSize()) {
+                            // if (neighborSize < designParams.getBoundaryNeighborSize()) {
+                            if (cellInst2DistMap.get(expandCellInst) <= 1) {
                                 partialIslands[loc.getX()][loc.getY()].add(expandCellInst);
         
                                 Integer primCellNum = NetlistUtils.getLeafCellNum(expandCellInst.getCellType());
@@ -347,9 +382,9 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         tclFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
         //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicHigh, false));
-        //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
+        tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
         //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.Quick, false));
-        tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.RuntimeOpt, false));
+        //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.RuntimeOpt, false));
 
         tclFile.addCmd(VivadoTclCmd.deletePblock());
 
@@ -404,8 +439,6 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
 
         vertBoundaryDim.traverse((Coordinate2D loc) -> {
             if (!isVertBoundaryExist(loc)) return; // skip if no anchor cells in this boundary
-
-            logger.info("Create blackbox cell for vertical boundary" + loc.toString());
 
             if (isNeighborVertBoundary(islandLoc, loc)) {
                 String cellName = getVertBoundaryName(loc);
@@ -510,6 +543,9 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
 
         tclCmdFile.addCmd(VivadoTclCmd.readCheckpoint(cellInst2DcpFilePathMap));
 
+        // set input/output delay constraints
+        tclCmdFile.addCmds(getIODelayConstraints(islandDesign, islandLoc));
+
         for (String cellName : cellInst2DcpFilePathMap.keySet()) {
             // tclCmdFile.addCmd(VivadoTclCmd.lockDesign(false, VivadoTclCmd.LockDesignLevel.Placement, cellName));
             String target = VivadoTclCmd.getCells(cellName + "/*");
@@ -527,6 +563,71 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         tclCmdFile.addCmd(VivadoTclCmd.writeEDIF(true, null, VivadoProject.OUTPUT_EDIF_NAME));
 
         return tclCmdFile;
+    }
+
+    private List<String> getIODelayConstraints(Design islandDesign, Coordinate2D islandLoc) {
+        List<String> ioDelayConstraints = new ArrayList<>();
+        EDIFCell islandTopCell = islandDesign.getNetlist().getTopCell();
+
+        Double mainClockPeriod = designParams.getClkPeriod(designParams.getMainClkName());
+        mainClockPeriod -= designParams.getIslandPeriodDecrement();
+
+        Set<EDIFCellInst> boundaryCellInsts = new HashSet<>();
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            if (isNeighborHoriBoundary(islandLoc, loc)) {
+                boundaryCellInsts.addAll(getCellInstsOfHoriBoundary(loc));
+            }
+        });
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            if (isNeighborVertBoundary(islandLoc, loc)) {
+                boundaryCellInsts.addAll(getCellInstsOfVertBoundary(loc));
+            }
+        });
+
+        for (EDIFPort port : islandTopCell.getPorts()) { // check all ports
+            EDIFNet originNet = netlistDB.originTopCell.getNet(port.getName());
+            assert originNet != null;
+            if (netlistDB.isGlobalClockNet(originNet)) continue;
+            if (netlistDB.isGlobalResetNet(originNet)) continue;
+            if (netlistDB.isIgnoreNet(originNet)) continue;
+
+            if (port.isOutput()) {
+                EDIFCellInst originSrcCell = NetlistUtils.getSourceCellInstOfNet(originNet);
+                assert originSrcCell != null;
+                if (!boundaryCellInsts.contains(originSrcCell)) continue;
+                if (NetlistUtils.isRegisterCellInst(originSrcCell)) continue;
+                assert NetlistUtils.isLutCellInst(originSrcCell);
+
+                EDIFPortInst originSrcPortInst = NetlistUtils.getOutPortInstsOf(originSrcCell).get(0);
+                Double estimatedDelay = timingPredictor.predictOutputDelayOf(originSrcPortInst, mainClockPeriod);
+                ioDelayConstraints.add(VivadoTclCmd.addIODelayConstraint(port, designParams.getMainClkName(), estimatedDelay));
+            } else {
+                Double estimatedDelay = -1.0;
+
+                for (EDIFPortInst portInst : originNet.getPortInsts()) {
+                    EDIFCellInst originSinkCell = portInst.getCellInst();
+                    if (originSinkCell == null) continue;
+
+                    if (!boundaryCellInsts.contains(originSinkCell)) continue;
+                    if (NetlistUtils.isRegisterCellInst(originSinkCell)) continue;
+                    assert NetlistUtils.isLutCellInst(originSinkCell);
+                    assert portInst.isInput();
+
+                    EDIFPortInst originSinkPortInst = originSinkCell.getPortInst(portInst.getName());
+                    Double delay = timingPredictor.predictInputDelayOf(originSinkPortInst, mainClockPeriod);
+                    if (estimatedDelay == -1.0) {
+                        estimatedDelay = delay;
+                    } else {
+                        estimatedDelay = Math.min(estimatedDelay, delay);
+                    }
+                }
+
+                if (estimatedDelay != -1.0) {
+                    ioDelayConstraints.add(VivadoTclCmd.addIODelayConstraint(port, designParams.getMainClkName(), estimatedDelay));
+                }
+            }
+        }
+        return ioDelayConstraints;
     }
 
     private Design readAndCreateMergedDesign() {

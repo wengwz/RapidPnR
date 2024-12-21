@@ -119,15 +119,15 @@ public class TestMaxFrequency {
                 
                 designParams.setClkPeriod(benchmark.mainClkName, Double.parseDouble(periodKey));
                 // prepare input design
-                Design design = Design.readCheckpoint(designParams.getInputDcpPath());
-                design.setAutoIOBuffers(false);
+                //Design design = Design.readCheckpoint(designParams.getInputDcpPath());
+                //design.setAutoIOBuffers(false);
                 //setDesignConstraints(design, designParams);
 
                 // create tcl cmd file
                 TclCmdFile tclCmdFile = createTclCmdFile(designParams);
 
                 // create vivado project
-                VivadoProject vivadoProject = new VivadoProject(design, sampleDir, tclCmdFile);
+                VivadoProject vivadoProject = new VivadoProject(sampleDir, tclCmdFile);
                 Job vivadoJob = vivadoProject.createVivadoJob();
                 jobQueue.addJob(vivadoJob);
             }
@@ -196,14 +196,14 @@ public class TestMaxFrequency {
                 
                 designParams.setClkPeriod(benchmark.mainClkName, Double.parseDouble(periodKey));
                 // prepare input design
-                Design design = Design.readCheckpoint(designParams.getInputDcpPath());
-                design.setAutoIOBuffers(false);
+                // Design design = Design.readCheckpoint(designParams.getInputDcpPath());
+                // design.setAutoIOBuffers(false);
 
                 // create tcl cmd file
                 TclCmdFile tclCmdFile = createTclCmdFile(designParams);
 
                 // create vivado project
-                VivadoProject vivadoProject = new VivadoProject(design, sampleDir, tclCmdFile);
+                VivadoProject vivadoProject = new VivadoProject(sampleDir, tclCmdFile);
                 Job vivadoJob = vivadoProject.createVivadoJob();
                 jobQueue.addJob(vivadoJob);
 
@@ -247,7 +247,8 @@ public class TestMaxFrequency {
         TclCmdFile tclCmdFile = new TclCmdFile();
 
         tclCmdFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
-        tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
+        //tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
+        tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(designParams.getInputDcpPath().toString()));
 
         // set constraints
         String pblockRange = designParams.getPblockRange("complete");
@@ -313,19 +314,31 @@ public class TestMaxFrequency {
     }
 
     public static void main(String[] args) {
-        Path jsonFilePath = Path.of("workspace/report", "max-freq-no-runtime.json");
-        Boolean isParallel = true;
+        Path jsonFilePath = Path.of("workspace/report", "max-freq-runtime.json");
+        Boolean isParallel = false;
 
         TestMaxFrequency tester = new TestMaxFrequency(jsonFilePath);
+
+        // tester.addBenchmark("minimap-small", 4.0, 3.6, 0.2, "ap_clk");
+        // tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "CLK");
+        // tester.addBenchmark("tensil", 4.2, 3.6, 0.2, "clock");
+        // tester.addBenchmark("ispd16-fpga04", 9.8, 9.6, 0.2, "clk1");
+
+        tester.addBenchmark("minimap-small", 4.0, 4.0, 0.2, "ap_clk");
+        tester.addBenchmark("toooba", 4.0, 4.0, 0.2, "CLK");
+        tester.addBenchmark("tensil", 4.0, 4.0, 0.2, "clock");
+        tester.addBenchmark("ispd16-fpga04", 10.0, 10.0, 0.2, "clk1");
+
+        // tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "clk");
+        // tester.addBenchmark("ispd16-fpga04", 11.0, 10.0, 0.5, "clk1");
+        //tester.addBenchmark("ispd16-fpga02", 3.8, 3.8, 0.1, "clk1");
 
         //tester.addBenchmark("blue-rdma", 4.0, 2.8, 0.1, "CLK");
         //tester.addBenchmark("nvdla-small", 4.5, 3.3, 0.1, "core_clk");
         //tester.addBenchmark("nvdla-small-256", 6.0, 4.5, 0.1, "core_clk");
         //tester.addBenchmark("nvdla-small-256-full", 5.9, 4.3, 0.1, "core_clk");
-
         //benchmarkDB.addBenchmark("corundum", 3.8, 3.0, 0.1, "main_clk");
 
-        //tester.addBenchmark("supranational-ntt", 4.0, 1.4, 0.1, "clk_i");
         //tester.addBenchmark("hardcaml-ntt", 2.9, 2.6, 0.1, "ap_clk");
 
         //tester.addBenchmark("blue-rdma", 3.8, 3.7, 0.2, "CLK");

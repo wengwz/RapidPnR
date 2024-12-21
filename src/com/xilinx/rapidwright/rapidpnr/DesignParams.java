@@ -25,6 +25,7 @@ public class DesignParams {
     private String designName;
 
     private List<String> clkPortNames;
+    private String mainClkName;
     private List<String> resetPortNames;
     private Map<String, Double> clkPeriods;
     private List<String> ignoreNetNames;
@@ -56,6 +57,7 @@ public class DesignParams {
         public String designName;
     
         public List<String> clkPortNames;
+        public String mainClkName = null;
         public List<String> resetPortNames;
         public Map<String, Double> clkPeriods;
         public List<String> ignoreNetNames;
@@ -101,6 +103,11 @@ public class DesignParams {
             }
             assert !clkPortNames.isEmpty(): "No clock port specified in json file";
 
+            if (params.mainClkName != null) {
+                assert clkPortNameSet.contains(params.mainClkName): "Main clock name not found: " + params.mainClkName;
+                this.mainClkName = params.mainClkName;
+            }
+
             Set<String> resetPortNameSet = new HashSet<>();
             resetPortNames = new ArrayList<>();
             for (String resetPortName : params.resetPortNames) {
@@ -116,7 +123,7 @@ public class DesignParams {
             }
 
             assert params.inputDcpPath != null: "inputDcpPath not found in json file";
-            inputDcpPath = Path.of(params.inputDcpPath);
+            inputDcpPath = Path.of(params.inputDcpPath).toAbsolutePath();
 
             assert params.workDir != null: "workDir not found in json file";
             workDir = Path.of(params.workDir).toAbsolutePath().resolve(designName);
@@ -191,6 +198,10 @@ public class DesignParams {
 
     public String getClkPortName(int index) {
         return clkPortNames.get(index);
+    }
+
+    public String getMainClkName() {
+        return mainClkName;
     }
 
     public List<String> getClkPortNames() {

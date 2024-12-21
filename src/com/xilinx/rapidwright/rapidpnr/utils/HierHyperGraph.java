@@ -153,7 +153,7 @@ public class HierHyperGraph extends HyperGraph {
     }
 
     public List<Integer> getPartResultOfParent(List<Integer> partResult) {
-        assert partResult.size() == nodeNum: String.format("Number of nodes ");
+        assert partResult.size() == nodeNum;
         
         List<Integer> parentPartResult = new ArrayList<>(Collections.nCopies(parentGraph.getNodeNum(), -1));
         
@@ -164,6 +164,19 @@ public class HierHyperGraph extends HyperGraph {
         }
 
         return parentPartResult;
+    }
+
+    public List<Coordinate2D> getLocOfParent(List<Coordinate2D> loc) {
+        assert loc.size() == nodeNum;
+        List<Coordinate2D> parentLocs = new ArrayList<>(Collections.nCopies(parentGraph.getNodeNum(), null));
+
+        for (int childNodeId = 0; childNodeId < nodeNum; childNodeId++) {
+            for (int parentNodeId : child2ParentMap.get(childNodeId)) {
+                parentLocs.set(parentNodeId, loc.get(childNodeId));
+            }
+        }
+
+        return parentLocs;
     }
 
     public static HierHyperGraph convertToHierHyperGraph(HyperGraph hyperGraph) {

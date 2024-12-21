@@ -33,7 +33,7 @@ public class FMPartitioner extends AbstractPartitioner {
         logger.newSubStep();
 
         if (initialPartRes != null) {
-            setPartResult(initialPartRes);
+            setPartResult(initialPartRes, true);
         } else {
             randomInitialPart();
         }

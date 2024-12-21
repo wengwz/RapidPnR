@@ -3,12 +3,19 @@ package com.xilinx.rapidwright.rapidpnr.utils;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import org.capnproto.PrimitiveList.Int;
+
+import com.google.ortools.algorithms.main;
+
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.FileReader;
@@ -299,6 +306,33 @@ public class HyperGraph {
         }
         
         return dist2Nodes;
+    }
+
+    public HyperGraph getCompressedGraph() {
+        Map<Set<Integer>, List<Double>> compressedEdges = new HashMap<>();
+
+        for (int edgeId = 0; edgeId < getEdgeNum(); edgeId++) {
+            Set<Integer> nodeIds = new HashSet<>(getNodesOfEdge(edgeId));
+            List<Double> edgeWeights = getWeightsOfEdge(edgeId);
+
+            if (compressedEdges.containsKey(nodeIds)) {
+                List<Double> weights = compressedEdges.get(nodeIds);
+                accuWeights(weights, edgeWeights);
+            } else {
+                compressedEdges.put(nodeIds, new ArrayList<>(edgeWeights));
+            }
+        }
+
+        HyperGraph compressedGraph = new HyperGraph(nodeWeightFactor, edgeWeightFactor);
+        for (int nodeId = 0; nodeId < getNodeNum(); nodeId++) {
+            compressedGraph.addNode(getWeightsOfNode(nodeId));
+        }
+
+        for (Set<Integer> nodeIds : compressedEdges.keySet()) {
+            compressedGraph.addEdge(nodeIds, compressedEdges.get(nodeIds));
+        }
+
+        return compressedGraph;
     }
 
     public String getHyperGraphInfo(boolean verbose) {

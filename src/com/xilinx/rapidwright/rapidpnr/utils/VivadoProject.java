@@ -35,6 +35,12 @@ public class VivadoProject {
         return MAX_THREAD;
     }
 
+    public VivadoProject(Path workDir, TclCmdFile tclCmdFile) {
+        this.design = null;
+        this.workDir = workDir;
+        this.tclCmdFile = tclCmdFile;
+    }
+
     public VivadoProject(Design design, Path workDir, TclCmdFile tclCmdFile) {
         this.design = design;
         this.workDir = workDir;
@@ -61,8 +67,10 @@ public class VivadoProject {
         }
 
         // write design checkpoint
-        Path dcpPath = workDir.resolve(INPUT_DCP_NAME);
-        design.writeCheckpoint(dcpPath.toString());
+        if (design != null) {
+            Path dcpPath = workDir.resolve(INPUT_DCP_NAME);
+            design.writeCheckpoint(dcpPath.toString());
+        }
 
         // write tcl command file
         Path tclPath = workDir.resolve(BUILD_TCL_NAME);

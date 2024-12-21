@@ -764,7 +764,6 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             }
             logger.info(weightDistStr);
         }
-
     }
 
     private Coordinate2D getLocOfNode(int nodeId) {
@@ -976,15 +975,4 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         logger.info("Max edge weight: " + maxEdgeWeight.toString());
         logger.info("Mean edge weight: " + meanEdgeWeight.toString());
     }
-
-
-    // public static void main(String[] args) {
-    //     List<Double> test = new ArrayList<>(Collections.nCopies(3, 0.0));
-
-    //     test.set(1, 1.0);
-    //     test.add(2.0);
-    //     test.set(2, test.get(2) + 2.0);
-
-    //     System.out.println(test.toString());
-    // }
 }

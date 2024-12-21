@@ -41,16 +41,18 @@ public class RapidPnR extends AbstractApplication {
     }
 
     private void runNetlistAbstraction() {
-        //abstractNetlist = new EdgeBasedClustering(logger, EdgeBasedClustering.CLBBasedFilter);
-        abstractNetlist = new EdgeBasedClustering(logger);
+        abstractNetlist = new EdgeBasedClustering(logger, EdgeBasedClustering.CLBAwareFilter);
+        //abstractNetlist = new EdgeBasedClustering(logger);
         abstractNetlist.buildAbstractNetlist(netlistDatabase);
 
         abstractNetlist.printAbstractNetlistInfo();
     }
 
     private void runIslandPlacement() {
+        AbstractIslandPlacer islandPlacer;
         //AbstractIslandPlacer islandPlacer = new IslandPlacer(logger, dirManager, designParams);
-        AbstractIslandPlacer islandPlacer = new IslandPlacer2(logger, dirManager, designParams);
+        islandPlacer = new IslandPlacer2(logger, dirManager, designParams);
+        // islandPlacer = new MultilevelIslandPlacer(logger, dirManager, designParams);
         groupPlaceResults = islandPlacer.run(abstractNetlist);
     }
 
@@ -61,9 +63,9 @@ public class RapidPnR extends AbstractApplication {
         //physicalImpl = new IncrementalIslandPnR(logger, dirManager, designParams, netlistDatabase);
         //physicalImpl = new ParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
         physicalImpl = new FastParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
+        //physicalImpl = new FasterParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
         
         physicalImpl.run(abstractNetlist, groupPlaceResults);
-        
     }
 
     public void run(RapidPnRStep endStep) {
@@ -148,18 +150,25 @@ public class RapidPnR extends AbstractApplication {
         //String jsonFilePath = "workspace/json/nvdla-small.json";
         //String jsonFilePath = "workspace/json/nvdla-small-256.json"; //seed=1001
         //String jsonFilePath = "workspace/json/nvdla-small-256-full.json";
-        String jsonFilePath = "workspace/json/blue-rdma.json";
+        //String jsonFilePath = "workspace/json/blue-rdma.json";
         //String jsonFilePath = "workspace/json/corundum.json";
         //String jsonFilePath = "workspace/json/ntt-large.json";
         //String jsonFilePath = "workspace/json/ntt-small.json";
+        //String jsonFilePath = "workspace/json/toooba.json";
+        //String jsonFilePath = "workspace/json/tensil.json";
         
         //String jsonFilePath = "workspace/json/cnn13x2.json";
         //String jsonFilePath = "workspace/json/miaow.json";
         //String jsonFilePath = "workspace/json/mm_int16.json";
         //String jsonFilePath = "workspace/json/hardcaml-ntt.json";
+        String jsonFilePath = "workspace/json/minimap-small.json";
         //String jsonFilePath = "workspace/json/minimap.json";
         //String jsonFilePath = "workspace/json/minimap-tapa.json";
         //String jsonFilePath = "workspace/json/isp.json";
+
+        //String jsonFilePath = "workspace/json/ispd16-fpga02.json";
+        //String jsonFilePath = "workspace/json/ispd16-exp03.json";
+        //String jsonFilePath = "workspace/json/ispd16-fpga04.json";
         
         RapidPnR rapidPnR = new RapidPnR(jsonFilePath, true);
         //rapidPnR.run(RapidPnRStep.NETLIST_ABSTRACTION);

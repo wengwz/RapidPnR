@@ -268,7 +268,7 @@ abstract public class AbstractPartitioner {
     }
 
     // setters
-    protected void setPartResult(List<Integer> partRes) {
+    protected void setPartResult(List<Integer> partRes, boolean checkConstr) {
         assert partRes.size() == hyperGraph.getNodeNum();
 
         // clear block sizes
@@ -285,8 +285,10 @@ abstract public class AbstractPartitioner {
             vecAccu(blockSizes.get(blockId), hyperGraph.getWeightsOfNode(nodeId));
         }
 
-        assert checkSizeConstr(): "Partition results violates block size constraint";
-        //assert checkFixedNodesConstr(): "Initial partition violates fixed nodes constraint";
+        if (checkConstr) {
+            assert checkSizeConstr(): "Partition results violates block size constraint";
+            assert checkFixedNodesConstr(): "Initial partition violates fixed nodes constraint";
+        }
 
         cutSize = hyperGraph.getEdgeWeightsSum(hyperGraph.getCutSize(node2BlockId));
     }

@@ -83,7 +83,7 @@ abstract public class AbstractNetlist {
             for (EDIFPortInst portInst : net.getPortInsts()) {
                 EDIFCellInst cellInst = portInst.getCellInst();
                 if (cellInst == null) continue; // Skip toplevel ports
-                assert cellInst2NodeIdMap.containsKey(cellInst);
+                assert cellInst2NodeIdMap.containsKey(cellInst): cellInst.getName();
                 Integer groupIdx = cellInst2NodeIdMap.get(cellInst);
                 incidentGrpIds.add(groupIdx);
             }

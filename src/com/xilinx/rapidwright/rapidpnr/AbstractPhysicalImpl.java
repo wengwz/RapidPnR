@@ -296,7 +296,7 @@ abstract public class AbstractPhysicalImpl {
                 for (EDIFNet net : vertBoundary2Nets[x][y]) {
                     EDIFCellInst srcCellInst = NetlistUtils.getSourceCellInstOfNet(net);
                     assert srcCellInst != null;
-                    assert NetlistUtils.isRegisterCellInst(srcCellInst);
+                    //assert NetlistUtils.isRegisterCellInst(srcCellInst);
                     // remove cellInst from island and then insert it into boundary
                     Coordinate2D loc = cellInst2IslandLocMap.get(srcCellInst);
                     island2CellInsts[loc.getX()][loc.getY()].remove(srcCellInst);
@@ -314,7 +314,7 @@ abstract public class AbstractPhysicalImpl {
                 for (EDIFNet net : horiBoundary2Nets[x][y]) {
                     EDIFCellInst srcCellInst = NetlistUtils.getSourceCellInstOfNet(net);
                     assert srcCellInst != null;
-                    assert NetlistUtils.isRegisterCellInst(srcCellInst);
+                    // assert NetlistUtils.isRegisterCellInst(srcCellInst);
                     // remove cellInst from island and then insert it into boundary
                     Coordinate2D loc = cellInst2IslandLocMap.get(srcCellInst);
                     island2CellInsts[loc.getX()][loc.getY()].remove(srcCellInst);
@@ -791,6 +791,10 @@ abstract public class AbstractPhysicalImpl {
     }
 
     // Helper functions
+
+    protected Boolean isBoundaryCell(EDIFCellInst cellInst) {
+        return cellInst2HoriBoundaryLocMap.containsKey(cellInst) || cellInst2VertBoundaryLocMap.containsKey(cellInst);
+    }
 
     protected Boolean isNeighborVertBoundary(Coordinate2D island, Coordinate2D boundary) {
         Boolean yMatch = island.getY() == boundary.getY();

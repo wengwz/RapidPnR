@@ -29,7 +29,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
             logger.info("Start partition refinement");
             logger.newSubStep();
 
-            setPartResult(initialPartRes);
+            setPartResult(initialPartRes, true);
 
             setupNode2MoveGain(node2BlockId);
 
@@ -70,7 +70,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         // uncoarsening and refinement
         List<Integer> finalPartRes = uncoarsenAndRefine(coarsestHierGraph, initialPartRes);
 
-        setPartResult(finalPartRes);
+        setPartResult(finalPartRes, true);
 
         printPartitionInfo();
 

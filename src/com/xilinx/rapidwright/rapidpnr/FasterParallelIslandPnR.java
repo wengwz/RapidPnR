@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 
+import com.trolltech.qt.gui.QTextLine.Edge;
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.design.DesignTools;
 import com.xilinx.rapidwright.edif.EDIFCell;
@@ -88,7 +89,7 @@ public class FasterParallelIslandPnR extends AbstractPhysicalImpl{
         success = jobQueue.runAllToCompletion();
         subTimer.stop();
         assert success: "Parallel Island PnR failed";
-        logger.info("Complete parallel PnR of islands in " + subTimer.getTimeInSec() + " seconds");
+        logger.info("Complete parallel PnR of islands in " + subTimer.getTimeInSec() + " sec");
 
         logger.info("Start merging islands and boundaries");
         Path mergePath = dirManager.addSubDir("merged");
@@ -114,67 +115,68 @@ public class FasterParallelIslandPnR extends AbstractPhysicalImpl{
     private void buildCellInst2PeriIslandMap(int maxDepth) {
         logger.info("Start building cellInsts to peripheral islands map");
 
-        Set<String> expandCellNames = new HashSet<>(Arrays.asList("CARRY8", "MUXF7", "MUXF8"));
 
-        periIsland2CellInsts = new HashSet[gridDim.getX()][gridDim.getY()];
-        //Set<EDIFCellInst>[][] partialIslands = new HashSet[gridDim.getX()][gridDim.getY()];
-        
-        gridDim.traverse((Coordinate2D loc) -> {
-            periIsland2CellInsts[loc.getX()][loc.getY()] = new HashSet<>();
-        });
+        AbstractNetlist clbAwareNetlist = new EdgeBasedClustering(logger, EdgeBasedClustering.nonCarryOrMuxNetFilter);
+        clbAwareNetlist.buildAbstractNetlist(netlistDB);
 
-        Queue<EDIFCellInst> searchCellInstQ = new LinkedList<>();
-        Map<EDIFCellInst, Integer> cellInst2DepthMap = new HashMap<>();
+        Queue<Integer> searchNodesQ = new LinkedList<>();
+        Map<Integer, Integer> node2DepthMap = new HashMap<>();
+
         horiBoundaryDim.traverse((Coordinate2D loc) -> {
-            searchCellInstQ.addAll(getCellInstsOfHoriBoundary(loc));
-
             for (EDIFCellInst cellInst : getCellInstsOfHoriBoundary(loc)) {
-                cellInst2DepthMap.put(cellInst, 0);
+                Integer nodeId = clbAwareNetlist.cellInst2NodeIdMap.get(cellInst);
+                assert nodeId != null;
+
+                if (node2DepthMap.containsKey(nodeId)) continue;
+                searchNodesQ.add(nodeId);
+                node2DepthMap.put(nodeId, 0);
             }
         });
 
         vertBoundaryDim.traverse((Coordinate2D loc) -> {
-            searchCellInstQ.addAll(getCellInstsOfVertBoundary(loc));
-
             for (EDIFCellInst cellInst : getCellInstsOfVertBoundary(loc)) {
-                cellInst2DepthMap.put(cellInst, 0);
+                Integer nodeId = clbAwareNetlist.cellInst2NodeIdMap.get(cellInst);
+                assert nodeId != null;
+
+                if (node2DepthMap.containsKey(nodeId)) continue;
+                searchNodesQ.add(nodeId);
+                node2DepthMap.put(nodeId, 0);
             }
         });
 
-        Set<EDIFNet> visitedNets = new HashSet<>();
-        visitedNets.addAll(netlistDB.globalClockNets);
-        visitedNets.addAll(netlistDB.globalResetNets);
-        visitedNets.addAll(netlistDB.ignoreNets);
-        visitedNets.addAll(netlistDB.illegalNets);
+        Set<Integer> visitedEdges = new HashSet<>();
 
-        while (!searchCellInstQ.isEmpty()) {
-            EDIFCellInst searchCellInst = searchCellInstQ.poll();
+        while (!searchNodesQ.isEmpty()) {
+            Integer searchNodeId = searchNodesQ.poll();
 
-            Integer depth = cellInst2DepthMap.get(searchCellInst);
-
+            Integer depth = node2DepthMap.get(searchNodeId);
             if (depth >= maxDepth) continue;
 
-            for (EDIFPortInst searchPortInst : searchCellInst.getPortInsts()) {
-                EDIFNet expandNet = searchPortInst.getNet();
+            for (Integer edgeId : clbAwareNetlist.node2EdgeIds.get(searchNodeId)) {
+                if (visitedEdges.contains(edgeId)) continue;
+                visitedEdges.add(edgeId);
 
-                if (visitedNets.contains(expandNet)) continue;
-                if (expandNet.isGND() || expandNet.isVCC()) continue;
+                for (Integer expandNodeId : clbAwareNetlist.edge2NodeIds.get(edgeId)) {
+                    if (node2DepthMap.containsKey(expandNodeId)) continue;
 
-                visitedNets.add(expandNet);
+                    node2DepthMap.put(expandNodeId, depth + 1);
+                    searchNodesQ.add(expandNodeId);
+                }
+            }
+        }
 
-                for (EDIFPortInst expandPortInst : expandNet.getPortInsts()) {
-                    EDIFCellInst expandCellInst = expandPortInst.getCellInst();
+        // map cellInsts to peripheral islands
+        periIsland2CellInsts = new HashSet[gridDim.getX()][gridDim.getY()];
+        gridDim.traverse((Coordinate2D loc) -> {
+            periIsland2CellInsts[loc.getX()][loc.getY()] = new HashSet<>();
+        });
 
-                    if (expandCellInst == null) continue;
-                    if (cellInst2DepthMap.containsKey(expandCellInst)) continue;
-
-                    Coordinate2D loc = cellInst2IslandLocMap.get(expandCellInst);
-                    assert loc != null;
-
-                    cellInst2DepthMap.put(expandCellInst, depth + 1);
-                    periIsland2CellInsts[loc.getX()][loc.getY()].add(expandCellInst);
-                    island2CellInsts[loc.getX()][loc.getY()].remove(expandCellInst);
-                    searchCellInstQ.add(expandCellInst);
+        for (Integer nodeId : node2DepthMap.keySet()) {
+            for (EDIFCellInst cellInst : clbAwareNetlist.node2CellInsts.get(nodeId)) {
+                Coordinate2D loc = cellInst2IslandLocMap.get(cellInst);
+                if (loc != null) {
+                    periIsland2CellInsts[loc.getX()][loc.getY()].add(cellInst);
+                    island2CellInsts[loc.getX()][loc.getY()].remove(cellInst);
                 }
             }
         }
@@ -227,24 +229,26 @@ public class FasterParallelIslandPnR extends AbstractPhysicalImpl{
         tclFile.addCmd(VivadoTclCmd.setMaxThread(VivadoProject.MAX_THREAD));
         tclFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
-        tclFile.addCmd(VivadoTclCmd.placeDesign());
-        //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
+        //tclFile.addCmd(VivadoTclCmd.placeDesign());
+        tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
         //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.Quick, false));
         //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.RuntimeOpt, false));
         tclFile.addCmd(VivadoTclCmd.routeDesign());
 
-        horiBoundaryDim.traverse(
-            (Coordinate2D loc) -> {
-                String cellName = getHoriBoundaryName(loc);
-                tclFile.addCmd(VivadoTclCmd.lockDesign(false, VivadoTclCmd.LockDesignLevel.Routing, cellName));
-            }
-        );
-        vertBoundaryDim.traverse(
-            (Coordinate2D loc) -> {
-                String cellName = getVertBoundaryName(loc);
-                tclFile.addCmd(VivadoTclCmd.lockDesign(false, VivadoTclCmd.LockDesignLevel.Routing, cellName));
-            }
-        );
+        // horiBoundaryDim.traverse(
+        //     (Coordinate2D loc) -> {
+        //         String cellName = getHoriBoundaryName(loc);
+        //         tclFile.addCmd(VivadoTclCmd.lockDesign(false, VivadoTclCmd.LockDesignLevel.Routing, cellName));
+        //     }
+        // );
+        // vertBoundaryDim.traverse(
+        //     (Coordinate2D loc) -> {
+        //         String cellName = getVertBoundaryName(loc);
+        //         tclFile.addCmd(VivadoTclCmd.lockDesign(false, VivadoTclCmd.LockDesignLevel.Routing, cellName));
+        //     }
+        // );
+
+        tclFile.addCmd(VivadoTclCmd.lockDesign(false, VivadoTclCmd.LockDesignLevel.Placement, null));
 
         tclFile.addCmd(VivadoTclCmd.writeCheckpoint(true, null, VivadoProject.OUTPUT_DCP_NAME));
         tclFile.addCmd(VivadoTclCmd.writeEDIF(true, null, VivadoProject.OUTPUT_EDIF_NAME));
@@ -320,6 +324,7 @@ public class FasterParallelIslandPnR extends AbstractPhysicalImpl{
         
         EDIFCell boundaryCell = boundaryDesign.getNetlist().getTopCell();
         netlist.copyCellAndSubCells(boundaryCell);
+        logger.info("Boundary cell name: " + boundaryCell.getName());
         EDIFCell newBoundaryCell = netlist.getCell(boundaryCell.getName());
         newBoundaryCell.createCellInst(boundaryCell.getName(), topCell);
 
@@ -341,7 +346,7 @@ public class FasterParallelIslandPnR extends AbstractPhysicalImpl{
         connectCellInstsOfTopCell(topCell, netlistDB.originTopCell);
 
         // copy implementation
-        DesignTools.copyImplementation(boundaryDesign, design, false, true, false, false, Map.of("boundary", "boundary"));
+        DesignTools.copyImplementation(boundaryDesign, design, false, true, false, false, Map.of("", "boundary"));
 
         gridDim.traverse((Coordinate2D loc) -> {
             String islandName = getIslandName(loc);

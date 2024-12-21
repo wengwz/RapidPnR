@@ -85,6 +85,49 @@ public class NetlistUtils {
         }
     };
 
+    public static Set<String> sequentialLogicCellNames;
+    public static Set<String> clkPortNames;
+    static {
+        // registers
+        sequentialLogicCellNames = new HashSet<>();
+        sequentialLogicCellNames.add("FDRE");
+        sequentialLogicCellNames.add("FDSE");
+        sequentialLogicCellNames.add("FDCE");
+        sequentialLogicCellNames.add("FDPE");
+
+        // Memory
+        sequentialLogicCellNames.add("SRL16E");
+        sequentialLogicCellNames.add("SRLC32E");
+        sequentialLogicCellNames.add("RAMD64E");
+        sequentialLogicCellNames.add("RAMD32");
+        sequentialLogicCellNames.add("RAMS32");
+        sequentialLogicCellNames.add("RAMB36E2");
+        sequentialLogicCellNames.add("RAMB18E2");
+
+
+        clkPortNames = new HashSet<>();
+        clkPortNames.add("C");
+        clkPortNames.add("CLK");
+        clkPortNames.add("CLKBWRCLK");
+        clkPortNames.add("CLKARDCLK");
+    };
+
+    public static boolean isSequentialLogic(EDIFCell cell) {
+        return sequentialLogicCellNames.contains(cell.getName());
+    }
+
+    public static boolean isSequentialLogic(EDIFCellInst cellInst) {
+        return isSequentialLogic(cellInst.getCellType());
+    }
+
+    public static boolean isClkPort(EDIFPort port) {
+        return clkPortNames.contains(port.getName());
+    }
+
+    public static boolean isClkPort(EDIFPortInst portInst) {
+        return isClkPort(portInst.getPort());
+    }
+
     public static HashSet<String> pseudoLeafCellNames = new HashSet<>(Arrays.asList("DSP48E2"));
 
     public static Map<String, Map<String, Integer>> nonPrimUnisimCellUtils;

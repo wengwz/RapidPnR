@@ -242,12 +242,16 @@ public class VivadoTclUtils {
                 }
             }
         }
-    
-        public static void addIODelayConstraint(Design design, EDIFPort port, String clkName, Double delay) {
+
+        public static String addIODelayConstraint(EDIFPort port, String clkName, Double delay) {
             String commandStr = port.isInput() ? "set_input_delay" : "set_output_delay";
             String portName = port.getName();
             String constrStr = String.format("%s -clock %s %f %s", commandStr, clkName, delay, portName);
-            design.addXDCConstraint(constrStr);
+            return constrStr;
+        }
+    
+        public static void addIODelayConstraint(Design design, EDIFPort port, String clkName, Double delay) {
+            design.addXDCConstraint(addIODelayConstraint(port, clkName, delay));
         }
         
         public static String readCheckpoint(String cellInstName, boolean autoIncr, boolean incr, String incrDirective, String dcpPath) {

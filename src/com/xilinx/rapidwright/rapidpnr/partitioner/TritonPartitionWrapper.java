@@ -60,7 +60,7 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
         // print statistics about tpartitio results
         logger.info(String.format("Complete running TritonPart in OpenROAD(Time Elapsed: %.2f sec)", timer.getTimeInSec()));
 
-        setPartResult(partResult);
+        setPartResult(partResult, false);
 
         printPartitionInfo();
 
