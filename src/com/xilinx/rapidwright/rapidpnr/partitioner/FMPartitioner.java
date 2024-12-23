@@ -15,15 +15,36 @@ import com.xilinx.rapidwright.rapidpnr.utils.SortedList;
 
 public class FMPartitioner extends AbstractPartitioner {
 
-    private int maxPassNum = Integer.MAX_VALUE; // maximum number of passes
-    private int maxNoneGainMoveNum = Integer.MAX_VALUE; // number of non-gain moves before early exit
-    private double extremeLargeRatio = 0.1; // extremely large nodes needs to be initialized first;
+    public static class Config extends AbstractConfig {
+        public int maxPassNum = Integer.MAX_VALUE; // maximum number of passes
+        public double passEarlyExitRatio = 1.0; // number of non-gain moves before early exit
+        public double extremeLargeRatio = 0.15; // extremely large nodes needs to be initialized first;
 
+        public Config() {
+            super();
+        }
+
+        public Config(AbstractConfig config) {
+            super(config);
+        }
+
+        public Config(AbstractConfig config, int maxPassNum, double passEarlyExitRatio, double extremeLargeRatio) {
+            super(config);
+
+            this.maxPassNum = maxPassNum;
+            this.passEarlyExitRatio = passEarlyExitRatio;
+            this.extremeLargeRatio = extremeLargeRatio;
+        }
+    }
+
+    private Config config;
     // partition states
     private SortedList<Double> node2MoveGain;
     
     public FMPartitioner(HierarchicalLogger logger, Config config, HyperGraph hyperGraph) {
         super(logger, config, hyperGraph);
+
+        this.config = config;
 
         assert config.blockNum == 2: "FMPartitioner only supports 2-way partition currently";
     }
@@ -56,12 +77,12 @@ public class FMPartitioner extends AbstractPartitioner {
 
     public void setMaxPassNum(int maxPassNum) {
         assert maxPassNum > 0;
-        this.maxPassNum = maxPassNum;
+        this.config.maxPassNum = maxPassNum;
     }
 
-    public void setEarlyExitMoveNum(double ratio) {
+    public void setPassEarlyExitRatio(double ratio) {
         assert ratio > 0.0 && ratio < 1.0;
-        this.maxNoneGainMoveNum = (int) (hyperGraph.getNodeNum() * ratio);
+        this.config.passEarlyExitRatio = ratio;
     }
 
     protected void randomInitialPart() {
@@ -69,7 +90,7 @@ public class FMPartitioner extends AbstractPartitioner {
 
         // random shuffling nodes
         Double totalNodeWeight = hyperGraph.getNodeWeightsSum(hyperGraph.getTotalNodeWeight());
-        Double largeNodeWeight = totalNodeWeight * extremeLargeRatio;
+        Double largeNodeWeight = totalNodeWeight * config.extremeLargeRatio;
         List<Integer> randomNodeSeq = new ArrayList<>();
         List<Integer> shuffleNodes = new ArrayList<>();
         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
@@ -82,6 +103,7 @@ public class FMPartitioner extends AbstractPartitioner {
         Collections.shuffle(shuffleNodes, new Random(config.randomSeed));
         randomNodeSeq.addAll(shuffleNodes);
 
+        int assignedNodeNum = 0;
         // assgin fixed nodes
         for (int nodeId : fixedNodes.keySet()) {
             int blockId = fixedNodes.get(nodeId);
@@ -89,6 +111,7 @@ public class FMPartitioner extends AbstractPartitioner {
             node2BlockId.set(nodeId, blockId);
             List<Double> nodeWeights = hyperGraph.getWeightsOfNode(nodeId);
             vecAccu(blockSizes.get(blockId), nodeWeights);
+            assignedNodeNum++;
         }
         assert checkSizeConstr(): "Fixed nodes constraints violate block size constraint";
 
@@ -128,7 +151,11 @@ public class FMPartitioner extends AbstractPartitioner {
             if (!(blkId2Legality.get(0) || blkId2Legality.get(1))) {
                 logger.info(blockSizes.toString());
             }
-            assert blkId2Legality.get(0) || blkId2Legality.get(1): "No legal move found for node-" + nodeId;
+            
+            
+            assert blkId2Legality.get(0) || blkId2Legality.get(1): 
+            String.format("No legal move found for node-%d (node size=%s already assigned=%d)", nodeId, hyperGraph.getWeightsOfNode(nodeId), assignedNodeNum);
+            
             if (!isMoveLegal(nodeId, 0)) {
                 node2BlockId.set(nodeId, 1);
                 HyperGraph.accuWeights(blockSizes.get(1), hyperGraph.getWeightsOfNode(nodeId));
@@ -145,6 +172,8 @@ public class FMPartitioner extends AbstractPartitioner {
                     HyperGraph.accuWeights(blockSizes.get(1), hyperGraph.getWeightsOfNode(nodeId));
                 }
             }
+
+            assignedNodeNum++;
         }
 
         // update other states
@@ -159,8 +188,11 @@ public class FMPartitioner extends AbstractPartitioner {
         logger.info("Start vertex-based cut size refinement");
         int iterIdx = 0;
 
+        int maxNoGainMoveNum = (int) (config.passEarlyExitRatio * hyperGraph.getNodeNum());
+        //logger.info("Maximum no gain move before early exit: " + maxNoGainMoveNum);
+
         logger.newSubStep();
-        while (iterIdx < maxPassNum) {
+        while (iterIdx < config.maxPassNum) {
             logger.info("Start refinement pass " + iterIdx);
             Double passGain = 0.0;
 
@@ -205,7 +237,7 @@ public class FMPartitioner extends AbstractPartitioner {
                     }
                 }
 
-                if (!hasLegalMove || noGainMoveNum > maxNoneGainMoveNum) {
+                if (!hasLegalMove || noGainMoveNum > maxNoGainMoveNum) {
                     break;
                 }
             }
@@ -368,8 +400,7 @@ public class FMPartitioner extends AbstractPartitioner {
         List<Double> weightFac = Arrays.asList(1.0);
         HyperGraph hyperGraph = HyperGraph.readGraphFromHmetisFormat(inputGraphPath, weightFac, weightFac);
 
-        Path workDir = Path.of("workspace/test").toAbsolutePath();
-        Config config = new Config(2, 9999, Arrays.asList(0.01), workDir);
+        Config config = new Config();
         FMPartitioner partitioner = new FMPartitioner(logger, config, hyperGraph);
         partitioner.run();
 

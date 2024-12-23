@@ -1,6 +1,5 @@
 package com.xilinx.rapidwright.rapidpnr.partitioner;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -13,37 +12,36 @@ import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
 
 abstract public class AbstractPartitioner {
-    public static class Config {
-        public int blockNum;
-        public int randomSeed;
-        public List<Double> imbFactors;
-        public Path workDir; // work directory for launching external partitioner
-        public Boolean verbose; // verbose mode
+    public static class AbstractConfig {
+        public int blockNum = 2;
+        public int randomSeed = 999;
+        public List<Double> imbFactors = Arrays.asList(0.01);
+        public boolean verbose = true; // verbose mode
 
         @Override
         public String toString() {
             return String.format("Partition Config: BlockNum=%d Seed=%d ImbFactors=%s", blockNum, randomSeed, imbFactors);
         }
-        
-        public Config(int blockNum, int seed, List<Double> imbFactors, Path workDir) {
+
+        public AbstractConfig() {}
+
+        public AbstractConfig(int blockNum, int seed, List<Double> imbFactors, boolean verbose) {
             this.blockNum = blockNum;
             this.randomSeed = seed;
-            this.imbFactors = imbFactors;
-            this.workDir = workDir;
-            this.verbose = false;
+            this.imbFactors = new ArrayList<>(imbFactors);
+            this.verbose = verbose;
         }
 
-        public Config() {
-            blockNum = 2;
-            randomSeed = 999;
-            imbFactors = Arrays.asList(0.01);
-            workDir = null;
-            verbose = false;
+        public AbstractConfig(AbstractConfig config) {
+            this.blockNum = config.blockNum;
+            this.randomSeed = config.randomSeed;
+            this.imbFactors = new ArrayList<>(config.imbFactors);
+            this.verbose = config.verbose;
         }
     }
 
     protected HierarchicalLogger logger;
-    protected Config config;
+    protected AbstractConfig config;
     protected HyperGraph hyperGraph;
 
 
@@ -58,7 +56,7 @@ abstract public class AbstractPartitioner {
     protected Double cutSize;
 
 
-    public AbstractPartitioner(HierarchicalLogger logger, Config config, HyperGraph hyperGraph) {
+    public AbstractPartitioner(HierarchicalLogger logger, AbstractConfig config, HyperGraph hyperGraph) {
         this.logger = logger;
         this.config = config;
         this.hyperGraph = hyperGraph;
@@ -131,21 +129,17 @@ abstract public class AbstractPartitioner {
         for (int edgeId : randEdgeIds) {
             if (!hyperGraph.isCutEdge(edgeId, node2BlockId)) continue;
             List<Double> moveGains = new ArrayList<>(Collections.nCopies(config.blockNum, 0.0));
-
+            List<Integer> nodeIds = hyperGraph.getNodesOfEdge(edgeId);
+            
             // trial move
             for (int blkId = 0; blkId < config.blockNum; blkId++) {
-                Map<Integer, Integer> movedNode2BlkId = new HashMap<>();
-
-                boolean isMoveLegal = true;
-                for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
-                    if (!isMoveLegal(nodeId, blkId)) {
-                        isMoveLegal = false;
-                        break;
-                    }
-                    movedNode2BlkId.put(nodeId, blkId);
-                }
+                boolean isMoveLegal = isMoveLegal(nodeIds, blkId);
 
                 if (isMoveLegal) {
+                    Map<Integer, Integer> movedNode2BlkId = new HashMap<>();
+                    for (int nodeId : nodeIds) {
+                        movedNode2BlkId.put(nodeId, blkId);
+                    }
                     moveGains.set(blkId, getMoveGainOf(movedNode2BlkId));
                 } else {
                     moveGains.set(blkId, Double.NEGATIVE_INFINITY);
@@ -261,6 +255,26 @@ abstract public class AbstractPartitioner {
             fixedNodeConstr = fixedNodes.get(nodeId) == toBlockId;
         }
         return blockSizeConstr && fixedNodeConstr;
+    }
+
+    protected boolean isMoveLegal(List<Integer> nodeIds, int toBlockId) {
+        assert isBlkIdLegal(toBlockId);
+        List<Double> totalMoveSize = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeWeightDim(), 0.0));
+
+        for (int nodeId : nodeIds) {
+            assert nodeId < hyperGraph.getNodeNum() && nodeId >= 0;
+            if (node2BlockId.get(nodeId) == toBlockId) continue;
+
+            if (fixedNodes.containsKey(nodeId)) {
+                if (fixedNodes.get(nodeId) != toBlockId) {
+                    return false;
+                }
+            }
+            vecAccu(totalMoveSize, hyperGraph.getWeightsOfNode(nodeId));
+        }
+
+        List<Double> toBlockSize = vecAdd(totalMoveSize, blockSizes.get(toBlockId));
+        return vecLessEq(toBlockSize, blockSizeUpperBound);
     }
 
     protected boolean isBlkIdLegal(int blkId) {

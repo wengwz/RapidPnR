@@ -20,10 +20,30 @@ abstract public class Coarser {
     }
 
     public static class Config {
-        public Scheme scheme;
-        public int seed;
-        public double stopRatio = 2.0;
-        public double maxNodeRatio = 1.0;
+        public Scheme scheme = Scheme.FC;
+        public int seed = 999;
+        public double levelShrinkRatio = 2.0;
+        public double maxNodeSizeRatio = 1.0;
+
+        @Override
+        public String toString() {
+            return String.format("Coarser Config: Scheme=%s Seed=%d LevelShrinkRatio=%.2f MaxNodeSizeRatio=%.2f", scheme, seed, levelShrinkRatio, maxNodeSizeRatio);
+        }
+
+        public Config() {
+
+        }
+
+        public Config(Config config) {
+            this.scheme = config.scheme;
+            this.seed = config.seed;
+            this.levelShrinkRatio = config.levelShrinkRatio;
+            this.maxNodeSizeRatio = config.maxNodeSizeRatio;
+        }
+
+        public Config(int seed) {
+            this.seed = seed;
+        }
 
         public Config(Scheme scheme, int seed) {
             this.scheme = scheme;
@@ -33,14 +53,14 @@ abstract public class Coarser {
         public Config(Scheme scheme, int seed, double stopRatio) {
             this.scheme = scheme;
             this.seed = seed;
-            this.stopRatio = stopRatio;
+            this.levelShrinkRatio = stopRatio;
         }
 
-        public Config(Scheme scheme, int seed, double stopRatio, double maxNodeRatio) {
+        public Config(Scheme scheme, int seed, double stopRatio, double maxNodeSizeRatio) {
             this.scheme = scheme;
             this.seed = seed;
-            this.stopRatio = stopRatio;
-            this.maxNodeRatio = maxNodeRatio;
+            this.levelShrinkRatio = stopRatio;
+            this.maxNodeSizeRatio = maxNodeSizeRatio;
         }
     };
 
@@ -61,7 +81,7 @@ abstract public class Coarser {
     public static HierHyperGraph edgeCoarsening(HierHyperGraph hyperGraph, Set<Integer> dontTouchNodes, Config config) {
         Random random = new Random(config.seed);
         double totalNodeSize = hyperGraph.getNodeWeightsSum(hyperGraph.getTotalNodeWeight());
-        double maxClsSize = totalNodeSize * config.maxNodeRatio;
+        double maxClsSize = totalNodeSize * config.maxNodeSizeRatio;
 
         List<Integer> randomNodeIdxSeq = new ArrayList<>();
         Set<Integer> ignoredNodes = new HashSet<>(dontTouchNodes);
@@ -233,7 +253,7 @@ abstract public class Coarser {
     ) {
         Random random = new Random(config.seed);
         double totalNodeSize = hyperGraph.getNodeWeightsSum(hyperGraph.getTotalNodeWeight());
-        double maxClsSize = totalNodeSize * config.maxNodeRatio;
+        double maxClsSize = totalNodeSize * config.maxNodeSizeRatio;
         
         List<Integer> randomNodeIdxSeq = new ArrayList<>();
         Set<Integer> overSizeNodes = new HashSet<>();
@@ -278,7 +298,7 @@ abstract public class Coarser {
             }
 
             int curGraphNodeNum = hyperGraph.getNodeNum() - matchedNodesNum + cluster2Nodes.size();
-            if (((double) hyperGraph.getNodeNum() / curGraphNodeNum) > config.stopRatio) {
+            if (((double) hyperGraph.getNodeNum() / curGraphNodeNum) > config.levelShrinkRatio) {
                 break;
             }
 

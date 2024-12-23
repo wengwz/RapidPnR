@@ -17,14 +17,35 @@ import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
 import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
 
 public class TritonPartitionWrapper extends AbstractPartitioner {
+    public static class Config extends AbstractConfig {
+        public Path workDir;
+
+        public Config(Path workDir) {
+            super();
+            this.workDir = workDir;
+        }
+
+        public Config(AbstractConfig config, Path workDir) {
+            super(config);
+            this.workDir = workDir;
+        }
+
+        public Config(int blockNum, int seed, List<Double> imbFactors, boolean verbose, Path workDir) {
+            super(blockNum, seed, imbFactors, verbose);
+            this.workDir = workDir;
+        }
+
+    }
     public static String OPENROAD_CMD = "openroad";
     public static String TCL_FILE_NAME = "openroad.tcl";
     public static String GRAPH_FILE_NAME = "input.hgr";
     public static String FIXED_FILE_NAME = "input.fixed";
 
+    private Config config;
 
     public TritonPartitionWrapper(HierarchicalLogger logger, Config config, HyperGraph hyperGraph) {
         super(logger, config, hyperGraph);
+        this.config = config;
 
         assert config.imbFactors.stream().distinct().count() == 1: "TritonPart only supports uniform imbalance factor";
     }
@@ -143,14 +164,15 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
     }
 
     public static void main(String[] args) {
-        Path inputGraphPath = Path.of("workspace/test/nvdla-tpw-cls.hgr").toAbsolutePath();
+        //Path inputGraphPath = Path.of("workspace/test/nvdla-tpw-cls.hgr").toAbsolutePath();
+        Path inputGraphPath = Path.of("workspace/test/blue-rdma-cls.hgr").toAbsolutePath();
         HierarchicalLogger logger = HierarchicalLogger.createLogger("TestTritonPart", null, true);
 
         List<Double> weightFac = Arrays.asList(1.0);
         HyperGraph hyperGraph = HyperGraph.readGraphFromHmetisFormat(inputGraphPath, weightFac, weightFac);
 
         Path workDir = Path.of("workspace/test").toAbsolutePath();
-        Config config = new Config(2, 999, Arrays.asList(0.01), workDir);
+        Config config = new Config(2, 7101927, Arrays.asList(0.01), true, workDir);
         TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, hyperGraph);
         partitioner.run();
     }
