@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
+import org.capnproto.PrimitiveList.Int;
+
 import com.xilinx.rapidwright.rapidpnr.utils.HierHyperGraph;
 
 abstract public class Coarser {
@@ -24,6 +26,8 @@ abstract public class Coarser {
         public int seed = 999;
         public double levelShrinkRatio = 2.0;
         public double maxNodeSizeRatio = 1.0;
+        public List<Integer> partResult = null;
+        public Set<Integer> dontTouchNodes = null;
 
         @Override
         public String toString() {
@@ -31,7 +35,7 @@ abstract public class Coarser {
         }
 
         public Config() {
-
+            this.dontTouchNodes = new HashSet<>();
         }
 
         public Config(Config config) {
@@ -39,21 +43,26 @@ abstract public class Coarser {
             this.seed = config.seed;
             this.levelShrinkRatio = config.levelShrinkRatio;
             this.maxNodeSizeRatio = config.maxNodeSizeRatio;
+            this.partResult = config.partResult;
+            this.dontTouchNodes = config.dontTouchNodes;
         }
 
         public Config(int seed) {
             this.seed = seed;
+            this.dontTouchNodes = new HashSet<>();
         }
 
         public Config(Scheme scheme, int seed) {
             this.scheme = scheme;
             this.seed = seed;
+            this.dontTouchNodes = new HashSet<>();
         }
 
         public Config(Scheme scheme, int seed, double stopRatio) {
             this.scheme = scheme;
             this.seed = seed;
             this.levelShrinkRatio = stopRatio;
+            this.dontTouchNodes = new HashSet<>();
         }
 
         public Config(Scheme scheme, int seed, double stopRatio, double maxNodeSizeRatio) {
@@ -61,36 +70,45 @@ abstract public class Coarser {
             this.seed = seed;
             this.levelShrinkRatio = stopRatio;
             this.maxNodeSizeRatio = maxNodeSizeRatio;
+            this.dontTouchNodes = new HashSet<>();
+        }
+
+        public boolean isInternalNodes(int node1, int node2) {
+            if (partResult == null) {
+                return true;
+            } else {
+                return partResult.get(node1).equals(partResult.get(node2));
+            }
         }
     };
 
-    public static HierHyperGraph coarsening(Config config, HierHyperGraph hyperGraph, Set<Integer> dontTouchNodes) {
+    public static HierHyperGraph coarsening(Config config, HierHyperGraph hyperGraph) {
         switch (config.scheme) {
             case EC:
-                return edgeCoarsening(hyperGraph, dontTouchNodes, config);
+                return edgeCoarsening(hyperGraph, config);
             case HEC:
-                return hyperEdgeCoarsening(hyperGraph, dontTouchNodes);
+                return hyperEdgeCoarsening(hyperGraph, config);
             case FC:
-                return firstChoiceCoarsening(hyperGraph, dontTouchNodes, config);
+                return firstChoiceCoarsening(hyperGraph, config);
             default:
                 throw new IllegalArgumentException("Unknown coarsening scheme: " + config.scheme);
         }
     }
 
 
-    public static HierHyperGraph edgeCoarsening(HierHyperGraph hyperGraph, Set<Integer> dontTouchNodes, Config config) {
+    public static HierHyperGraph edgeCoarsening(HierHyperGraph hyperGraph, Config config) {
         Random random = new Random(config.seed);
         double totalNodeSize = hyperGraph.getNodeWeightsSum(hyperGraph.getTotalNodeWeight());
         double maxClsSize = totalNodeSize * config.maxNodeSizeRatio;
 
         List<Integer> randomNodeIdxSeq = new ArrayList<>();
-        Set<Integer> ignoredNodes = new HashSet<>(dontTouchNodes);
+        Set<Integer> ignoredNodes = new HashSet<>(config.dontTouchNodes);
 
         List<List<Integer>> cluster2Nodes = new ArrayList<>();
         List<Integer> node2Cluster = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeNum(), -1));
 
         for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
-            if (dontTouchNodes.contains(i)) continue;
+            if (config.dontTouchNodes.contains(i)) continue;
 
             if (hyperGraph.getNodeWeightsSum(i) > maxClsSize) {
                 ignoredNodes.add(i);
@@ -168,7 +186,7 @@ abstract public class Coarser {
         return hyperGraph.createClusteredChildGraph(cluster2Nodes, false);
     }
 
-    public static HierHyperGraph hyperEdgeCoarsening(HierHyperGraph hyperGraph, Set<Integer> dontTouchNodes) {
+    public static HierHyperGraph hyperEdgeCoarsening(HierHyperGraph hyperGraph, Config config) {
 
         List<List<Integer>> cluster2Nodes = new ArrayList<>();
         List<Integer> node2Cluster = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeNum(), -1));
@@ -195,7 +213,7 @@ abstract public class Coarser {
             List<Integer> nodesOfEdge = hyperGraph.getNodesOfEdge(edgeId);
             boolean hasMatchedNodes = false;
             for (int nodeId : nodesOfEdge) {
-                if (dontTouchNodes.contains(nodeId) || node2Cluster.get(nodeId) != -1) {
+                if (config.dontTouchNodes.contains(nodeId) || node2Cluster.get(nodeId) != -1) {
                     hasMatchedNodes = true;
                     break;
                 }
@@ -216,7 +234,7 @@ abstract public class Coarser {
             List<Integer> nodesOfEdge = hyperGraph.getNodesOfEdge(edgeId);
             List<Integer> mergedNodes = new ArrayList<>();
             for (int nodeId : nodesOfEdge) {
-                if (dontTouchNodes.contains(nodeId)) continue;
+                if (config.dontTouchNodes.contains(nodeId)) continue;
                 if (node2Cluster.get(nodeId) != -1) continue;
                 mergedNodes.add(nodeId);
             }
@@ -232,7 +250,7 @@ abstract public class Coarser {
             }
         }
 
-        for (int nodeId : dontTouchNodes) {
+        for (int nodeId : config.dontTouchNodes) {
             assert node2Cluster.get(nodeId) == -1;
             int clusterId = cluster2Nodes.size();
             cluster2Nodes.add(new ArrayList<>(Arrays.asList(nodeId)));
@@ -249,8 +267,13 @@ abstract public class Coarser {
 
 
     public static HierHyperGraph firstChoiceCoarsening(
-        HierHyperGraph hyperGraph, Set<Integer> dontTouchNodes, Config config
+        HierHyperGraph hyperGraph, Config config
     ) {
+        // check input parameters
+        if (config.partResult != null) {
+            assert config.partResult.size() == hyperGraph.getNodeNum();
+        }
+
         Random random = new Random(config.seed);
         double totalNodeSize = hyperGraph.getNodeWeightsSum(hyperGraph.getTotalNodeWeight());
         double maxClsSize = totalNodeSize * config.maxNodeSizeRatio;
@@ -262,9 +285,8 @@ abstract public class Coarser {
         List<Double> cluster2Size = new ArrayList<>();
         List<Integer> node2Cluster = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeNum(), -1));
 
-
         for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
-            if (dontTouchNodes.contains(i)) continue;
+            if (config.dontTouchNodes.contains(i)) continue;
             if (hyperGraph.getNodeWeightsSum(i) > maxClsSize) {
                 overSizeNodes.add(i);
                 continue;
@@ -283,8 +305,9 @@ abstract public class Coarser {
             for (int edgeId : hyperGraph.getEdgesOfNode(nodeId)) {
                 for (int nNodeId : hyperGraph.getNodesOfEdge(edgeId)) {
                     if (nNodeId == nodeId) continue;
-                    if (dontTouchNodes.contains(nNodeId)) continue;
+                    if (config.dontTouchNodes.contains(nNodeId)) continue;
                     if (overSizeNodes.contains(nNodeId)) continue; // skip very large nodes
+                    if (!config.isInternalNodes(nodeId, nNodeId)) continue;
 
                     double weight = hyperGraph.getEdgeWeightsSum(edgeId) / (hyperGraph.getDegreeOfEdge(edgeId) - 1);
 

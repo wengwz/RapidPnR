@@ -4,7 +4,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 
@@ -16,12 +15,17 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
     public static class Config extends AbstractConfig {
         // coarse configuration
         public Coarser.Config coarserConfig;
-        public int coarsenStopNodeNum = 80;
+        public int coarsenStopNodeNum = 100;
 
         // fm refiner configuartion
         int maxPassNum = 3;
         double passEarlyExitRatio = 0.25;
         double extremeLargeRatio = 0.1;
+
+        //
+        int parallelRunNum = 1;
+        boolean vCycleRefine = false;
+        double vCycleUncoarseLevelRatio = 0.7;
 
         @Override
         public String toString() {
@@ -29,7 +33,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         }
 
         public Config() {
-            coarserConfig = new Coarser.Config(this.randomSeed);
+            coarserConfig = new Coarser.Config();
         }
 
         public Config(Config config) {
@@ -39,6 +43,9 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
             maxPassNum = config.maxPassNum;
             passEarlyExitRatio = config.passEarlyExitRatio;
             extremeLargeRatio = config.extremeLargeRatio;
+            parallelRunNum = config.parallelRunNum;
+            vCycleRefine = config.vCycleRefine;
+            vCycleUncoarseLevelRatio = config.vCycleUncoarseLevelRatio;
         }
     }
 
@@ -109,17 +116,19 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         logger.info("Start multi-level partitioning");
         logger.newSubStep();
 
-        // coarsening phase
-        HierHyperGraph coarsestHierGraph = coarsen();
+        List<Integer> partResult;
+        if (config.parallelRunNum > 1) {
+            partResult = parallelRun(config.parallelRunNum);
+        } else {
+            partResult = singleRun();
+        }
+        setPartResult(partResult, true);
+        printPartitionInfo();
 
-        // initial partitioning
-        List<Integer> initialPartRes = initialPartition(coarsestHierGraph);
-
-        // uncoarsening and refinement
-        List<Integer> finalPartRes = uncoarsenAndRefine(coarsestHierGraph, initialPartRes);
-
-        setPartResult(finalPartRes, true);
-
+        if (config.vCycleRefine) {
+            partResult = multiPhaseRefinement(originHierGraph, partResult);
+        }
+        setPartResult(partResult, true);
         printPartitionInfo();
 
         logger.endSubStep();
@@ -127,8 +136,26 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         return Collections.unmodifiableList(node2BlockId);
     }
 
-    public List<Integer> parallelRun(int parallelNum) {
-        logger.info("Start parallel multi-level partitioning");
+    protected List<Integer> singleRun() {
+        logger.info("Start initial multi-level partitioning");
+        logger.newSubStep();
+
+        // coarsening phase
+        HierHyperGraph coarsestHierGraph = coarsen(originHierGraph);
+
+        // initial partitioning
+        List<Integer> initialPartRes = initialPartition(coarsestHierGraph);
+
+        // uncoarsening and refinement
+        List<Integer> finalPartRes = uncoarsenAndRefine(coarsestHierGraph, initialPartRes);
+
+        logger.endSubStep();
+        logger.info("Complete initial multi-level partitioning");
+        return finalPartRes;
+    }
+
+    protected List<Integer> parallelRun(int parallelNum) {
+        logger.info("Start parallel initial multi-level partitioning");
         logger.newSubStep();
 
         List<PartitionThread> partitionThreads = new ArrayList<>();
@@ -137,6 +164,11 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         for (int id = 0; id < parallelNum; id++) {
             logger.info("Launch partition thread " + id);
             Config newConfig = new Config(config);
+
+            // disable v-cycle refinement for parallel runs
+            newConfig.vCycleRefine = false;
+            // set single run
+            newConfig.parallelRunNum = 1;
             // reset random seed for each thread
             newConfig.randomSeed = random.nextInt();
             newConfig.coarserConfig.seed = newConfig.randomSeed;
@@ -173,31 +205,33 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         logger.info(String.format("Find best partition from thread %d with cut size %.2f", minCutThreadId, minCutSize));
 
         List<Integer> bestPartResult = partitionThreads.get(minCutThreadId).partitioner.node2BlockId;
-        setPartResult(bestPartResult, true);
-        printPartitionInfo();
+        // setPartResult(bestPartResult, true);
+        // printPartitionInfo();
 
         logger.endSubStep();
-        logger.info("Complete parallel multi-level partitioning");
-        return Collections.unmodifiableList(node2BlockId);
+        logger.info("Complete parallel initial multi-level partitioning");
+        return bestPartResult;
     }
 
-    public HierHyperGraph coarsen() {
+    protected HierHyperGraph coarsen(HierHyperGraph initGraph) {
         logger.info("Start coarsening phase");
         logger.newSubStep();
 
         int coarseLevel = 0;
-        HierHyperGraph curGraph = originHierGraph;
+        HierHyperGraph curGraph = initGraph;
         Coarser.Config coarserConfig = new Coarser.Config(config.coarserConfig);
+        coarserConfig.seed = config.randomSeed;
+
         logger.info("Original Hypergraph: \n" + curGraph.getHyperGraphInfo(true), true);
 
         while(curGraph.getNodeNum() > config.coarsenStopNodeNum) {
             logger.info(String.format("The level of coarsening %d", coarseLevel));
 
-            curGraph = Coarser.coarsening(coarserConfig, curGraph, new HashSet<>());
+            curGraph = Coarser.coarsening(coarserConfig, curGraph);
             logger.info("Coarsened Hypergraph: \n" + curGraph.getHyperGraphInfo(false), true);
             
             coarseLevel++;
-            coarserConfig.seed ++; // modify random seed for next coarsening
+            coarserConfig.seed++; // modify random seed for next coarsening
         }
 
         logger.info("Coarsest Hypergraph:\n" + curGraph.getHyperGraphInfo(true), true);
@@ -207,7 +241,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         return curGraph;
     }
 
-    public List<Integer> initialPartition(HierHyperGraph hyperGraph) {
+    protected List<Integer> initialPartition(HierHyperGraph hyperGraph) {
         logger.info("Start initial partition of coarsest hypergraph");
 
         logger.newSubStep();
@@ -222,7 +256,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         return partResults;
     }
 
-    public List<Integer> uncoarsenAndRefine(HierHyperGraph coarsestGraph, List<Integer> initPart) {
+    protected List<Integer> uncoarsenAndRefine(HierHyperGraph coarsestGraph, List<Integer> initPart) {
         logger.info("Start uncoarsening and refinement");
         HierHyperGraph curHyperGraph = coarsestGraph;
         List<Integer> curPartResult = initPart;
@@ -260,6 +294,102 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         return curPartResult;
     }
 
+    protected List<Integer> multiPhaseRefinement(HierHyperGraph initGraph, List<Integer> initPartRes) { // V-Cycle Refinement
+        logger.info("Start multi-phase (V-Cycle) refinement");
+        logger.newSubStep();
+
+        class VCycleIter {
+            public HierHyperGraph curGraph;
+            public List<Integer> curPartRes;
+
+            public VCycleIter(HierHyperGraph initGraph, List<Integer> initPartRes) {
+                curGraph = initGraph;
+                curPartRes = initPartRes;
+            }
+
+            public void restrictedCoarsen(int seed) {
+                logger.info("Start restricted coarsening");
+                logger.newSubStep();
+
+                Coarser.Config coarseConfig = new Coarser.Config(config.coarserConfig);
+                coarseConfig.seed = seed;
+                coarseConfig.partResult = curPartRes;
+                int coarseLevel = 0;
+
+                while (curGraph.getNodeNum() > config.coarsenStopNodeNum) {
+                    logger.info(String.format("Coarse Level %d: ", coarseLevel));
+                    curGraph = Coarser.coarsening(coarseConfig, curGraph);
+                    curPartRes = curGraph.getPartResultFromParent(curPartRes);
+                    logger.info("Coarse HyperGraph Info: \n" + curGraph.getHyperGraphInfo(false), true);
+                    
+                    coarseLevel++;
+                    coarseConfig.seed++;
+                    coarseConfig.partResult = curPartRes;
+                }
+
+                logger.endSubStep();
+                logger.info("Complete restricted coarsening");
+            }
+
+            public double uncoarsenAndRefine(int stopLevel, int seed) { // return cut size gain
+                logger.info("Start uncoarsening and refinement");
+                logger.newSubStep();
+                FMPartitioner.Config refinerConfig = new FMPartitioner.Config(config, config.maxPassNum, config.passEarlyExitRatio, config.extremeLargeRatio);
+                refinerConfig.verbose = false;
+                refinerConfig.randomSeed = seed;
+
+                double initialCutSize = curGraph.getEdgeWeightsSum(curGraph.getCutSize(curPartRes));
+
+                while (curGraph.getHierarchicalLevel() > stopLevel) {
+                    logger.info("Start refining coarse graph of level " + curGraph.getHierarchicalLevel());
+                    curPartRes = curGraph.getPartResultOfParent(curPartRes);
+                    curGraph = curGraph.getParentGraph();
+
+                    FMRefiner refiner = new FMRefiner(logger, refinerConfig, curGraph);
+                    curPartRes = refiner.run(curPartRes);
+                }
+
+                double finalCutSize = curGraph.getEdgeWeightsSum(curGraph.getCutSize(curPartRes));
+                logger.endSubStep();
+                logger.info("Complete uncoarsening and refinement");
+                return initialCutSize - finalCutSize;
+            }
+        }
+
+        Random random = new Random(config.randomSeed);
+        VCycleIter vCycleIter = new VCycleIter(initGraph, initPartRes);
+
+        logger.info("Start initial restricted coarsening:");
+        vCycleIter.restrictedCoarsen(random.nextInt());
+
+        int coarsestLevel = vCycleIter.curGraph.getHierarchicalLevel();
+        int vCycleUncoarseStopLevel = (int) (coarsestLevel * (1.0 - config.vCycleUncoarseLevelRatio));
+
+        double totalVCycleGain = 0;
+        int vCycleCount = 0;
+        while (true) {
+            logger.info("Start V-Cycle Iteration " + vCycleCount);
+            double cycleGain = vCycleIter.uncoarsenAndRefine(vCycleUncoarseStopLevel, random.nextInt());
+            totalVCycleGain += cycleGain;
+
+            if (cycleGain <= 0) {
+                break;
+            }
+
+            vCycleIter.restrictedCoarsen(random.nextInt());
+            logger.info("Complete V-Cycle Iteration " + vCycleCount);
+            vCycleCount++;
+        }
+
+        logger.info("Start final uncoarsening and refinement:");
+        vCycleIter.uncoarsenAndRefine(0, random.nextInt());
+
+
+        logger.endSubStep();
+        logger.info("Complete multi-phase (V-Cycle) refinement with Gain=" + totalVCycleGain);
+        return vCycleIter.curPartRes;
+    }
+
     public static void main(String[] args) {
         Path inputGraphPath = Path.of("workspace/test/nvdla-tpw-cls.hgr").toAbsolutePath();
         // Path inputGraphPath = Path.of("workspace/test/blue-rdma-cls.hgr").toAbsolutePath();
@@ -269,11 +399,14 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         HyperGraph hyperGraph = HyperGraph.readGraphFromHmetisFormat(inputGraphPath, weightFac, weightFac);
 
         Config config = new Config();
-        config.randomSeed = 10000;
+        config.randomSeed = 999;
+        config.parallelRunNum = 20;
+        config.vCycleRefine = true;
+        config.vCycleUncoarseLevelRatio = 0.5;
         config.coarserConfig.maxNodeSizeRatio = 0.4;
+
         MultiLevelPartitioner partitioner = new MultiLevelPartitioner(logger, config, hyperGraph);
-        partitioner.parallelRun(20);
-        //partitioner.run();
+        partitioner.run();
 
         assert partitioner.checkPartitionStates();
 

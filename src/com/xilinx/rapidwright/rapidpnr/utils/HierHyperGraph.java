@@ -166,6 +166,38 @@ public class HierHyperGraph extends HyperGraph {
         return parentPartResult;
     }
 
+    public List<Integer> getPartResultFromParent(List<Integer> parentPartRes) {
+        assert parentPartRes.size() == parentGraph.getNodeNum();
+        List<Integer> childPartRes = new ArrayList<>(Collections.nCopies(nodeNum, -1));
+
+        for (int childNodeId = 0; childNodeId < nodeNum; childNodeId++) {
+            for (int parentNodeId : child2ParentMap.get(childNodeId)) {
+
+                int childPartId = childPartRes.get(childNodeId);
+                int parentPartId = parentPartRes.get(parentNodeId);
+
+                if (parentPartId == -1) {
+                    continue;
+                } else {
+                    if (childPartId == -1) {
+                        childPartRes.set(childNodeId, parentPartId);
+                    } else {
+                        assert childPartId == parentPartId: "Inconsistent partition result";
+                    }
+                }
+            }
+        }
+        return childPartRes;
+    }
+
+    public int getHierarchicalLevel() {
+        if (isRootGraph()) {
+            return 0;
+        } else {
+            return 1 + parentGraph.getHierarchicalLevel();
+        }
+    }
+
     public List<Coordinate2D> getLocOfParent(List<Coordinate2D> loc) {
         assert loc.size() == nodeNum;
         List<Coordinate2D> parentLocs = new ArrayList<>(Collections.nCopies(parentGraph.getNodeNum(), null));
@@ -201,4 +233,5 @@ public class HierHyperGraph extends HyperGraph {
 
         return hierHyperGraph;
     }
+
 }

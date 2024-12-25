@@ -34,6 +34,7 @@ abstract public class AbstractNetlist {
     public List<Set<Integer>> edge2NodeIds;
     public List<Set<Integer>> node2EdgeIds;
     public List<EDIFNet> edge2OriginNet;
+    public List<Integer> edge2SourceNodeId;
 
     // Resource utilization of abstract nodes
     public List<Map<EDIFCell, Integer>> node2LeafCellUtils;
@@ -67,6 +68,7 @@ abstract public class AbstractNetlist {
         edge2NodeIds = new ArrayList<>();
         node2EdgeIds = new ArrayList<>();
         edge2OriginNet = new ArrayList<>();
+        edge2SourceNodeId = new ArrayList<>();
 
         for (int i = 0; i < node2CellInsts.size(); i++) {
             node2EdgeIds.add(new HashSet<>());
@@ -80,21 +82,28 @@ abstract public class AbstractNetlist {
             if (netlistDatabase.illegalNets.contains(net)) continue;
 
             Set<Integer> incidentGrpIds = new HashSet<>();
+            Integer sourceGroupId = -1;
             for (EDIFPortInst portInst : net.getPortInsts()) {
                 EDIFCellInst cellInst = portInst.getCellInst();
                 if (cellInst == null) continue; // Skip toplevel ports
                 assert cellInst2NodeIdMap.containsKey(cellInst): cellInst.getName();
                 Integer groupIdx = cellInst2NodeIdMap.get(cellInst);
                 incidentGrpIds.add(groupIdx);
+
+                if (portInst.isOutput()) {
+                    sourceGroupId = groupIdx;
+                }
             }
 
             if (incidentGrpIds.size() > 1) {
                 assert netFilter.test(net);
+                assert sourceGroupId != -1;
                 edge2NodeIds.add(incidentGrpIds);
                 for (Integer groupIdx : incidentGrpIds) {
                     node2EdgeIds.get(groupIdx).add(edge2NodeIds.size() - 1);
                 }
                 edge2OriginNet.add(net);
+                edge2SourceNodeId.add(sourceGroupId);
             }
         }
 
@@ -268,6 +277,10 @@ abstract public class AbstractNetlist {
 
     public int getEdgeNum() {
         return edge2NodeIds.size();
+    }
+
+    public int getSrcNodeIdOfEdge(int edgeId) {
+        return edge2SourceNodeId.get(edgeId);
     }
 
     public int getLeafCellNumOfNode(int id) {

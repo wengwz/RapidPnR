@@ -164,15 +164,15 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
     }
 
     public static void main(String[] args) {
-        //Path inputGraphPath = Path.of("workspace/test/nvdla-tpw-cls.hgr").toAbsolutePath();
-        Path inputGraphPath = Path.of("workspace/test/blue-rdma-cls.hgr").toAbsolutePath();
+        Path inputGraphPath = Path.of("workspace/test/nvdla-tpw-cls.hgr").toAbsolutePath();
+        //Path inputGraphPath = Path.of("workspace/test/blue-rdma-cls.hgr").toAbsolutePath();
         HierarchicalLogger logger = HierarchicalLogger.createLogger("TestTritonPart", null, true);
 
         List<Double> weightFac = Arrays.asList(1.0);
         HyperGraph hyperGraph = HyperGraph.readGraphFromHmetisFormat(inputGraphPath, weightFac, weightFac);
 
         Path workDir = Path.of("workspace/test").toAbsolutePath();
-        Config config = new Config(2, 7101927, Arrays.asList(0.01), true, workDir);
+        Config config = new Config(2, 999, Arrays.asList(0.01), true, workDir);
         TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, hyperGraph);
         partitioner.run();
     }

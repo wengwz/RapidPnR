@@ -102,7 +102,7 @@ public class MultilevelIslandPlacer extends AbstractIslandPlacer {
             logger.info(String.format("The level of coarsening %d", coarseLevel));
             logger.info("Build coarsened hypergraph");
             coarserConfig.seed += coarseLevel;
-            curGraph = Coarser.coarsening(coarserConfig, curGraph, new HashSet<>());
+            curGraph = Coarser.coarsening(coarserConfig, curGraph);
             logger.info("Coarsened Hypergraph: \n" + curGraph.getHyperGraphInfo(false), true);
             coarseLevel++;
             if (coarseLevel > 200) {

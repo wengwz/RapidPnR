@@ -22,7 +22,6 @@ import com.xilinx.rapidwright.rapidpnr.utils.HierHyperGraph;
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
 import com.xilinx.rapidwright.rapidpnr.utils.StatisticsUtils;
-import com.xilinx.rapidwright.rapidpnr.partitioner.AbstractPartitioner;
 import com.xilinx.rapidwright.rapidpnr.partitioner.FMPartitioner;
 import com.xilinx.rapidwright.rapidpnr.partitioner.TritonPartitionWrapper;
 
@@ -72,8 +71,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         logger.info("Start initial island placement");
         Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
 
-        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config();
-        config.workDir = workDir;
+        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config(workDir);
 
         // perform partition in the first dimension
         TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, netlistGraph);
@@ -123,8 +121,8 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         logger.info("Start iterative min-cut-based placement");
         Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
 
-        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config();
-        config.workDir = workDir;
+        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config(workDir);
+
         // perform partition in the first dimension
         TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, netlistGraph);
         printHyperGraphInfo(netlistGraph);
@@ -221,9 +219,9 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
             printHyperGraphInfo(subGraph);
 
-            AbstractPartitioner.Config partConfig = new AbstractPartitioner.Config();
-            partConfig.imbFactors = Arrays.asList(0.08);
-            FMPartitioner fmPartitioner = new FMPartitioner(logger, partConfig, subGraph);
+            FMPartitioner.Config fmConfig = new FMPartitioner.Config();
+            fmConfig.imbFactors = Arrays.asList(0.08);
+            FMPartitioner fmPartitioner = new FMPartitioner(logger, fmConfig, subGraph);
             // fmPartitioner.setFixedNode(island2ClsIdMap[0][0], island2ClsIdMap[0][1]);
             // fmPartitioner.setFixedNode(island2ClsIdMap[1][0], island2ClsIdMap[1][1]);
 
@@ -248,8 +246,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
 
         // perform partition in the first dimension
-        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config();
-        config.workDir = workDir;
+        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config(workDir);
         if (designParams.getRandomSeed() != null) {
             config.randomSeed = designParams.getRandomSeed();
         }
@@ -778,27 +775,71 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         return Coordinate2D.of(index / gridDim.getY(), index % gridDim.getY());
     }
 
-    private HierHyperGraph convertNetlist2HyperGraph(AbstractNetlist netlist) {
-        HierHyperGraph netlistGraph = new HierHyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
-        //HyperGraph netlistGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0, 0.03));
+    // private HierHyperGraph convertNetlist2HyperGraph(AbstractNetlist netlist) {
+    //     HierHyperGraph netlistGraph = new HierHyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
+    //     //HyperGraph netlistGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0, 0.03));
 
-        for (int groupId = 0; groupId < netlist.getNodeNum(); groupId++) {
-            List<Double> weights = Arrays.asList((double) abstractNetlist.getLeafCellNumOfNode(groupId));
+    //     for (int groupId = 0; groupId < netlist.getNodeNum(); groupId++) {
+    //         List<Double> weights = Arrays.asList((double) abstractNetlist.getLeafCellNumOfNode(groupId));
+    //         netlistGraph.addNode(weights);
+    //     }
+
+    //     Map<Set<Integer>, List<Integer>> compressedEdges = compressAbstractEdges(abstractNetlist.edge2NodeIds);
+
+    //     for (Map.Entry<Set<Integer>, List<Integer>> entry : compressedEdges.entrySet()) {
+    //         Set<Integer> groupIds = entry.getKey();
+    //         //if (groupIds.size() > 4000) continue;
+    //         List<Integer> originEdgeIds = entry.getValue();
+
+    //         List<Double> weights = Arrays.asList((double) originEdgeIds.size());
+    //         int edgeId = netlistGraph.addEdge(groupIds, weights);
+    //         // int edgeId = netlistGraph.addEdge(groupIds, Arrays.asList(0.0, 0.0));
+    //         // List<Double> weights = Arrays.asList((double) originEdgeIds.size(), netlistGraph.getTotalNodeWeightsOfEdge(edgeId).get(0));
+    //         // netlistGraph.setEdgeWeights(edgeId, weights);
+    //     }
+    //     return netlistGraph;
+    // }
+
+    private HierHyperGraph convertNetlist2HyperGraph(AbstractNetlist netlist) {
+        logger.info("Start converting abstract netlist to hypergraph");
+        logger.newSubStep();
+        HierHyperGraph netlistGraph = new HierHyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
+        
+        for (int nodeId = 0; nodeId < netlist.getNodeNum(); nodeId++) {
+            List<Double> weights = Arrays.asList((double) abstractNetlist.getLeafCellNumOfNode(nodeId));
             netlistGraph.addNode(weights);
         }
 
         Map<Set<Integer>, List<Integer>> compressedEdges = compressAbstractEdges(abstractNetlist.edge2NodeIds);
-
         for (Map.Entry<Set<Integer>, List<Integer>> entry : compressedEdges.entrySet()) {
-            Set<Integer> groupIds = entry.getKey();
+
+            Set<Integer> nodeIds = entry.getKey();
             List<Integer> originEdgeIds = entry.getValue();
 
-            List<Double> weights = Arrays.asList((double) originEdgeIds.size());
-            int edgeId = netlistGraph.addEdge(groupIds, weights);
-            // int edgeId = netlistGraph.addEdge(groupIds, Arrays.asList(0.0, 0.0));
-            // List<Double> weights = Arrays.asList((double) originEdgeIds.size(), netlistGraph.getTotalNodeWeightsOfEdge(edgeId).get(0));
-            // netlistGraph.setEdgeWeights(edgeId, weights);
+            int edgeDegree = nodeIds.size();
+
+            if (edgeDegree <= designParams.getIgnoreEdgeDegree()) {
+                List<Double> weights = Arrays.asList((double) originEdgeIds.size());
+                netlistGraph.addEdge(nodeIds, weights);
+
+            } else {
+                for (int edgeId : originEdgeIds) {
+                    logger.info("Splitting hyperedge-" + edgeId + " with degree-" + edgeDegree);
+                    int srcNodeId = abstractNetlist.getSrcNodeIdOfEdge(edgeId);
+
+                    for (int nodeId : nodeIds) {
+                        if (nodeId != srcNodeId && !netlistGraph.hasConnection(nodeId, srcNodeId)) {
+                            List<Double> weights = Arrays.asList(0.0);
+                            netlistGraph.addEdge(new HashSet<>(Arrays.asList(nodeId, srcNodeId)), weights);
+                        }
+                    }
+
+                }
+            }
         }
+
+        logger.endSubStep();
+        logger.info("Complete converting abstract netlist to hypergraph");
         return netlistGraph;
     }
 

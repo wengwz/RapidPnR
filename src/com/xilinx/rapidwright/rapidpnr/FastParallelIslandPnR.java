@@ -83,7 +83,6 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         subTimer = runtimeTrackerTree.createRuntimeTracker("delay predictor", rootTimerName);
         subTimer.start();
         timingPredictor = new SimpleTimingPredictor(logger, netlistDB);
-        debugTimingPred();
         subTimer.stop();
         logger.info(String.format("Complete building simple timing predictor in %.2f sec", subTimer.getTimeInSec()));
 

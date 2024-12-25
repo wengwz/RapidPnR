@@ -45,6 +45,7 @@ public class DesignParams {
     private Integer randomSeed = null;
     private Path extIslandPlacerPath;
     private Path islandPlaceResPath = null;
+    private Integer ignoreEdgeDegree = Integer.MAX_VALUE;
 
     // Physical Implementation Parameters
     private Boolean fullRouteMerge = false;
@@ -76,6 +77,7 @@ public class DesignParams {
         public Double imbalanceFac;
         public String extIslandPlacerPath;
         public String islandPlaceResPath;
+        public Integer ignoreEdgeDegree;
 
         public Boolean fullRouteMerge;
         public Integer boundaryNeighborSize;
@@ -167,6 +169,10 @@ public class DesignParams {
 
             if (params.imbalanceFac != null) {
                 this.imbalanceFac = params.imbalanceFac;
+            }
+
+            if (params.ignoreEdgeDegree != null) {
+                this.ignoreEdgeDegree = params.ignoreEdgeDegree;
             }
 
             // set parameters related with Physical Implementation
@@ -286,6 +292,10 @@ public class DesignParams {
 
     public Double getImbalanceFac() {
         return imbalanceFac;
+    }
+
+    public int getIgnoreEdgeDegree() {
+        return ignoreEdgeDegree;
     }
 
     public boolean isFullRouteMerge() {

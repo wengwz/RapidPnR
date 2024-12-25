@@ -297,6 +297,10 @@ public class NetlistDatabase {
         return originNetlist;
     }
 
+    public boolean isStaticNet(EDIFNet net) {
+        return net.isGND() || net.isVCC();
+    }  
+
     public boolean isGlobalClockNet(EDIFNet net) {
         return globalClockNets.contains(net);
     }
@@ -311,6 +315,14 @@ public class NetlistDatabase {
 
     public boolean isIllegalNet(EDIFNet net) {
         return illegalNets.contains(net);
+    }
+
+    public boolean isSpecialNet(EDIFNet net) {
+        return isGlobalClockNet(net) || 
+               isGlobalResetNet(net) || 
+                    isIgnoreNet(net) || 
+                   isIllegalNet(net) || 
+                    isStaticNet(net);                 
     }
 
     public boolean isStaticSourceCellInst(EDIFCellInst cellInst) {

@@ -1,5 +1,6 @@
 package com.xilinx.rapidwright.rapidpnr;
 
+import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
 
 public class NameConvention {
@@ -64,6 +65,10 @@ public class NameConvention {
 
     public static String getHoriBoundaryInstName(Coordinate2D loc) {
         return getHoriBoundaryInstName(loc.getX(), loc.getY());
+    }
+
+    public static String getRepCellName(EDIFCellInst originCell, Coordinate2D loc) {
+        return String.format("%s_%d_%d", originCell.getName(), loc.getX(), loc.getY());
     }
 
     public static String addSuffixDcp(String name) {

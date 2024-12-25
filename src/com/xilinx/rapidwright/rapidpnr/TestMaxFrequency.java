@@ -16,7 +16,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
-import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.RuntimeTracker;
@@ -314,20 +313,23 @@ public class TestMaxFrequency {
     }
 
     public static void main(String[] args) {
-        Path jsonFilePath = Path.of("workspace/report", "max-freq-runtime.json");
-        Boolean isParallel = false;
+        Path jsonFilePath = Path.of("workspace/report", "max-freq-no-runtime.json");
+        Boolean isParallel = true;
 
         TestMaxFrequency tester = new TestMaxFrequency(jsonFilePath);
 
-        // tester.addBenchmark("minimap-small", 4.0, 3.6, 0.2, "ap_clk");
-        // tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "CLK");
-        // tester.addBenchmark("tensil", 4.2, 3.6, 0.2, "clock");
-        // tester.addBenchmark("ispd16-fpga04", 9.8, 9.6, 0.2, "clk1");
+        //tester.addBenchmark("spam-filter", 4.0, 4.0, 0.1, "ap_clk");
+        //tester.addBenchmark("fireflyv2", 3.2, 3.2, 0.1, "clk");
 
-        tester.addBenchmark("minimap-small", 4.0, 4.0, 0.2, "ap_clk");
-        tester.addBenchmark("toooba", 4.0, 4.0, 0.2, "CLK");
-        tester.addBenchmark("tensil", 4.0, 4.0, 0.2, "clock");
-        tester.addBenchmark("ispd16-fpga04", 10.0, 10.0, 0.2, "clk1");
+        //tester.addBenchmark("minimap-small", 3.21, 3.1, 0.1, "ap_clk");
+        // tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "CLK");
+        //tester.addBenchmark("tensil", 7.11, 6.9, 0.2, "clock");
+        //tester.addBenchmark("ispd16-fpga04", 8.61, 8.2, 0.2, "clk1");
+
+        // tester.addBenchmark("minimap-small", 4.21, 3.8, 0.4, "ap_clk");
+        //tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "CLK");
+        // tester.addBenchmark("tensil", 7.4, 7.4, 0.2, "clock");
+        // tester.addBenchmark("ispd16-fpga04", 9.5, 9.4, 0.2, "clk1");
 
         // tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "clk");
         // tester.addBenchmark("ispd16-fpga04", 11.0, 10.0, 0.5, "clk1");
