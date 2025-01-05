@@ -12,10 +12,6 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import org.capnproto.PrimitiveList.Int;
-
-import com.google.ortools.algorithms.main;
-
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.FileReader;
@@ -38,7 +34,15 @@ public class HyperGraph {
     protected List<List<Integer>> node2Edges;
     protected List<List<Double>> node2Weights;
 
+    public HyperGraph(int nodeWeightDim, int edgeWeightDim) {
+        setupGraph(Collections.nCopies(nodeWeightDim, 1.0), Collections.nCopies(edgeWeightDim, 1.0));
+    }
+
     public HyperGraph(List<Double> nodeWeightFactor, List<Double> edgeWeightFactor) {
+        setupGraph(nodeWeightFactor, edgeWeightFactor);
+    }
+
+    private void setupGraph(List<Double> nodeWeightFactor, List<Double> edgeWeightFactor) {
         this.nodeNum = 0;
         this.edgeNum = 0;
 
@@ -80,6 +84,7 @@ public class HyperGraph {
 
     public int addEdge(Set<Integer> nodeIds, List<Double> weights) {
         assert weights.size() == edgeWeightDim;
+        assert nodeIds.size() > 1;
 
         edge2Nodes.add(new ArrayList<>(nodeIds));
         edge2Weights.add(new ArrayList<>(weights));
@@ -94,13 +99,36 @@ public class HyperGraph {
     }
 
     public void setNodeWeightsFactor(List<Double> weightFactor) {
-        assert weightFactor.size() == nodeWeightDim;
+        assert weightFactor.size() > 0;
         nodeWeightFactor = new ArrayList<>(weightFactor);
+        nodeWeightDim = weightFactor.size();
+
+        for (int nodeId = 0; nodeId < getNodeNum(); nodeId++) {
+            List<Double> weights = node2Weights.get(nodeId);
+            int originWeightDim = weights.size();
+            if (originWeightDim < nodeWeightDim) {
+                weights.addAll(Collections.nCopies(nodeWeightDim - originWeightDim, 1.0));
+            } else if (originWeightDim > nodeWeightDim) {
+                weights = weights.subList(0, nodeWeightDim);
+            }
+            
+        }
     }
 
     public void setEdgeWeightsFactor(List<Double> weightFactor) {
-        assert weightFactor.size() == edgeWeightDim;
+        assert weightFactor.size() > 0;
         edgeWeightFactor = new ArrayList<>(weightFactor);
+        edgeWeightDim = weightFactor.size();
+
+        for (int edgeId = 0; edgeId < getEdgeNum(); edgeId++) {
+            List<Double> weights = edge2Weights.get(edgeId);
+            int originWeightDim = weights.size();
+            if (originWeightDim < edgeWeightDim) {
+                weights.addAll(Collections.nCopies(edgeWeightDim - originWeightDim, 1.0));
+            } else if (originWeightDim > edgeWeightDim) {
+                weights = weights.subList(0, edgeWeightDim);
+            }
+        }
     }
 
     // getters
@@ -173,6 +201,34 @@ public class HyperGraph {
         }
 
         return blockSizes;
+    }
+
+    public List<List<Double>> getBlockCutSize(List<Integer> partResult) {
+        assert partResult.size() == nodeNum;
+
+        Integer maxBlockId = Collections.max(partResult);
+        List<List<Double>> blockCutSizes = new ArrayList<>();
+        for (int i = 0; i <= maxBlockId; i++) {
+            blockCutSizes.add(new ArrayList<Double>(Collections.nCopies(edgeWeightDim, 0.0)));
+        }
+
+        for (int edgeId = 0; edgeId < edgeNum; edgeId++) {
+            Set<Integer> blockIds = new HashSet<>();
+            for (int nodeId : edge2Nodes.get(edgeId)) {
+                int blockId = partResult.get(nodeId);
+                if (blockId != -1) {
+                    blockIds.add(blockId);
+                }
+            }
+
+            if (blockIds.size() > 1) {
+                for (int blockId : blockIds) {
+                    accuWeights(blockCutSizes.get(blockId), edge2Weights.get(edgeId));
+                }
+            }
+        }
+
+        return blockCutSizes;
     }
 
     public boolean isCutEdge(int edgeId, List<Integer> partResult) {
@@ -257,6 +313,24 @@ public class HyperGraph {
         return new ArrayList<>(neighbors);
     }
 
+    public boolean hasConnection(int node1, int node2) {
+        for (int edgeId : node2Edges.get(node1)) {
+            if (edge2Nodes.get(edgeId).contains(node2)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public List<Double> getMaxNodeWeight() {
+        List<Double> maxNodeWeights = new ArrayList<>(Collections.nCopies(nodeWeightDim, 0.0));
+        for (int nodeId = 0; nodeId < nodeNum; nodeId++) {
+            List<Double> nodeWeights = node2Weights.get(nodeId);
+            maxNodeWeights = VecOps.getMax(maxNodeWeights, nodeWeights);
+        }
+        return maxNodeWeights;
+    }
+
     public List<Double> getTotalEdgeWeight() {
         List<Double> totalEdgeWeights = new ArrayList<>(Collections.nCopies(edgeWeightDim, 0.0));
         for (int edgeId = 0; edgeId < edgeNum; edgeId++) {
@@ -284,6 +358,41 @@ public class HyperGraph {
         node2Dist.set(nodeId, 0);
 
         expandQueue.add(nodeId);
+
+        while(!expandQueue.isEmpty()) {
+            int curNodeId = expandQueue.poll();
+
+            for (int nNodeId : getNeighborsOfNode(curNodeId)) {
+                if (node2Dist.get(nNodeId) == -1) {
+                    int dist = node2Dist.get(curNodeId) + 1;
+
+                    if (dist <= maxDistance) {
+                        if (dist2Nodes.size() <= dist) {
+                            dist2Nodes.add(new ArrayList<>());
+                        }
+                        dist2Nodes.get(dist).add(nNodeId);
+                        node2Dist.set(nNodeId, dist);
+                        expandQueue.add(nNodeId);
+                    }
+                }
+            }
+
+        }
+        
+        return dist2Nodes;
+    }
+
+    public List<List<Integer>> getDistance2Nodes(List<Integer> nodeIds, Integer maxDistance) {
+        List<List<Integer>> dist2Nodes = new ArrayList<>();
+        List<Integer> node2Dist = new ArrayList<>(Collections.nCopies(getNodeNum(), -1));
+        Queue<Integer> expandQueue = new LinkedList<>();
+
+        dist2Nodes.add(nodeIds);
+        for (int nodeId : nodeIds) {
+            assert nodeId >= 0 && nodeId < getNodeNum();
+            node2Dist.set(nodeId, 0);
+            expandQueue.add(nodeId);
+        }
 
         while(!expandQueue.isEmpty()) {
             int curNodeId = expandQueue.poll();
@@ -352,7 +461,7 @@ public class HyperGraph {
             }
 
             if (verbose) {
-                distInfo = StatisticsUtils.getValueDistInfo(nodeWeights, 10);
+                distInfo = StatisticsUtils.getValueDistInfo(nodeWeights, 6);
                 distInfo = HierarchicalLogger.insertAtHeadOfEachLine("  ", distInfo);
                 graphInfo += String.format("Node weight distribution in dim-%d:\n%s\n", dim, distInfo);
             } else {

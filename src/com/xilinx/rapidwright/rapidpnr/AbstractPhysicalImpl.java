@@ -118,7 +118,7 @@ abstract public class AbstractPhysicalImpl {
         gridDim = designParams.getGridDim();
         vertBoundaryDim = designParams.getVertBoundaryDim();
         horiBoundaryDim = designParams.getHoriBoundaryDim();
-        pblockName2RangeMap = designParams.getPblockName2RangeMap();
+        pblockName2RangeMap = designParams.getPblockName2Range();
 
         clkName2PeriodMap = designParams.getClkPortName2PeriodMap();
 
@@ -140,8 +140,8 @@ abstract public class AbstractPhysicalImpl {
         buildCellInst2IslandMap();
 
         // Build net to boundary map
-        buildNet2BoundaryMap();
-        //buildNet2BoundaryMapWithCellRep();
+        //buildNet2BoundaryMap();
+        buildNet2BoundaryMapWithCellRep();
 
         // Build cellInst to boundary map
         this.hasBoundaryCell = hasBoundaryCell;

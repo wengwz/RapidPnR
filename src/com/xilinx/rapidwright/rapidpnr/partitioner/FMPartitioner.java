@@ -39,7 +39,7 @@ public class FMPartitioner extends AbstractPartitioner {
 
     private Config config;
     // partition states
-    private SortedList<Double> node2MoveGain;
+    // private SortedList<Double> node2MoveGain;
     
     public FMPartitioner(HierarchicalLogger logger, Config config, HyperGraph hyperGraph) {
         super(logger, config, hyperGraph);
@@ -58,8 +58,6 @@ public class FMPartitioner extends AbstractPartitioner {
         } else {
             randomInitialPart();
         }
-
-        setupNode2MoveGain(node2BlockId);
 
         vertexBasedRefine();
 
@@ -89,12 +87,11 @@ public class FMPartitioner extends AbstractPartitioner {
         logger.info("Start random shuffling and greedy initial partition");
 
         // random shuffling nodes
-        Double totalNodeWeight = hyperGraph.getNodeWeightsSum(hyperGraph.getTotalNodeWeight());
-        Double largeNodeWeight = totalNodeWeight * config.extremeLargeRatio;
+        List<Double> largeNodeWeight = vecMulScalar(hyperGraph.getTotalNodeWeight(), config.extremeLargeRatio);
         List<Integer> randomNodeSeq = new ArrayList<>();
         List<Integer> shuffleNodes = new ArrayList<>();
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            if (hyperGraph.getNodeWeightsSum(nodeId) > largeNodeWeight) {
+        for (int nodeId : getWeightSortedNodeIds()) {
+            if (!vecLessEq(hyperGraph.getWeightsOfNode(nodeId), largeNodeWeight)) {
                 randomNodeSeq.add(nodeId);
             } else {
                 shuffleNodes.add(nodeId);
@@ -187,7 +184,7 @@ public class FMPartitioner extends AbstractPartitioner {
     protected void vertexBasedRefine() {
         logger.info("Start vertex-based cut size refinement");
         int iterIdx = 0;
-
+        SortedList<Double> node2MoveGain = setupNode2MoveGain(node2BlockId);
         int maxNoGainMoveNum = (int) (config.passEarlyExitRatio * hyperGraph.getNodeNum());
         //logger.info("Maximum no gain move before early exit: " + maxNoGainMoveNum);
 
@@ -227,7 +224,7 @@ public class FMPartitioner extends AbstractPartitioner {
                             maxPassGain = passGain;
                             maxPassGainId = trialMoveNodesSeq.size();
                         }
-                        moveNode(nodeId, toBlockId);
+                        moveNode(nodeId, toBlockId, node2MoveGain);
                         isNodeMoved.set(nodeId, true);
                         trialMoveNodesSeq.add(nodeId);
                         hasLegalMove = true;
@@ -250,7 +247,7 @@ public class FMPartitioner extends AbstractPartitioner {
                 int nodeId = trialMoveNodesSeq.get(i);
                 int fromBlockId = node2BlockId.get(nodeId);
                 int toBlockId = getOppositeBlkId(fromBlockId);
-                moveNode(nodeId, toBlockId);
+                moveNode(nodeId, toBlockId, node2MoveGain);
             }
 
             if (maxPassGain <= 0) {
@@ -268,8 +265,8 @@ public class FMPartitioner extends AbstractPartitioner {
         logger.info("Complete vertex-based cut size refinement");
     }
 
-    @Override
-    protected void moveNode(int nodeId, int toBlockId) {
+
+    protected void moveNode(int nodeId, int toBlockId, SortedList<Double> node2MoveGain) {
         int fromBlkId = node2BlockId.get(nodeId);
         if (fromBlkId == toBlockId) {
             return;
@@ -286,13 +283,14 @@ public class FMPartitioner extends AbstractPartitioner {
         cutSize -= node2MoveGain.getValueOf(nodeId);
 
         // update node2GainMap
-        updateNodeGain(nodeId, toBlockId);
+
+        updateNodeGain(nodeId, toBlockId, node2MoveGain);
 
         // update node2BlockId
         node2BlockId.set(nodeId, toBlockId);
     }
 
-    protected void updateNodeGain(int nodeId, int toBlockId) {
+    protected void updateNodeGain(int nodeId, int toBlockId, SortedList<Double> node2MoveGain) {
         int fromBlockId = node2BlockId.get(nodeId);
         if (fromBlockId == toBlockId) {
             return;
@@ -353,7 +351,7 @@ public class FMPartitioner extends AbstractPartitioner {
         return blkId == 0 ? 1 : 0;
     }
 
-    protected void setupNode2MoveGain(List<Integer> partResults) {
+    protected SortedList<Double> setupNode2MoveGain(List<Integer> partResults) {
         List<Double> node2Gain = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeNum(), 0.0));
 
         for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
@@ -390,7 +388,16 @@ public class FMPartitioner extends AbstractPartitioner {
             }
         }
 
-        node2MoveGain = new SortedList<Double>(node2Gain, true);
+        return new SortedList<Double>(node2Gain, true);
+    }
+
+    protected List<Integer> getWeightSortedNodeIds() {
+        List<Double> nodeWeights = new ArrayList<>();
+        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+            nodeWeights.add(hyperGraph.getNodeWeightsSum(nodeId));
+        }
+        SortedList<Double> sortedNodeWeights = new SortedList<>(nodeWeights, true);
+        return sortedNodeWeights.getSortedIndices();
     }
 
     public static void main(String[] args) {

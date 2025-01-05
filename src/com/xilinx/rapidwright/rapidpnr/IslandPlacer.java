@@ -115,7 +115,7 @@ public class IslandPlacer extends AbstractIslandPlacer{
         IslandPlacerInputJson inputJson = new IslandPlacerInputJson();
         inputJson.gridWidth = gridDim.getX();
         inputJson.gridHeight = gridDim.getY();
-        inputJson.gridLimit = gridLimit;
+        //inputJson.gridLimit = gridLimit;
 
         inputJson.totalGroupNum = abstractNetlist.getNodeNum();
         List<IslandPlacerInputJson.AbstractGroup> abstractGroups = new ArrayList<>();

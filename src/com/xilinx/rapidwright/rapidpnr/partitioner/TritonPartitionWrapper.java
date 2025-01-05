@@ -20,6 +20,10 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
     public static class Config extends AbstractConfig {
         public Path workDir;
 
+        public Config() {
+            workDir = Path.of("triton_part");
+        }
+
         public Config(Path workDir) {
             super();
             this.workDir = workDir;
@@ -53,6 +57,8 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
     public List<Integer> run() {
         logger.info("Start running TritonPart in OpenROAD");
 
+        logger.info(String.format("Input HyperGraph Info:\n%s", hyperGraph.getHyperGraphInfo(true)), true);
+
         // write input files for TritonPart
         hyperGraph.saveGraphInHmetisFormat(config.workDir.resolve(GRAPH_FILE_NAME));
         writeOpenroadTclCmdFile();
@@ -77,13 +83,14 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
 
         // read partition results
         List<Integer> partResult = readPartitionResults();
+        assert checkAndUpdatePartResult(partResult): "Fail to check and update partition results";
 
-        // print statistics about tpartitio results
-        logger.info(String.format("Complete running TritonPart in OpenROAD(Time Elapsed: %.2f sec)", timer.getTimeInSec()));
-
+        // print statistics about partitio results
         setPartResult(partResult, false);
 
         printPartitionInfo();
+
+        logger.info(String.format("Complete running TritonPart in OpenROAD(Time Elapsed: %.2f sec)", timer.getTimeInSec()));
 
         return partResult;
     }
@@ -161,6 +168,40 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
         String dockerOptions = "run --rm -v `pwd`:/workspace -w /workspace";
         String dockerOperation = OPENROAD_CMD + " " + TCL_FILE_NAME;
         return dockerCommand + " " + dockerOptions + " " + imageName + " " + dockerOperation;
+    }
+
+    private boolean checkAndUpdatePartResult(List<Integer> partResult) {
+        // check fixed nodes constraints and update partition results
+        logger.info("Start checking fixed nodes constraints and update results");
+        assert partResult.size() == hyperGraph.getNodeNum();
+
+        if (config.blockNum > 2 || fixedNodes.size() == 0) {
+            return true; // only support checking 2-way partition with fixed nodes
+        }
+
+        Boolean isPartResultFlip = null;
+        for (int nodeId : fixedNodes.keySet()) {
+            int fixedBlkId = fixedNodes.get(nodeId);
+            int actualBlkId = partResult.get(nodeId);
+            if (isPartResultFlip == null) {
+                isPartResultFlip = fixedBlkId != actualBlkId;
+            }
+
+            if (isPartResultFlip != (fixedBlkId != actualBlkId)) {
+                return false;
+            }
+        }
+
+        if (isPartResultFlip) {
+            logger.info("Flip partition results due to fixed nodes constraints");
+            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+                int blkId = partResult.get(nodeId);
+                partResult.set(nodeId, blkId == 0 ? 1 : 0);
+            }
+        }
+    
+        logger.info("Complete checking fixed nodes constraints and update results");
+        return true;
     }
 
     public static void main(String[] args) {

@@ -48,6 +48,7 @@ public class AbstractApplication {
     }
 
     public void setupNetlistDatabase() {
+        logger.infoHeader("Setup Netlist Database");
         netlistDatabase = new NetlistDatabase(logger, inputDesign, designParams);
         
         logger.info("Information of netlist database:");

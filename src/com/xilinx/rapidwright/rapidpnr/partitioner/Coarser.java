@@ -11,9 +11,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
-import org.capnproto.PrimitiveList.Int;
-
 import com.xilinx.rapidwright.rapidpnr.utils.HierHyperGraph;
+import com.xilinx.rapidwright.rapidpnr.utils.VecOps;
 
 abstract public class Coarser {
 
@@ -28,6 +27,7 @@ abstract public class Coarser {
         public double maxNodeSizeRatio = 1.0;
         public List<Integer> partResult = null;
         public Set<Integer> dontTouchNodes = null;
+        public boolean disableHeteroNode = false;
 
         @Override
         public String toString() {
@@ -45,6 +45,7 @@ abstract public class Coarser {
             this.maxNodeSizeRatio = config.maxNodeSizeRatio;
             this.partResult = config.partResult;
             this.dontTouchNodes = config.dontTouchNodes;
+            this.disableHeteroNode = config.disableHeteroNode;
         }
 
         public Config(int seed) {
@@ -196,30 +197,32 @@ abstract public class Coarser {
             sortedEdgeIds.add(edgeId);
         }
         Comparator<Integer> edgeIdxCmp = (idx1, idx2) -> {
-            int edgeCmp = (int) (hyperGraph.getEdgeWeightsSum(idx2) - hyperGraph.getEdgeWeightsSum(idx1));
-            if (edgeCmp == 0) {
-                edgeCmp = hyperGraph.getDegreeOfEdge(idx1) - hyperGraph.getDegreeOfEdge(idx2);
-            }
+            int edgeCmp = (int) (hyperGraph.getDegreeOfEdge(idx2) - hyperGraph.getDegreeOfEdge(idx1));
+            // if (edgeCmp == 0) {
+            //     edgeCmp = hyperGraph.getDegreeOfEdge(idx1) - hyperGraph.getDegreeOfEdge(idx2);
+            // }
             return edgeCmp;
         };
         sortedEdgeIds.sort(edgeIdxCmp);
 
-        // for (int edgeId : sortedEdgeIds) {
-        //     System.out.println("Edge-" + edgeId + " weight: " + hyperGraph.getEdgeWeightsSum(edgeId) + " degree: " + hyperGraph.getDegreeOfEdge(edgeId));
-        // }
+        List<Double> nodeSizeLimit = vecMulScalar(hyperGraph.getTotalNodeWeight(), config.maxNodeSizeRatio);
 
         List<Integer> unClusteredEdges = new ArrayList<>();
         for (int edgeId : sortedEdgeIds) {
             List<Integer> nodesOfEdge = hyperGraph.getNodesOfEdge(edgeId);
             boolean hasMatchedNodes = false;
+
+            List<Double> clsSize = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeWeightDim(), 0.0));
             for (int nodeId : nodesOfEdge) {
                 if (config.dontTouchNodes.contains(nodeId) || node2Cluster.get(nodeId) != -1) {
                     hasMatchedNodes = true;
                     break;
                 }
+                VecOps.accu(clsSize, hyperGraph.getWeightsOfNode(nodeId));
             }
+            boolean isClsSizeLegal = VecOps.lessEq(clsSize, nodeSizeLimit);
 
-            if (!hasMatchedNodes) {
+            if (!hasMatchedNodes && isClsSizeLegal) {
                 int clusterId = cluster2Nodes.size();
                 cluster2Nodes.add(nodesOfEdge);
                 for (int nodeId : nodesOfEdge) {
@@ -257,6 +260,13 @@ abstract public class Coarser {
             node2Cluster.set(nodeId, clusterId);
         }
 
+        // for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+        //     if (node2Cluster.get(nodeId) != -1) continue;
+        //     int clusterId = cluster2Nodes.size();
+        //     cluster2Nodes.add(new ArrayList<>(Arrays.asList(nodeId)));
+        //     node2Cluster.set(nodeId, clusterId);
+        // }
+
         // check if all nodes are clustered
         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
             assert node2Cluster.get(nodeId) != -1;
@@ -275,22 +285,26 @@ abstract public class Coarser {
         }
 
         Random random = new Random(config.seed);
-        double totalNodeSize = hyperGraph.getNodeWeightsSum(hyperGraph.getTotalNodeWeight());
-        double maxClsSize = totalNodeSize * config.maxNodeSizeRatio;
+        List<Double> nodeSizeLimit = vecMulScalar(hyperGraph.getTotalNodeWeight(), config.maxNodeSizeRatio);
         
         List<Integer> randomNodeIdxSeq = new ArrayList<>();
-        Set<Integer> overSizeNodes = new HashSet<>();
+        Set<Integer> skipNodes = new HashSet<>();
 
         List<List<Integer>> cluster2Nodes = new ArrayList<>();
-        List<Double> cluster2Size = new ArrayList<>();
+        List<List<Double>> cluster2Size = new ArrayList<>();
         List<Integer> node2Cluster = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeNum(), -1));
 
         for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
             if (config.dontTouchNodes.contains(i)) continue;
-            if (hyperGraph.getNodeWeightsSum(i) > maxClsSize) {
-                overSizeNodes.add(i);
+            if (allGreaterEq(hyperGraph.getWeightsOfNode(i), nodeSizeLimit)) {
+                skipNodes.add(i);
                 continue;
             }
+            if (config.disableHeteroNode && isHeteroNode(hyperGraph, i)) {
+                skipNodes.add(i);
+                continue;
+            }
+
             randomNodeIdxSeq.add(i);
         }
 
@@ -300,14 +314,18 @@ abstract public class Coarser {
         for (int nodeId : randomNodeIdxSeq) {
             if (node2Cluster.get(nodeId) != -1) continue;
 
+            List<Double> nodeSize = hyperGraph.getWeightsOfNode(nodeId);
             Map<Integer, Double> neighborNode2Weight = new HashMap<>();
 
             for (int edgeId : hyperGraph.getEdgesOfNode(nodeId)) {
                 for (int nNodeId : hyperGraph.getNodesOfEdge(edgeId)) {
                     if (nNodeId == nodeId) continue;
                     if (config.dontTouchNodes.contains(nNodeId)) continue;
-                    if (overSizeNodes.contains(nNodeId)) continue; // skip very large nodes
+                    if (skipNodes.contains(nNodeId)) continue; // skip very large nodes
                     if (!config.isInternalNodes(nodeId, nNodeId)) continue;
+
+                    if (config.disableHeteroNode && !isHomoNode(hyperGraph, nodeId, nNodeId)) continue;
+
 
                     double weight = hyperGraph.getEdgeWeightsSum(edgeId) / (hyperGraph.getDegreeOfEdge(edgeId) - 1);
 
@@ -329,26 +347,31 @@ abstract public class Coarser {
             int maxWeightNodeId = -1;
             double maxWeight = 0.0;
             for (int nNodeId : neighborNode2Weight.keySet()) {
-                // skip if the neighbor node is already in a very large cluster
+                List<Double> size = hyperGraph.getWeightsOfNode(nNodeId);
                 int clusterId = node2Cluster.get(nNodeId);
-                if (clusterId != -1 && cluster2Size.get(clusterId) > maxClsSize) continue;
+                if (clusterId != -1) {
+                    size = cluster2Size.get(clusterId);
+                }
+                List<Double> accuSize = vecAdd(size, nodeSize);
+
+                // skip if clustering result in oversized node
+                if (!allLessEq(accuSize, nodeSizeLimit)) continue;
 
                 if (neighborNode2Weight.get(nNodeId) > maxWeight) {
                     maxWeight = neighborNode2Weight.get(nNodeId);
                     maxWeightNodeId = nNodeId;
                 }
             }
-            //assert maxWeightNodeId != -1;
+            
             if (maxWeightNodeId == -1) {
                 continue;
             }
 
             if (node2Cluster.get(maxWeightNodeId) != -1) {
                 int clusterId = node2Cluster.get(maxWeightNodeId);
-                double nodeSize = hyperGraph.getNodeWeightsSum(nodeId);
 
                 cluster2Nodes.get(clusterId).add(nodeId);
-                cluster2Size.set(clusterId, cluster2Size.get(clusterId) + nodeSize);
+                vecAccu(cluster2Size.get(clusterId), nodeSize);
                 node2Cluster.set(nodeId, clusterId);
 
                 matchedNodesNum += 1;
@@ -356,13 +379,12 @@ abstract public class Coarser {
                 // merge node
                 int clusterId = cluster2Nodes.size();
                 List<Integer> mergedNodes = new ArrayList<>(Arrays.asList(nodeId, maxWeightNodeId));
-                double nodeWeight = hyperGraph.getNodeWeightsSum(nodeId);
-                nodeWeight += hyperGraph.getNodeWeightsSum(maxWeightNodeId);
+                List<Double> clusterSize = vecAdd(nodeSize, hyperGraph.getWeightsOfNode(maxWeightNodeId));
 
                 node2Cluster.set(nodeId, clusterId);
                 node2Cluster.set(maxWeightNodeId, clusterId);
                 cluster2Nodes.add(mergedNodes);
-                cluster2Size.add(nodeWeight);
+                cluster2Size.add(clusterSize);
                 matchedNodesNum += 2;
             }
         }
@@ -375,6 +397,77 @@ abstract public class Coarser {
         }
 
         return hyperGraph.createClusteredChildGraph(cluster2Nodes, false);
+    }
+
+    public static boolean isHeteroNode(HierHyperGraph graph, int nodeId) {
+        int nonZeroCnt = 0;
+        for (double weight : graph.getWeightsOfNode(nodeId)) {
+            if (weight > 0) {
+                nonZeroCnt += 1;
+            }
+        }
+        return nonZeroCnt > 1;
+    }
+
+    public static boolean isHomoNode(HierHyperGraph graph, int node1, int node2) {
+        List<Double> node1Weights = graph.getWeightsOfNode(node1);
+        List<Double> node2Weights = graph.getWeightsOfNode(node2);
+
+        for (int i = 0; i < node1Weights.size(); i++) {
+            if (node1Weights.get(i) == 0 && node2Weights.get(i) > 0) {
+                return false;
+            }
+
+            if (node1Weights.get(i) > 0 && node2Weights.get(i) == 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static boolean allLessEq(List<Double> vec1, List<Double> vec2) {
+        assert vec1.size() == vec2.size();
+        for (int i = 0; i < vec1.size(); i++) {
+            if (vec1.get(i) > vec2.get(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean allGreaterEq(List<Double> vec1, List<Double> vec2) {
+        assert vec1.size() == vec2.size();
+        for (int i = 0; i < vec1.size(); i++) {
+            if (vec1.get(i) < vec2.get(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static List<Double> vecMulScalar(List<Double> vec, double scalar) {
+        List<Double> result = new ArrayList<>();
+        for (double val : vec) {
+            result.add(val * scalar);
+        }
+        return result;
+    }
+
+    public static List<Double> vecAdd(List<Double> vec1, List<Double> vec2) {
+        assert vec1.size() == vec2.size();
+        List<Double> result = new ArrayList<>();
+        for (int i = 0; i < vec1.size(); i++) {
+            result.add(vec1.get(i) + vec2.get(i));
+        }
+        return result;
+    }
+
+    public static void vecAccu(List<Double> vec1, List<Double> vec2) {
+        assert vec1.size() == vec2.size();
+        for (int i = 0; i < vec1.size(); i++) {
+            vec1.set(i, vec1.get(i) + vec2.get(i));
+        }
     }
 
 }

@@ -9,10 +9,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import com.xilinx.rapidwright.design.Design;
+import com.xilinx.rapidwright.design.Unisim;
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
 import com.xilinx.rapidwright.edif.EDIFLibrary;
 import com.xilinx.rapidwright.edif.EDIFNet;
+import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
 import com.xilinx.rapidwright.edif.EDIFPortInst;
 
@@ -181,6 +184,10 @@ public class NetlistUtils {
         return sinkPortInsts;
     }
 
+    public static int getFanoutOfNet(EDIFNet net) {
+        return net.getPortInsts().size() - 1;
+    } 
+
     public static List<EDIFPortInst> getOutPortInstsOf(EDIFCellInst cellInst) {
         List<EDIFPortInst> outputPortInsts = new ArrayList<>();
         for (EDIFPortInst portInst : cellInst.getPortInsts()) {
@@ -290,11 +297,12 @@ public class NetlistUtils {
                 Integer commonNetNum = neighbor.getValue();
                 
                 Integer packThreshold = inputPorts.size();
-                if (cellTypeName.equals("LUT3")) {
+                if (cellTypeName.equals("LUT3") || cellTypeName.equals("LUT2")) {
                     packThreshold = 2;
-                } else if (cellTypeName.equals("LUT2")) {
-                    packThreshold = 1;
                 }
+                //else if (cellTypeName.equals("LUT2")) {
+                //     packThreshold = 1;
+                // }
                 
                 if (commonNetNum >= packThreshold) {
                     packedLUTCellInsts.add(neighborCellInst);
@@ -375,11 +383,12 @@ public class NetlistUtils {
         return isRegisterCellInst(srcCellInst);
     }
 
-    public static EDIFCellInst registerReplication(EDIFCellInst originCellInst, String repCellInstName, List<EDIFPortInst> transferPortInsts) {
+    public static EDIFCellInst cellReplication(EDIFCellInst originCellInst, String repCellInstName, List<EDIFPortInst> transferPortInsts) {
         // replicate register originCellInst and transfer fanout cell insts specified in transferCellInsts to new register
-        assert isRegisterCellInst(originCellInst): "originCellInst must be register";
+        assert isRegisterCellInst(originCellInst) || isLutCellInst(originCellInst): "originCellInst must be FF or LUT";
         EDIFCell originCellType = originCellInst.getCellType();
         EDIFCell parentCell = originCellInst.getParentCell();
+
         // check name confliction
         assert parentCell.getCellInst(repCellInstName) == null: String.format("Cell instance %s already exists", repCellInstName);
         assert parentCell.getNet(repCellInstName) == null: String.format("Net %s already exists", repCellInstName);
@@ -411,7 +420,19 @@ public class NetlistUtils {
             }
         }
         return repCellInst;
+    }
 
+    public EDIFCellInst createLUTBuf(String cellInstName, EDIFCell parentCell) {
+        EDIFNetlist netlist = parentCell.getNetlist();
+        EDIFLibrary hdiPrimLibrary = netlist.getHDIPrimitivesLibrary();
+        EDIFCell lut1Cell = hdiPrimLibrary.getCell("LUT1");
+        if (lut1Cell == null) {
+            lut1Cell = Design.getUnisimCell(Unisim.LUT1);
+            hdiPrimLibrary.addCell(lut1Cell);
+        }
+        EDIFCellInst lut1CellInst = parentCell.createCellInst(cellInstName, lut1Cell);
+        lut1CellInst.addProperty("INIT", "2'h2");
+        return lut1CellInst;
     }
 
     public boolean isCellHasIllegalNet(EDIFCell topCell) {

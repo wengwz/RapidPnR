@@ -193,8 +193,10 @@ public class SimpleTimingPredictor {
                 }
 
                 for (EDIFPortInst outputPort : outputPorts) {
+                    EDIFNet net = outputPort.getNet();
+                    if (netlistDB.isIllegalNet(net)) continue;
                     TimingVertex dstVertex = portInstToVertexMap.get(outputPort);
-                    assert dstVertex != null;
+                    assert dstVertex != null: String.format("No timing vertex for port %s on cell %s (%s)", outputPort.getName(), cellInst.getName(), cellInst.getCellName());
 
                     TimingEdge edge = new TimingEdge(true, 0);
                     assert timingGraph.addEdge(srcVertex, dstVertex, edge);

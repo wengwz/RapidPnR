@@ -28,7 +28,6 @@ abstract public class AbstractIslandPlacer {
     protected Coordinate2D gridDim;
     protected Coordinate2D horiBoundaryDim;
     protected Coordinate2D vertBoundaryDim;
-    protected List<Integer> gridLimit;
     protected AbstractNetlist abstractNetlist;
 
 
@@ -45,7 +44,6 @@ abstract public class AbstractIslandPlacer {
         this.horiBoundaryDim = params.getHoriBoundaryDim();
         this.vertBoundaryDim = params.getVertBoundaryDim();
         
-        this.gridLimit = params.getGridLimit();
         this.islandPlaceResPath = params.getIslandPlaceResPath();
     }
 

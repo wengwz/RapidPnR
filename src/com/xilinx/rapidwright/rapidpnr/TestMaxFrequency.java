@@ -103,6 +103,7 @@ public class TestMaxFrequency {
         JobQueue jobQueue = new JobQueue();
 
         for (Benchmark benchmark : benchmarks.values()) {
+            System.out.println("Benchmark Name: " + benchmark.designName);
             DesignParams designParams = new DesignParams(Path.of("workspace", "json", benchmark.designName + ".json"));
             Path designDir = designParams.getWorkDir().resolve("baseline");
 
@@ -319,12 +320,13 @@ public class TestMaxFrequency {
         TestMaxFrequency tester = new TestMaxFrequency(jsonFilePath);
 
         //tester.addBenchmark("spam-filter", 4.0, 4.0, 0.1, "ap_clk");
-        //tester.addBenchmark("fireflyv2", 3.2, 3.2, 0.1, "clk");
+        //tester.addBenchmark("fireflyv2", 3.01, 2.9, 0.1, "clk");
+        //tester.addBenchmark("boom", 8.61, 8.2, 0.2, "auto_tap_clock_in_clock");
 
         //tester.addBenchmark("minimap-small", 3.21, 3.1, 0.1, "ap_clk");
         // tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "CLK");
         //tester.addBenchmark("tensil", 7.11, 6.9, 0.2, "clock");
-        //tester.addBenchmark("ispd16-fpga04", 8.61, 8.2, 0.2, "clk1");
+        //tester.addBenchmark("ispd16-fpga04", 8.01, 7.6, 0.2, "clk1");
 
         // tester.addBenchmark("minimap-small", 4.21, 3.8, 0.4, "ap_clk");
         //tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "CLK");
@@ -332,7 +334,7 @@ public class TestMaxFrequency {
         // tester.addBenchmark("ispd16-fpga04", 9.5, 9.4, 0.2, "clk1");
 
         // tester.addBenchmark("toooba", 4.2, 3.6, 0.2, "clk");
-        // tester.addBenchmark("ispd16-fpga04", 11.0, 10.0, 0.5, "clk1");
+        //tester.addBenchmark("ispd16-fpga04", 11.0, 10.0, 0.5, "clk1");
         //tester.addBenchmark("ispd16-fpga02", 3.8, 3.8, 0.1, "clk1");
 
         //tester.addBenchmark("blue-rdma", 4.0, 2.8, 0.1, "CLK");

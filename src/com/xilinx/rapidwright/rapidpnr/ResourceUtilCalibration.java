@@ -1,13 +1,14 @@
 package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.nio.file.Path;
 
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFCellInst;
-import com.xilinx.rapidwright.edif.EDIFDirection;
 import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
@@ -15,14 +16,51 @@ import com.xilinx.rapidwright.design.Unisim;
 
 public class ResourceUtilCalibration {
 
+    public static Design testLUT1Design() {
+        Design design = new Design("testLUT1", "xcvu3p-ffvc1517-1-e");
+        EDIFNetlist netlist = design.getNetlist();
+        EDIFCell topCell = netlist.getTopCell();
+        EDIFCell lut1 = Design.getUnisimCell(Unisim.LUT1);
+        EDIFCell lut6 = Design.getUnisimCell(Unisim.LUT6);
 
+        netlist.getHDIPrimitivesLibrary().addCell(lut1);
+        netlist.getHDIPrimitivesLibrary().addCell(lut6);
+        design.setAutoIOBuffers(false);
+
+        List<EDIFCellInst> lut1CellInsts = new ArrayList<>();
+
+        EDIFCellInst sinkLut6CellInst = lut6.createCellInst("sintk_lut6", topCell);
+        EDIFCellInst sourceLut6CellInst = lut6.createCellInst("source_lut6", topCell);
+
+        EDIFNet srcNet = topCell.createNet("src");
+        srcNet.createPortInst("O", sourceLut6CellInst);
+
+        for (int i = 0; i < 6; i++) {
+            EDIFNet sinkNet = topCell.createNet("sink_" + i);
+            sinkNet.createPortInst("I" + i, sinkLut6CellInst);
+
+            EDIFCellInst cellInst = lut1.createCellInst("lut1_" + i, topCell);
+            srcNet.createPortInst("I0", cellInst);
+            sinkNet.createPortInst("O", cellInst);
+            lut1CellInsts.add(cellInst);
+            cellInst.addProperty("INIT", "2'h2");
+        }
+
+        design.writeCheckpoint("workspace/testLUT1.dcp");
+
+
+        return design;
+    }
     public static void main(String[] args) {
+
+        testLUT1Design();
 
         Path workDir = Path.of("workspace", "res_calib");
         String partName = "xcvu3p-ffvc1517-1-e";
         Map<Unisim, Integer> unisimCellType2AmountMap = new HashMap<>();
 
         Boolean commonInputNet = true;
+        unisimCellType2AmountMap.put(Unisim.LUT1, 2);
         unisimCellType2AmountMap.put(Unisim.LUT2, 2);
         unisimCellType2AmountMap.put(Unisim.LUT3, 3);
         unisimCellType2AmountMap.put(Unisim.LUT5, 2);

@@ -33,25 +33,69 @@ public class EdgeBasedClustering extends AbstractNetlist {
         return isRegFanoutNet;
     };
 
-    public static final Predicate<EDIFNet> LUTOrFFNetFilter = net -> {
-        //Set<String> bigLUTCellNames = new HashSet<>(Arrays.asList("LUT6", "LUT5", "LUT4"));
-        //Set<String> bigLUTCellNames = new HashSet<>(Arrays.asList("LUT6", "LUT5", "LUT4", "LUT3"));
-        Set<String> bigLUTCellNames = new HashSet<>(Arrays.asList("LUT6", "LUT5", "LUT4", "LUT3", "LUT2"));
+    public static final class LUTNetFilter implements Predicate<EDIFNet> {
+        private Set<String> lutCellTypes;
 
-        List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
-        assert srcPortInsts.size() == 1;
-        
-        EDIFPortInst srcPortInst = srcPortInsts.get(0);
-        EDIFCellInst srcCellInst = srcPortInst.getCellInst();
-        
-        boolean isFiltered = false;
-        if (srcCellInst != null) {
-            boolean isRegFanoutNet = NetlistUtils.isRegisterCellInst(srcCellInst);
-            boolean isBigLUT = bigLUTCellNames.contains(srcCellInst.getCellName());//srcCellInst.getCellType().getName().equals("LUT6") || srcCellInst.getCellType().getName().equals("LUT5");
-            isFiltered = isRegFanoutNet || isBigLUT;
+        public LUTNetFilter(int lutLevel) {
+            assert lutLevel >= 1;
+
+            lutCellTypes = new HashSet<>();
+
+            for (int i = 6; i >= lutLevel; i--) {
+                lutCellTypes.add(String.format("LUT%d", i));
+            }
         }
 
-        return isFiltered;
+        public LUTNetFilter() {
+
+            lutCellTypes = new HashSet<>();
+            for (int i = 1; i <= 6; i++) {
+                lutCellTypes.add(String.format("LUT%d", i));
+            }
+        }
+
+        public boolean test(EDIFNet net) {
+            List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
+            assert srcPortInsts.size() == 1;
+            
+            EDIFPortInst srcPortInst = srcPortInsts.get(0);
+            EDIFCellInst srcCellInst = srcPortInst.getCellInst();
+            
+            boolean isFiltered = false;
+            if (srcCellInst != null) {
+                isFiltered = lutCellTypes.contains(srcCellInst.getCellName());
+            }
+
+            return isFiltered;
+        }
+    };
+
+    public static final class LUTOrFFNetFilter implements Predicate<EDIFNet> {
+        private Set<String> lutCellTypes;
+
+        public LUTOrFFNetFilter(int lutLevel) {
+            assert lutLevel >= 1;
+            lutCellTypes = new HashSet<>();
+            for (int i = 6; i >= lutLevel; i--) {
+                lutCellTypes.add(String.format("LUT%d", i));
+            }
+        }
+
+        public boolean test(EDIFNet net) {
+            List<EDIFPortInst> srcPortInsts = net.getSourcePortInsts(true);
+            assert srcPortInsts.size() == 1;
+            
+            EDIFPortInst srcPortInst = srcPortInsts.get(0);
+            EDIFCellInst srcCellInst = srcPortInst.getCellInst();
+            
+            boolean isFiltered = false;
+            if (srcCellInst != null) {
+                boolean isRegFanoutNet = NetlistUtils.isRegisterCellInst(srcCellInst);
+                boolean isLUTFanoutNet = lutCellTypes.contains(srcCellInst.getCellName());
+                isFiltered = isRegFanoutNet || isLUTFanoutNet;
+            }
+            return isFiltered;
+        }
     };
 
     public static final Predicate<EDIFNet> nonCarryOrMuxNetFilter = net -> {
@@ -71,12 +115,20 @@ public class EdgeBasedClustering extends AbstractNetlist {
         return !isCarryOrMuxNet;
     };
 
-    public static final Predicate<EDIFNet> CLBAwareFilter = net -> {
-        boolean isLUTOrFFNet = LUTOrFFNetFilter.test(net);
-        boolean nonCarryOrMuxNet = nonCarryOrMuxNetFilter.test(net);
+    public static final class CLBAwareFilter implements Predicate<EDIFNet> {
+        private Predicate<EDIFNet> lutFFNetFilter;
 
-        return isLUTOrFFNet && nonCarryOrMuxNet;
-    };
+        public CLBAwareFilter(int lutLevel) {
+            lutFFNetFilter = new LUTOrFFNetFilter(lutLevel);
+        }
+
+        public boolean test(EDIFNet net) {
+            boolean isLUTOrFFNet = lutFFNetFilter.test(net);
+            boolean nonCarryOrMuxNet = nonCarryOrMuxNetFilter.test(net);
+            return isLUTOrFFNet && nonCarryOrMuxNet;
+        }
+
+    }
 
     public EdgeBasedClustering(HierarchicalLogger logger) {
         this(logger, FFNetFilter);

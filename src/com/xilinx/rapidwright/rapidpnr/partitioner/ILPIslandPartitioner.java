@@ -2,8 +2,8 @@ package com.xilinx.rapidwright.rapidpnr.partitioner;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -26,46 +26,63 @@ import com.google.ortools.sat.LinearExprBuilder;
 import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
+import com.xilinx.rapidwright.rapidpnr.utils.VecOps;
 import com.xilinx.rapidwright.util.RuntimeTracker;
 
 public class ILPIslandPartitioner {
 
     public static class Config {
-        public Coordinate2D islandDim;
-        public List<Double> imbFactors;
+        public boolean compressGraph = true;
+        public Coordinate2D gridDim = Coordinate2D.of(2, 2);
+        public List<List<Double>> gridLimits = null;
     }
 
     private HierarchicalLogger logger;
     private HyperGraph hyperGraph;
 
-    // compressed hypergraph
-    //private HyperGraph compressedGraph;
-
     // config
-    private Config config;
     private int islandNum;
-    private Coordinate2D islandDim;
-
-    // constraints
-    private List<Double> islandSizeUpperBound;
+    private Coordinate2D gridDim;
+    private List<Double>[][] gridLimits;
+    private Map<Integer, Coordinate2D> fixedNodes;
 
     // island partition states
     private List<Coordinate2D> node2IslandLoc;
 
     public ILPIslandPartitioner(HierarchicalLogger logger, Config config, HyperGraph hyperGraph) {
         this.logger = logger;
-        this.hyperGraph = hyperGraph;
-        this.hyperGraph = hyperGraph.getCompressedGraph();
 
-        this.config = config;
-        this.islandDim = config.islandDim;
-        this.islandNum = islandDim.getX() * islandDim.getY();
+        if (config.compressGraph) {
+            this.hyperGraph = hyperGraph.getCompressedGraph();
+        } else {
+            this.hyperGraph = hyperGraph;
+        }
 
-        setIslandSizeBound();
+        this.gridDim = config.gridDim;
+        this.islandNum = gridDim.getX() * gridDim.getY();
+        this.gridLimits = new ArrayList[gridDim.getX()][gridDim.getY()];
+        
+        gridDim.traverse((Coordinate2D loc) -> {
+            int idx = getIdxFromLoc(loc);
+            List<Double> limit = config.gridLimits.get(idx);
+            assert limit.size() == hyperGraph.getNodeWeightDim();
+            this.gridLimits[loc.getX()][loc.getY()] = limit;
+        });
+
+        fixedNodes = new HashMap<>();
+
         node2IslandLoc = new ArrayList<>();
 
         logger.info("Num of nodes: " + this.hyperGraph.getNodeNum());
         logger.info("Num of edges: " + this.hyperGraph.getEdgeNum());
+    }
+
+    public void addFixedNode(int nodeId, Coordinate2D loc) {
+        fixedNodes.put(nodeId, loc);
+    }
+
+    public void setFixedNodes(Map<Integer, Coordinate2D> fixedNodes) {
+        this.fixedNodes = fixedNodes;
     }
 
     public List<Coordinate2D> run() {
@@ -75,348 +92,350 @@ public class ILPIslandPartitioner {
 
         assert checkIslandSizeConstr(): "Island size constraints are violated";
         assert checkEdgeLengthConstr(): "Edge length constraints are violated";
+        assert checkFixedNodesConstr(): "Fixed nodes constraints are violated";
 
         return node2IslandLoc;
     }
 
     // ILP solvers based on Google OR-Tools
-    private List<Coordinate2D> runMIPSolver() {
-        // TODO: 
-        // load necessary libraries
-        Loader.loadNativeLibraries();
+    // private List<Coordinate2D> runMIPSolver() {
+    //     // TODO: 
+    //     // load necessary libraries
+    //     Loader.loadNativeLibraries();
 
-        double negInfinity = java.lang.Double.NEGATIVE_INFINITY;
-        // create the linear solver with SCIP backend
-        MPSolver solver = MPSolver.createSolver("SCIP");
-        assert solver != null: "Failed to create a solver";
+    //     double negInfinity = java.lang.Double.NEGATIVE_INFINITY;
+    //     // create the linear solver with SCIP backend
+    //     MPSolver solver = MPSolver.createSolver("SCIP");
+    //     assert solver != null: "Failed to create a solver";
 
-        // create variables
-        //// x coordinates of nodes
-        MPVariable[] nodeX = new MPVariable[hyperGraph.getNodeNum()];
-        for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
-            nodeX[i] = solver.makeIntVar(0.0, islandDim.getX() - 1, "nodeX_" + i);
-        }
-        //// y coordinates of nodes
-        MPVariable[] nodeY = new MPVariable[hyperGraph.getNodeNum()];
-        for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
-            nodeY[i] = solver.makeIntVar(0.0, islandDim.getY() - 1, "nodeY_" + i);
-        }
-        //// x coordinate of left bound of edges
-        MPVariable[] edgeLeftX = new MPVariable[hyperGraph.getEdgeNum()];
-        for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
-            edgeLeftX[i] = solver.makeIntVar(0.0, islandDim.getX() - 1, "edgeLeftX_" + i);
-        }
-        //// x coordinate of right bound of edges
-        MPVariable[] edgeRightX = new MPVariable[hyperGraph.getEdgeNum()];
-        for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
-            edgeRightX[i] = solver.makeIntVar(0.0, islandDim.getX() - 1, "edgeRightX_" + i);
-        }
-        //// y coordinate of lower bound of edges
-        MPVariable[] edgeLowerY = new MPVariable[hyperGraph.getEdgeNum()];
-        for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
-            edgeLowerY[i] = solver.makeIntVar(0.0, islandDim.getY() - 1, "edgeLowerY_" + i);
-        }
-        //// y coordinate of upper bound of edges
-        MPVariable[] edgeUpperY = new MPVariable[hyperGraph.getEdgeNum()];
-        for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
-            edgeUpperY[i] = solver.makeIntVar(0.0, islandDim.getY() - 1, "edgeUpperY_" + i);
-        }
-        //// node to island mapping
-        MPVariable[][] node2Island = new MPVariable[hyperGraph.getNodeNum()][islandNum];
-        for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
-            for (int j = 0; j < islandNum; j++) {
-                node2Island[i][j] = solver.makeBoolVar("node2Island_" + i + "_" + j);
-            }
-        }
+    //     // create variables
+    //     //// x coordinates of nodes
+    //     MPVariable[] nodeX = new MPVariable[hyperGraph.getNodeNum()];
+    //     for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
+    //         nodeX[i] = solver.makeIntVar(0.0, gridDim.getX() - 1, "nodeX_" + i);
+    //     }
+    //     //// y coordinates of nodes
+    //     MPVariable[] nodeY = new MPVariable[hyperGraph.getNodeNum()];
+    //     for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
+    //         nodeY[i] = solver.makeIntVar(0.0, gridDim.getY() - 1, "nodeY_" + i);
+    //     }
+    //     //// x coordinate of left bound of edges
+    //     MPVariable[] edgeLeftX = new MPVariable[hyperGraph.getEdgeNum()];
+    //     for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
+    //         edgeLeftX[i] = solver.makeIntVar(0.0, gridDim.getX() - 1, "edgeLeftX_" + i);
+    //     }
+    //     //// x coordinate of right bound of edges
+    //     MPVariable[] edgeRightX = new MPVariable[hyperGraph.getEdgeNum()];
+    //     for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
+    //         edgeRightX[i] = solver.makeIntVar(0.0, gridDim.getX() - 1, "edgeRightX_" + i);
+    //     }
+    //     //// y coordinate of lower bound of edges
+    //     MPVariable[] edgeLowerY = new MPVariable[hyperGraph.getEdgeNum()];
+    //     for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
+    //         edgeLowerY[i] = solver.makeIntVar(0.0, gridDim.getY() - 1, "edgeLowerY_" + i);
+    //     }
+    //     //// y coordinate of upper bound of edges
+    //     MPVariable[] edgeUpperY = new MPVariable[hyperGraph.getEdgeNum()];
+    //     for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
+    //         edgeUpperY[i] = solver.makeIntVar(0.0, gridDim.getY() - 1, "edgeUpperY_" + i);
+    //     }
+    //     //// node to island mapping
+    //     MPVariable[][] node2Island = new MPVariable[hyperGraph.getNodeNum()][islandNum];
+    //     for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
+    //         for (int j = 0; j < islandNum; j++) {
+    //             node2Island[i][j] = solver.makeBoolVar("node2Island_" + i + "_" + j);
+    //         }
+    //     }
 
-        // create constraints
-        //// edge bound constraints
-        for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
-            for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
-                MPConstraint leftBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                leftBoundConstr.setCoefficient(edgeLeftX[edgeId], 1.0);
-                leftBoundConstr.setCoefficient(nodeX[nodeId], -1.0);
+    //     // create constraints
+    //     //// edge bound constraints
+    //     for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+    //         for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
+    //             MPConstraint leftBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             leftBoundConstr.setCoefficient(edgeLeftX[edgeId], 1.0);
+    //             leftBoundConstr.setCoefficient(nodeX[nodeId], -1.0);
 
-                MPConstraint rightBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                rightBoundConstr.setCoefficient(edgeRightX[edgeId], -1.0);
-                rightBoundConstr.setCoefficient(nodeX[nodeId], 1.0);
+    //             MPConstraint rightBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             rightBoundConstr.setCoefficient(edgeRightX[edgeId], -1.0);
+    //             rightBoundConstr.setCoefficient(nodeX[nodeId], 1.0);
 
-                MPConstraint lowerBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                lowerBoundConstr.setCoefficient(edgeLowerY[edgeId], 1.0);
-                lowerBoundConstr.setCoefficient(nodeY[nodeId], -1.0);
+    //             MPConstraint lowerBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             lowerBoundConstr.setCoefficient(edgeLowerY[edgeId], 1.0);
+    //             lowerBoundConstr.setCoefficient(nodeY[nodeId], -1.0);
 
-                MPConstraint upperBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                upperBoundConstr.setCoefficient(edgeUpperY[edgeId], -1.0);
-                upperBoundConstr.setCoefficient(nodeY[nodeId], 1.0);
-            }
-        }
-        //// create edge length constraints
-        // for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
-        //     MPConstraint edgeLengthConstr = solver.makeConstraint(0.0, 1.0);
-        //     edgeLengthConstr.setCoefficient(edgeLeftX[edgeId], -1.0);
-        //     edgeLengthConstr.setCoefficient(edgeRightX[edgeId], 1.0);
-        //     edgeLengthConstr.setCoefficient(edgeLowerY[edgeId], -1.0);
-        //     edgeLengthConstr.setCoefficient(edgeUpperY[edgeId], 1.0);
-        // }
+    //             MPConstraint upperBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             upperBoundConstr.setCoefficient(edgeUpperY[edgeId], -1.0);
+    //             upperBoundConstr.setCoefficient(nodeY[nodeId], 1.0);
+    //         }
+    //     }
+    //     //// create edge length constraints
+    //     // for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+    //     //     MPConstraint edgeLengthConstr = solver.makeConstraint(0.0, 1.0);
+    //     //     edgeLengthConstr.setCoefficient(edgeLeftX[edgeId], -1.0);
+    //     //     edgeLengthConstr.setCoefficient(edgeRightX[edgeId], 1.0);
+    //     //     edgeLengthConstr.setCoefficient(edgeLowerY[edgeId], -1.0);
+    //     //     edgeLengthConstr.setCoefficient(edgeUpperY[edgeId], 1.0);
+    //     // }
 
-        //// create island size constraints
-        for (int islandId = 0; islandId < islandNum; islandId++) {
-            Double upperBound = hyperGraph.getNodeWeightsSum(islandSizeUpperBound);
-            MPConstraint islandSizeConstr = solver.makeConstraint(0.0, upperBound);
+    //     //// create island size constraints
+    //     for (int islandId = 0; islandId < islandNum; islandId++) {
+    //         Double upperBound = hyperGraph.getNodeWeightsSum(islandSizeUpperBound);
+    //         MPConstraint islandSizeConstr = solver.makeConstraint(0.0, upperBound);
 
-            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-                islandSizeConstr.setCoefficient(node2Island[nodeId][islandId], hyperGraph.getNodeWeightsSum(nodeId));
-            }
-        }
+    //         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //             islandSizeConstr.setCoefficient(node2Island[nodeId][islandId], hyperGraph.getNodeWeightsSum(nodeId));
+    //         }
+    //     }
 
-        //// create node to island mapping constraints
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            MPConstraint node2IslandConstr = solver.makeConstraint(1.0, 1.0);
+    //     //// create node to island mapping constraints
+    //     for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //         MPConstraint node2IslandConstr = solver.makeConstraint(1.0, 1.0);
 
-            for (int islandId = 0; islandId < islandNum; islandId++) {
-                node2IslandConstr.setCoefficient(node2Island[nodeId][islandId], 1.0);
-            }
-        }
+    //         for (int islandId = 0; islandId < islandNum; islandId++) {
+    //             node2IslandConstr.setCoefficient(node2Island[nodeId][islandId], 1.0);
+    //         }
+    //     }
 
-        MPVariable node2XMap[][] = new MPVariable[hyperGraph.getNodeNum()][islandDim.getX()];
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            for (int x = 0; x < islandDim.getX(); x++) {
-                node2XMap[nodeId][x] = solver.makeBoolVar("node2XMap_" + nodeId + "_" + x);
-                // mapping constraints: when nodeX[i] == j, node2XMap[i][j] == 1, otherwise node2XMap[i][j] == 0
-                // enforce node2XMap[i][x] = 0 when nodeX[i] != j
-                //   subconstr-1 formulation: nodeX[i] - x <= M * (1 - node2XMap[i][x]) -> nodeX[i] + M * node2XMap[i][x] <= M + x
-                //   subconstr-2 formulation: x - nodeX[i] <= M * (1 - node2XMap[i][x]) -> M * node2XMap[i][x] - nodeX[i] <= M + x
+    //     MPVariable node2XMap[][] = new MPVariable[hyperGraph.getNodeNum()][gridDim.getX()];
+    //     for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //         for (int x = 0; x < gridDim.getX(); x++) {
+    //             node2XMap[nodeId][x] = solver.makeBoolVar("node2XMap_" + nodeId + "_" + x);
+    //             // mapping constraints: when nodeX[i] == j, node2XMap[i][j] == 1, otherwise node2XMap[i][j] == 0
+    //             // enforce node2XMap[i][x] = 0 when nodeX[i] != j
+    //             //   subconstr-1 formulation: nodeX[i] - x <= M * (1 - node2XMap[i][x]) -> nodeX[i] + M * node2XMap[i][x] <= M + x
+    //             //   subconstr-2 formulation: x - nodeX[i] <= M * (1 - node2XMap[i][x]) -> M * node2XMap[i][x] - nodeX[i] <= M + x
 
-                MPConstraint subConstr1 = solver.makeConstraint(negInfinity, islandDim.getX() + x);
-                subConstr1.setCoefficient(nodeX[nodeId], 1.0);
-                subConstr1.setCoefficient(node2XMap[nodeId][x], islandDim.getX());
+    //             MPConstraint subConstr1 = solver.makeConstraint(negInfinity, gridDim.getX() + x);
+    //             subConstr1.setCoefficient(nodeX[nodeId], 1.0);
+    //             subConstr1.setCoefficient(node2XMap[nodeId][x], gridDim.getX());
 
-                MPConstraint subConstr2 = solver.makeConstraint(negInfinity, islandDim.getX() + x);
-                subConstr2.setCoefficient(nodeX[nodeId], -1.0);
-                subConstr2.setCoefficient(node2XMap[nodeId][x], islandDim.getX());
-            }
-        }
+    //             MPConstraint subConstr2 = solver.makeConstraint(negInfinity, gridDim.getX() + x);
+    //             subConstr2.setCoefficient(nodeX[nodeId], -1.0);
+    //             subConstr2.setCoefficient(node2XMap[nodeId][x], gridDim.getX());
+    //         }
+    //     }
         
-        MPVariable node2YMap[][] = new MPVariable[hyperGraph.getNodeNum()][islandDim.getY()];
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            for (int y = 0; y < islandDim.getY(); y++) {
-                node2YMap[nodeId][y] = solver.makeBoolVar("node2YMap_" + nodeId + "_" + y);
+    //     MPVariable node2YMap[][] = new MPVariable[hyperGraph.getNodeNum()][gridDim.getY()];
+    //     for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //         for (int y = 0; y < gridDim.getY(); y++) {
+    //             node2YMap[nodeId][y] = solver.makeBoolVar("node2YMap_" + nodeId + "_" + y);
 
-                MPConstraint subConstr1 = solver.makeConstraint(negInfinity, islandDim.getY() + y);
-                subConstr1.setCoefficient(nodeY[nodeId], 1.0);
-                subConstr1.setCoefficient(node2YMap[nodeId][y], islandDim.getY());
+    //             MPConstraint subConstr1 = solver.makeConstraint(negInfinity, gridDim.getY() + y);
+    //             subConstr1.setCoefficient(nodeY[nodeId], 1.0);
+    //             subConstr1.setCoefficient(node2YMap[nodeId][y], gridDim.getY());
 
-                MPConstraint subConstr2 = solver.makeConstraint(negInfinity, islandDim.getY() + y);
-                subConstr2.setCoefficient(nodeY[nodeId], -1.0);
-                subConstr2.setCoefficient(node2YMap[nodeId][y], islandDim.getY());
-            }
-        }
+    //             MPConstraint subConstr2 = solver.makeConstraint(negInfinity, gridDim.getY() + y);
+    //             subConstr2.setCoefficient(nodeY[nodeId], -1.0);
+    //             subConstr2.setCoefficient(node2YMap[nodeId][y], gridDim.getY());
+    //         }
+    //     }
 
-        for (int nodeId  = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            for (int islandId = 0; islandId < islandNum; islandId++) {
-                // a*b can be transformed into 0 <= a + b - 2*p <= 1 with p in [0,1]
-                // p is True if a AND b, False otherwise
-                Coordinate2D islandLoc = getIslandLocFromIndex(islandId);
-                MPConstraint node2IslandConstr = solver.makeConstraint(0, 1);
+    //     for (int nodeId  = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //         for (int islandId = 0; islandId < islandNum; islandId++) {
+    //             // a*b can be transformed into 0 <= a + b - 2*p <= 1 with p in [0,1]
+    //             // p is True if a AND b, False otherwise
+    //             Coordinate2D islandLoc = getLocFromIdx(islandId);
+    //             MPConstraint node2IslandConstr = solver.makeConstraint(0, 1);
                 
-                node2IslandConstr.setCoefficient(node2Island[nodeId][islandId], -2);
-                node2IslandConstr.setCoefficient(node2XMap[nodeId][islandLoc.getX()], 1);
-                node2IslandConstr.setCoefficient(node2YMap[nodeId][islandLoc.getY()], 1);
-            }
-        }
+    //             node2IslandConstr.setCoefficient(node2Island[nodeId][islandId], -2);
+    //             node2IslandConstr.setCoefficient(node2XMap[nodeId][islandLoc.getX()], 1);
+    //             node2IslandConstr.setCoefficient(node2YMap[nodeId][islandLoc.getY()], 1);
+    //         }
+    //     }
 
-        // create objective
-        MPObjective objective = solver.objective();
-        for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
-            objective.setCoefficient(edgeLeftX[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-            objective.setCoefficient(edgeRightX[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-            objective.setCoefficient(edgeLowerY[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-            objective.setCoefficient(edgeUpperY[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-        }
+    //     // create objective
+    //     MPObjective objective = solver.objective();
+    //     for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+    //         objective.setCoefficient(edgeLeftX[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //         objective.setCoefficient(edgeRightX[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //         objective.setCoefficient(edgeLowerY[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //         objective.setCoefficient(edgeUpperY[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //     }
 
-        // solve the problem
-        List<Coordinate2D> node2IslandLoc = new ArrayList<>();
-        MPSolver.ResultStatus resultStatus = solver.solve();
-        if (resultStatus == MPSolver.ResultStatus.OPTIMAL || resultStatus == MPSolver.ResultStatus.FEASIBLE) {
-            logger.info("Find feasible solution with objective value: " + objective.value());
+    //     // solve the problem
+    //     List<Coordinate2D> node2IslandLoc = new ArrayList<>();
+    //     MPSolver.ResultStatus resultStatus = solver.solve();
+    //     if (resultStatus == MPSolver.ResultStatus.OPTIMAL || resultStatus == MPSolver.ResultStatus.FEASIBLE) {
+    //         logger.info("Find feasible solution with objective value: " + objective.value());
 
-            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-                logger.info(String.format("node-%d x=%.3f y=%.3f", nodeId, nodeX[nodeId].solutionValue(), nodeY[nodeId].solutionValue()));
-                String node2IslandStr = String.format("node-%d to island: ", nodeId);
-                for (int islandId = 0; islandId < islandNum; islandId++) {
-                    node2IslandStr += String.format("%.3f ", node2Island[nodeId][islandId].solutionValue());
-                }
-                logger.info(node2IslandStr);
+    //         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //             logger.info(String.format("node-%d x=%.3f y=%.3f", nodeId, nodeX[nodeId].solutionValue(), nodeY[nodeId].solutionValue()));
+    //             String node2IslandStr = String.format("node-%d to island: ", nodeId);
+    //             for (int islandId = 0; islandId < islandNum; islandId++) {
+    //                 node2IslandStr += String.format("%.3f ", node2Island[nodeId][islandId].solutionValue());
+    //             }
+    //             logger.info(node2IslandStr);
 
-                Coordinate2D nodeLoc = Coordinate2D.of((int) nodeX[nodeId].solutionValue(), (int) nodeY[nodeId].solutionValue());
-                node2IslandLoc.add(nodeLoc);
-            }
-        } else {
-            assert false: "Failed to find feasible solution";
-        }
-        return node2IslandLoc;
-    }
+    //             Coordinate2D nodeLoc = Coordinate2D.of((int) nodeX[nodeId].solutionValue(), (int) nodeY[nodeId].solutionValue());
+    //             node2IslandLoc.add(nodeLoc);
+    //         }
+    //     } else {
+    //         assert false: "Failed to find feasible solution";
+    //     }
+    //     return node2IslandLoc;
+    // }
 
-    private List<Coordinate2D> runMIPSolver2() {
-        assert islandDim.getX() == 2 && islandDim.getY() == 2;
-        double negInfinity = java.lang.Double.NEGATIVE_INFINITY;
+    // private List<Coordinate2D> runMIPSolver2() {
+    //     assert gridDim.getX() == 2 && gridDim.getY() == 2;
+    //     double negInfinity = java.lang.Double.NEGATIVE_INFINITY;
 
-        logger.info("Start running MIPSolver2");
-        logger.newSubStep();
+    //     logger.info("Start running MIPSolver2");
+    //     logger.newSubStep();
 
-        logger.info("Start formulating optimization problem");
+    //     logger.info("Start formulating optimization problem");
 
-        // load necessary libraries
-        Loader.loadNativeLibraries();
+    //     // load necessary libraries
+    //     Loader.loadNativeLibraries();
         
-        // create the linear solver with SCIP backend
-        MPSolver solver = MPSolver.createSolver("SCIP");
-        assert solver != null: "Failed to create a solver";
+    //     // create the linear solver with SCIP backend
+    //     MPSolver solver = MPSolver.createSolver("SCIP");
+    //     assert solver != null: "Failed to create a solver";
 
-        // create variables
-        //// x/y coordinates of nodes
-        MPVariable[] nodeX = new MPVariable[hyperGraph.getNodeNum()];
-        MPVariable[] nodeY = new MPVariable[hyperGraph.getNodeNum()];
-        //// node to island mapping
-        MPVariable[][] node2Island = new MPVariable[hyperGraph.getNodeNum()][islandNum];
-        for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
-            nodeX[i] = solver.makeBoolVar("nodeX_" + i);
-            nodeY[i] = solver.makeBoolVar("nodeY_" + i);
-            for (int j = 0; j < islandNum; j++) {
-                node2Island[i][j] = solver.makeBoolVar("node2Island_" + i + "_" + j);
-            }
-        }
-        //// bound locations of edges
-        MPVariable[] edgeLeftX = new MPVariable[hyperGraph.getEdgeNum()];
-        MPVariable[] edgeRightX = new MPVariable[hyperGraph.getEdgeNum()];
-        MPVariable[] edgeLowerY = new MPVariable[hyperGraph.getEdgeNum()];
-        MPVariable[] edgeUpperY = new MPVariable[hyperGraph.getEdgeNum()];
-        for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
-            edgeLeftX[i] = solver.makeBoolVar("edgeLeftX_" + i);
-            edgeRightX[i] = solver.makeBoolVar("edgeRightX_" + i);
-            edgeLowerY[i] = solver.makeBoolVar("edgeLowerY_" + i);
-            edgeUpperY[i] = solver.makeBoolVar("edgeUpperY_" + i);
-        }
+    //     // create variables
+    //     //// x/y coordinates of nodes
+    //     MPVariable[] nodeX = new MPVariable[hyperGraph.getNodeNum()];
+    //     MPVariable[] nodeY = new MPVariable[hyperGraph.getNodeNum()];
+    //     //// node to island mapping
+    //     MPVariable[][] node2Island = new MPVariable[hyperGraph.getNodeNum()][islandNum];
+    //     for (int i = 0; i < hyperGraph.getNodeNum(); i++) {
+    //         nodeX[i] = solver.makeBoolVar("nodeX_" + i);
+    //         nodeY[i] = solver.makeBoolVar("nodeY_" + i);
+    //         for (int j = 0; j < islandNum; j++) {
+    //             node2Island[i][j] = solver.makeBoolVar("node2Island_" + i + "_" + j);
+    //         }
+    //     }
+    //     //// bound locations of edges
+    //     MPVariable[] edgeLeftX = new MPVariable[hyperGraph.getEdgeNum()];
+    //     MPVariable[] edgeRightX = new MPVariable[hyperGraph.getEdgeNum()];
+    //     MPVariable[] edgeLowerY = new MPVariable[hyperGraph.getEdgeNum()];
+    //     MPVariable[] edgeUpperY = new MPVariable[hyperGraph.getEdgeNum()];
+    //     for (int i = 0; i < hyperGraph.getEdgeNum(); i++) {
+    //         edgeLeftX[i] = solver.makeBoolVar("edgeLeftX_" + i);
+    //         edgeRightX[i] = solver.makeBoolVar("edgeRightX_" + i);
+    //         edgeLowerY[i] = solver.makeBoolVar("edgeLowerY_" + i);
+    //         edgeUpperY[i] = solver.makeBoolVar("edgeUpperY_" + i);
+    //     }
 
-        // create constraints
-        //// edge bound constraints
-        for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
-            for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
-                MPConstraint leftBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                leftBoundConstr.setCoefficient(edgeLeftX[edgeId], 1.0);
-                leftBoundConstr.setCoefficient(nodeX[nodeId], -1.0);
+    //     // create constraints
+    //     //// edge bound constraints
+    //     for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+    //         for (int nodeId : hyperGraph.getNodesOfEdge(edgeId)) {
+    //             MPConstraint leftBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             leftBoundConstr.setCoefficient(edgeLeftX[edgeId], 1.0);
+    //             leftBoundConstr.setCoefficient(nodeX[nodeId], -1.0);
 
-                MPConstraint rightBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                rightBoundConstr.setCoefficient(edgeRightX[edgeId], -1.0);
-                rightBoundConstr.setCoefficient(nodeX[nodeId], 1.0);
+    //             MPConstraint rightBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             rightBoundConstr.setCoefficient(edgeRightX[edgeId], -1.0);
+    //             rightBoundConstr.setCoefficient(nodeX[nodeId], 1.0);
 
-                MPConstraint lowerBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                lowerBoundConstr.setCoefficient(edgeLowerY[edgeId], 1.0);
-                lowerBoundConstr.setCoefficient(nodeY[nodeId], -1.0);
+    //             MPConstraint lowerBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             lowerBoundConstr.setCoefficient(edgeLowerY[edgeId], 1.0);
+    //             lowerBoundConstr.setCoefficient(nodeY[nodeId], -1.0);
 
-                MPConstraint upperBoundConstr = solver.makeConstraint(negInfinity, 0.0);
-                upperBoundConstr.setCoefficient(edgeUpperY[edgeId], -1.0);
-                upperBoundConstr.setCoefficient(nodeY[nodeId], 1.0);
-            }
-        }
+    //             MPConstraint upperBoundConstr = solver.makeConstraint(negInfinity, 0.0);
+    //             upperBoundConstr.setCoefficient(edgeUpperY[edgeId], -1.0);
+    //             upperBoundConstr.setCoefficient(nodeY[nodeId], 1.0);
+    //         }
+    //     }
 
-        // create edge length constraints
-        for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
-            MPConstraint edgeLengthConstr = solver.makeConstraint(0.0, 1.0);
-            edgeLengthConstr.setCoefficient(edgeLeftX[edgeId], -1.0);
-            edgeLengthConstr.setCoefficient(edgeRightX[edgeId], 1.0);
-            edgeLengthConstr.setCoefficient(edgeLowerY[edgeId], -1.0);
-            edgeLengthConstr.setCoefficient(edgeUpperY[edgeId], 1.0);
-        }
+    //     // create edge length constraints
+    //     for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+    //         MPConstraint edgeLengthConstr = solver.makeConstraint(0.0, 1.0);
+    //         edgeLengthConstr.setCoefficient(edgeLeftX[edgeId], -1.0);
+    //         edgeLengthConstr.setCoefficient(edgeRightX[edgeId], 1.0);
+    //         edgeLengthConstr.setCoefficient(edgeLowerY[edgeId], -1.0);
+    //         edgeLengthConstr.setCoefficient(edgeUpperY[edgeId], 1.0);
+    //     }
 
-        //// create island size constraints
-        for (int islandId = 0; islandId < islandNum; islandId++) {
-            Double upperBound = hyperGraph.getNodeWeightsSum(islandSizeUpperBound);
-            MPConstraint islandSizeConstr = solver.makeConstraint(0.0, upperBound);
+    //     //// create island size constraints
+    //     for (int islandId = 0; islandId < islandNum; islandId++) {
+    //         Double upperBound = hyperGraph.getNodeWeightsSum(islandSizeUpperBound);
+    //         MPConstraint islandSizeConstr = solver.makeConstraint(0.0, upperBound);
 
-            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-                islandSizeConstr.setCoefficient(node2Island[nodeId][islandId], hyperGraph.getNodeWeightsSum(nodeId));
-            }
-        }
+    //         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //             islandSizeConstr.setCoefficient(node2Island[nodeId][islandId], hyperGraph.getNodeWeightsSum(nodeId));
+    //         }
+    //     }
 
-        //// create node to island mapping constraints
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-            MPConstraint node2IslandConstr = solver.makeConstraint(1.0, 1.0);
+    //     //// create node to island mapping constraints
+    //     for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //         MPConstraint node2IslandConstr = solver.makeConstraint(1.0, 1.0);
 
-            for (int islandId = 0; islandId < islandNum; islandId++) {
-                node2IslandConstr.setCoefficient(node2Island[nodeId][islandId], 1.0);
-            }
-        }
+    //         for (int islandId = 0; islandId < islandNum; islandId++) {
+    //             node2IslandConstr.setCoefficient(node2Island[nodeId][islandId], 1.0);
+    //         }
+    //     }
 
-        //// create island mapping to x/y coordinates constraints
-        for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); ++nodeId) {
-            for (int islandId = 0; islandId < islandNum; ++islandId) {
-                Coordinate2D islandLoc = getIslandLocFromIndex(islandId);
-                MPConstraint xConstr = solver.makeConstraint(0, 1);
-                MPConstraint yConstr = solver.makeConstraint(0, 1);
-                if (islandLoc.getX() == 0) {
-                    xConstr.setCoefficient(node2Island[nodeId][islandId], 1);
-                    xConstr.setCoefficient(nodeX[nodeId], 1);
-                } else {
-                    xConstr.setCoefficient(node2Island[nodeId][islandId], -1);
-                    xConstr.setCoefficient(nodeX[nodeId], 1);
-                }
+    //     //// create island mapping to x/y coordinates constraints
+    //     for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); ++nodeId) {
+    //         for (int islandId = 0; islandId < islandNum; ++islandId) {
+    //             Coordinate2D islandLoc = getLocFromIdx(islandId);
+    //             MPConstraint xConstr = solver.makeConstraint(0, 1);
+    //             MPConstraint yConstr = solver.makeConstraint(0, 1);
+    //             if (islandLoc.getX() == 0) {
+    //                 xConstr.setCoefficient(node2Island[nodeId][islandId], 1);
+    //                 xConstr.setCoefficient(nodeX[nodeId], 1);
+    //             } else {
+    //                 xConstr.setCoefficient(node2Island[nodeId][islandId], -1);
+    //                 xConstr.setCoefficient(nodeX[nodeId], 1);
+    //             }
 
-                if (islandLoc.getY() == 0) {
-                    yConstr.setCoefficient(node2Island[nodeId][islandId], 1);
-                    yConstr.setCoefficient(nodeY[nodeId], 1);
-                } else {
-                    yConstr.setCoefficient(node2Island[nodeId][islandId], -1);
-                    yConstr.setCoefficient(nodeY[nodeId], 1);
-                }
-            }
-        }
+    //             if (islandLoc.getY() == 0) {
+    //                 yConstr.setCoefficient(node2Island[nodeId][islandId], 1);
+    //                 yConstr.setCoefficient(nodeY[nodeId], 1);
+    //             } else {
+    //                 yConstr.setCoefficient(node2Island[nodeId][islandId], -1);
+    //                 yConstr.setCoefficient(nodeY[nodeId], 1);
+    //             }
+    //         }
+    //     }
 
-        // create objective
-        MPObjective objective = solver.objective();
-        for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
-            objective.setCoefficient(edgeLeftX[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-            objective.setCoefficient(edgeRightX[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-            objective.setCoefficient(edgeLowerY[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-            objective.setCoefficient(edgeUpperY[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
-        }
+    //     // create objective
+    //     MPObjective objective = solver.objective();
+    //     for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+    //         objective.setCoefficient(edgeLeftX[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //         objective.setCoefficient(edgeRightX[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //         objective.setCoefficient(edgeLowerY[edgeId], -1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //         objective.setCoefficient(edgeUpperY[edgeId], 1.0 * hyperGraph.getEdgeWeightsSum(edgeId));
+    //     }
 
-        logger.info("Complete formulating optimization problem");
+    //     logger.info("Complete formulating optimization problem");
 
-        // launch kernel solver
-        logger.info("Launch kernel solver");
-        RuntimeTracker timer = new RuntimeTracker("SCIP Solver", (short) 0);
-        timer.start();
-        MPSolver.ResultStatus resultStatus = solver.solve();
-        timer.stop();
-        logger.info(String.format("Complete running kernel solver in %.2f sec", timer.getTimeInSec()));
+    //     // launch kernel solver
+    //     logger.info("Launch kernel solver");
+    //     RuntimeTracker timer = new RuntimeTracker("SCIP Solver", (short) 0);
+    //     timer.start();
+    //     MPSolver.ResultStatus resultStatus = solver.solve();
+    //     timer.stop();
+    //     logger.info(String.format("Complete running kernel solver in %.2f sec", timer.getTimeInSec()));
 
-        // collect results
-        if (resultStatus == MPSolver.ResultStatus.OPTIMAL || resultStatus == MPSolver.ResultStatus.FEASIBLE) {
-            logger.info("Find feasible solution with objective value: " + objective.value());
+    //     // collect results
+    //     if (resultStatus == MPSolver.ResultStatus.OPTIMAL || resultStatus == MPSolver.ResultStatus.FEASIBLE) {
+    //         logger.info("Find feasible solution with objective value: " + objective.value());
 
-            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-                logger.info(String.format("node-%d x=%.3f y=%.3f", nodeId, nodeX[nodeId].solutionValue(), nodeY[nodeId].solutionValue()));
-                String node2IslandStr = String.format("node-%d to island: ", nodeId);
-                for (int islandId = 0; islandId < islandNum; islandId++) {
-                    node2IslandStr += String.format("%.3f ", node2Island[nodeId][islandId].solutionValue());
-                }
-                logger.info(node2IslandStr);
+    //         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+    //             logger.info(String.format("node-%d x=%.3f y=%.3f", nodeId, nodeX[nodeId].solutionValue(), nodeY[nodeId].solutionValue()));
+    //             String node2IslandStr = String.format("node-%d to island: ", nodeId);
+    //             for (int islandId = 0; islandId < islandNum; islandId++) {
+    //                 node2IslandStr += String.format("%.3f ", node2Island[nodeId][islandId].solutionValue());
+    //             }
+    //             logger.info(node2IslandStr);
 
-                Coordinate2D nodeLoc = Coordinate2D.of((int) nodeX[nodeId].solutionValue(), (int) nodeY[nodeId].solutionValue());
-                node2IslandLoc.add(nodeLoc);
-            }
-        } else {
-            logger.info("Failed to find feasible solution");
-        }
+    //             Coordinate2D nodeLoc = Coordinate2D.of((int) nodeX[nodeId].solutionValue(), (int) nodeY[nodeId].solutionValue());
+    //             node2IslandLoc.add(nodeLoc);
+    //         }
+    //     } else {
+    //         logger.info("Failed to find feasible solution");
+    //     }
 
-        logger.endSubStep();
-        logger.info("Complete running MIPSolver2");
-        return node2IslandLoc;
-    }
+    //     logger.endSubStep();
+    //     logger.info("Complete running MIPSolver2");
+    //     return node2IslandLoc;
+    // }
 
     private List<Coordinate2D> runCpSATSolver() {
-        assert islandDim.getX() == 2 && islandDim.getY() == 2;
+        assert gridDim.getX() >= 1 && gridDim.getY() >= 1;
+        assert gridDim.getX() <= 2 && gridDim.getY() <= 2;
 
         logger.info("Start solving island placement through Cp-SAT solver");
         logger.newSubStep();
@@ -454,6 +473,19 @@ public class ILPIslandPartitioner {
         }
 
         // create constraints
+        //// node loc constraints
+        if (gridDim.getX() == 1) {
+            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+                model.addEquality(nodeX[nodeId], 0);
+            }
+        }
+
+        if (gridDim.getY() == 1) {
+            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+                model.addEquality(nodeY[nodeId], 0);
+            }
+        }
+
         //// edge bound location constraints
         for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
             List<Literal> incidentNodesX = new ArrayList<>();
@@ -483,15 +515,27 @@ public class ILPIslandPartitioner {
         }
         
         //// island size constraints
-        for (int islandId = 0; islandId < islandNum; islandId++) {
-            LinearExprBuilder expr = LinearExpr.newBuilder();
-            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
-                long nodeWeight = hyperGraph.getNodeWeightsSum(nodeId).longValue();
-                expr.addTerm(node2Island[nodeId][islandId], nodeWeight);
-            }
+        gridDim.traverse((Coordinate2D loc) -> {
+            int islandId = getIdxFromLoc(loc);
 
-            long upperBound = (long) Math.ceil(hyperGraph.getNodeWeightsSum(islandSizeUpperBound));
-            model.addLessOrEqual(expr, upperBound);
+            for (int i = 0; i < hyperGraph.getNodeWeightDim(); i++) {
+                LinearExprBuilder expr = LinearExpr.newBuilder();
+                for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+                    long nodeWeight = hyperGraph.getWeightsOfNode(nodeId).get(i).longValue();
+                    expr.addTerm(node2Island[nodeId][islandId], nodeWeight);
+                }
+                long upperBound = (long) Math.ceil(gridLimits[loc.getX()][loc.getY()].get(i));
+                model.addLessOrEqual(expr, upperBound);
+            }
+        });
+
+        //// fixed node constraints
+        for (int nodeId : fixedNodes.keySet()) {
+            Coordinate2D loc = fixedNodes.get(nodeId);
+            assert loc.getX() >= 0 && loc.getX() < gridDim.getX();
+            assert loc.getY() >= 0 && loc.getY() < gridDim.getY();
+            model.addEquality(nodeX[nodeId], loc.getX());
+            model.addEquality(nodeY[nodeId], loc.getY());
         }
 
         //// node to island mapping constraints
@@ -508,7 +552,7 @@ public class ILPIslandPartitioner {
         //// x - node2Island[nodeId][islandId] <= 0 -> node2Island[nodeId][islandId] == 1 -> x == 1
         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
             for (int islandId = 0; islandId < islandNum; islandId++) {
-                Coordinate2D islandLoc = getIslandLocFromIndex(islandId);
+                Coordinate2D islandLoc = getLocFromIdx(islandId);
                 LinearExprBuilder xExpr = LinearExpr.newBuilder();
                 if (islandLoc.getX() == 1) {
                     xExpr.addTerm(nodeX[nodeId], 1);
@@ -561,13 +605,13 @@ public class ILPIslandPartitioner {
             for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
                 long x = solver.value(nodeX[nodeId]);
                 long y = solver.value(nodeY[nodeId]);
-                logger.info(String.format("node-%d x=%d y=%d", nodeId, x, y));
+                //logger.info(String.format("node-%d x=%d y=%d", nodeId, x, y));
 
                 Coordinate2D nodeLoc = Coordinate2D.of((int) x, (int) y);
                 node2IslandLoc.add(nodeLoc);
             }
         } else {
-            logger.info("Failed to find feasible solution");
+            assert false: "Failed to find feasible solution";
         }
         
         logger.endSubStep();
@@ -578,32 +622,38 @@ public class ILPIslandPartitioner {
     // constraint checkers
     private Boolean checkIslandSizeConstr() {
         logger.info("Start checking island size constraints");
-        List<Double>[][] islandSizes = new ArrayList[islandDim.getX()][islandDim.getY()];
-        islandDim.traverse((Coordinate2D loc) -> {
+        List<Double>[][] islandSizes = new ArrayList[gridDim.getX()][gridDim.getY()];
+        gridDim.traverse((Coordinate2D loc) -> {
             List<Double> zeroIsland = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeWeightDim(), 0.0));
             islandSizes[loc.getX()][loc.getY()] = zeroIsland;
         });
 
         for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
             Coordinate2D loc = node2IslandLoc.get(nodeId);
-            assert loc.getX() >= 0 && loc.getX() < islandDim.getX();
-            assert loc.getY() >= 0 && loc.getY() < islandDim.getY();
+            assert loc.getX() >= 0 && loc.getX() < gridDim.getX();
+            assert loc.getY() >= 0 && loc.getY() < gridDim.getY();
             List<Double> islandSize = islandSizes[loc.getX()][loc.getY()];
             List<Double> nodeWeight = hyperGraph.getWeightsOfNode(nodeId);
             HyperGraph.accuWeights(islandSize, nodeWeight);
         }
 
         Boolean hasViolation = false;
-        for (int x = 0; x < islandDim.getX(); x++) {
-            for (int y = 0; y < islandDim.getY(); y++) {
+        logger.info("Node Weight Distribution:");
+        for (int y = gridDim.getY() - 1; y >= 0; y--) {
+            String rowStr = "";
+            for (int x = 0; x < gridDim.getX(); x++) {
                 List<Double> islandSize = islandSizes[x][y];
-                double islandSizeSum = hyperGraph.getNodeWeightsSum(islandSize);
-                double upperBound = hyperGraph.getNodeWeightsSum(islandSizeUpperBound);
-                if (islandSizeSum > upperBound) {
+                List<Double> islandLimit = gridLimits[x][y];
+                rowStr += String.format("%s(%s)  ", islandSize, islandLimit);
+                if (!VecOps.lessEq(islandSize, islandLimit)) {
                     hasViolation = true;
-                    logger.info(String.format("The size of island%s(%.3f) exceeds the upper bound(%.3f)", Coordinate2D.of(x, y), islandSizeSum, upperBound));
                 }
             }
+            logger.info(rowStr);
+        }
+        if (hasViolation) {
+            logger.info(String.format("Island size constraints are violated"));
+
         }
 
         logger.info("Complete checking island size constraints");
@@ -613,6 +663,8 @@ public class ILPIslandPartitioner {
     private Boolean checkEdgeLengthConstr() {
         logger.info("Start checking edge length constraints");
         Integer violatedEdgeNum = 0;
+
+        List<Double> cutSize = new ArrayList<>(Collections.nCopies(hyperGraph.getNodeWeightDim(), 0.0));
 
         for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
             Set<Coordinate2D> nodeLocs = new HashSet<>();
@@ -633,32 +685,38 @@ public class ILPIslandPartitioner {
                 }
             }
 
+            if (nodeLocs.size() > 1) {
+                VecOps.accu(cutSize, hyperGraph.getWeightsOfEdge(edgeId));
+            }
+
         }
+        logger.info("Cut Size: " + cutSize);
         logger.info("The number of violated edges: " + violatedEdgeNum);
 
         logger.info("Complete checking edge length constraints");
         return violatedEdgeNum == 0;
     }
 
-    private Coordinate2D getIslandLocFromIndex(int index) {
+    private boolean checkFixedNodesConstr() {
+        for (int nodeId : fixedNodes.keySet()) {
+            Coordinate2D fixedloc = fixedNodes.get(nodeId);
+            Coordinate2D actualLoc = node2IslandLoc.get(nodeId);
+            if (!fixedloc.equals(actualLoc)) {
+                logger.info(String.format("Fixed node-%d is placed at %s, but the solution is %s", nodeId, fixedloc, actualLoc));
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private int getIdxFromLoc(Coordinate2D loc) {
+        return loc.getX() * gridDim.getY() + loc.getY();
+    }
+
+    private Coordinate2D getLocFromIdx(int index) {
         // island is distribution:
         // 1 3 5
         // 0 2 4
-        return Coordinate2D.of(index / islandDim.getY(), index % islandDim.getY());
-    }
-
-    private void setIslandSizeBound() {
-        List<Double> totalNodeWeights = hyperGraph.getTotalNodeWeight();
-
-        islandSizeUpperBound = new ArrayList<>();
-        for (int i = 0; i < totalNodeWeights.size(); i++) {
-            Double nodeWeight = totalNodeWeights.get(i);
-            Double imbalanceFac = config.imbFactors.get(i);
-
-            Double upperBound = nodeWeight * ((1.0 / islandNum) + imbalanceFac);
-            islandSizeUpperBound.add(upperBound);
-        }
-        logger.info("Total node weights: " + totalNodeWeights);
-        logger.info("Island size upper bounds: " + islandSizeUpperBound);
+        return Coordinate2D.of(index / gridDim.getY(), index % gridDim.getY());
     }
 }

@@ -55,7 +55,11 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         //fmPartitioner.run();
         //fmPartitioner.checkPartitionResult();
 
-        minCutPlace();
+        if (gridDim.getY() == 1) {
+            minCutBiPlace();
+        } else {
+            minCutPlace();
+        }
 
         //printTotalNodeWeightsOfEdges();
         //iterativeMinCutPlace();
@@ -241,6 +245,37 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
         logger.info("Complete iterative min-cut-based placement");
     }
 
+    private void minCutBiPlace() {
+        logger.info("Start min-cut bi-placement");
+        Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
+
+        // perform partition in the first dimension
+        TritonPartitionWrapper.Config config = new TritonPartitionWrapper.Config(workDir);
+        if (designParams.getRandomSeed() != null) {
+            config.randomSeed = designParams.getRandomSeed();
+        }
+        if (designParams.getImbalanceFac() != null) {
+            config.imbFactors = Arrays.asList(designParams.getImbalanceFac());
+        }
+        TritonPartitionWrapper partitioner = new TritonPartitionWrapper(logger, config, netlistGraph);
+
+        printHyperGraphInfo(netlistGraph);
+        List<Integer> partResultDim0 = partitioner.run();
+        List<Integer> partResultDim1 = new ArrayList<>(Collections.nCopies(netlistGraph.getNodeNum(), 0));
+
+        node2IslandLoc = new ArrayList<>();
+        for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
+            node2IslandLoc.add(Coordinate2D.of(partResultDim0.get(nodeId), partResultDim1.get(nodeId)));
+        }
+
+        buildNode2IslandMap();
+        buildEdge2BoundaryMap();
+
+        printIslandPlacementResult();
+
+        logger.info("Complete min-cut bi-placement");
+    }
+
     private void minCutPlace() {
         logger.info("Start min-cut placement");
         Path workDir = dirManager.addSubDir(NameConvention.islandPlacerDirName);
@@ -283,7 +318,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             }
 
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
-            printHyperGraphInfo(subGraph);
+            // printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, config, subGraph);
             subGraph.updatePartResultOfParent(partitioner.run(), partResultDim1);
@@ -331,7 +366,7 @@ public class IslandPlacer2 extends AbstractIslandPlacer {
             }
 
             HierHyperGraph subGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
-            printHyperGraphInfo(subGraph);
+            // printHyperGraphInfo(subGraph);
 
             partitioner = new TritonPartitionWrapper(logger, config, subGraph);
             

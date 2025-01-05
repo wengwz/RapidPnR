@@ -96,6 +96,23 @@ public class HierarchicalLogger {
         }
     }
 
+    public void logHeader(Level level, String headerName) {
+        int headerLen = 80;
+        int headerNameLen = headerName.length();
+        String separatorStr = "=".repeat(headerLen);
+        int frontBlankSpace = (headerLen - 4 - headerNameLen) / 2;
+        int backBlankSpace = headerLen - 4 - headerNameLen - frontBlankSpace;
+        String nameStr = String.format("==" + " ".repeat(frontBlankSpace) + headerName + " ".repeat(backBlankSpace) + "==");
+        log(level, "");
+        log(level, separatorStr);
+        log(level, nameStr);
+        log(level, separatorStr);
+    }
+
+    public void infoHeader(String name) {
+        logHeader(Level.INFO, name);
+    }
+
     public static HierarchicalLogger createLogger(String logName, Path logFilePath, Boolean enableConsle) {
         HierarchicalLogger logger = new HierarchicalLogger(logName);
         logger.setUseParentHandlers(false);

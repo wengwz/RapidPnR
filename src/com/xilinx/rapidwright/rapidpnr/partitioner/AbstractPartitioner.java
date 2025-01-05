@@ -166,6 +166,48 @@ abstract public class AbstractPartitioner {
         logger.info("Complete edge-based cut size refinement");
     }
 
+    protected void randomVertexBasedRefinement() {
+        logger.info("Start random vertex-based refinement");
+
+        int passId = 0;
+        double totalGain = 0;
+
+        while(true) {
+            logger.info(String.format("Start pass-%d of vertex-based refinement", passId));
+            double passGain = 0;
+
+            List<Integer> randNodeIds = new ArrayList<>();
+            for (int nodeId = 0; nodeId < hyperGraph.getNodeNum(); nodeId++) {
+                randNodeIds.add(nodeId);
+            }
+            Collections.shuffle(randNodeIds, new Random(config.randomSeed + passId));
+
+            for (int nodeId : randNodeIds) {
+                double maxGain = 0;
+                int maxGainBlkId = -1;
+    
+                for (int blkId = 0; blkId < config.blockNum; blkId++) {
+                    if (blkId == node2BlockId.get(nodeId)) continue;
+                    double moveGain = getMoveGainOf(Map.of(nodeId, blkId));
+                    if (maxGainBlkId == -1 || moveGain > maxGain) {
+                        maxGain = moveGain;
+                        maxGainBlkId = blkId;
+                    }
+                }
+    
+                if (maxGain >= 0 && isMoveLegal(nodeId, maxGainBlkId)) {
+                    moveNode(nodeId, maxGainBlkId);
+                    passGain += maxGain;
+                }
+            }
+            passId++;
+            totalGain += passGain;
+            if (passGain == 0) break;
+        }
+
+        logger.info(String.format("Complete %d passes random vertex-based refinement with gain=%.2f", passId, totalGain));
+    }
+
     protected Double getMoveGainOf(Map<Integer, Integer> movedNodes) {
         Double moveGain = 0.0;
         Map<Integer, Integer> fromBlkIds = new HashMap<>();
@@ -211,6 +253,7 @@ abstract public class AbstractPartitioner {
         for (int nodeId : fixedNodes.keySet()) {
             int blockId = fixedNodes.get(nodeId);
             if (node2BlockId.get(nodeId) != blockId) {
+                logger.info(String.format("Fixed node-%d(%d) is not in block-%d", nodeId, node2BlockId.get(nodeId), blockId));
                 return false;
             }
         }
@@ -321,6 +364,10 @@ abstract public class AbstractPartitioner {
         assert blockNum >= 2;
         this.config.blockNum = blockNum;
         setBlockSizeBound();
+        blockSizes = new ArrayList<>();
+        for (int blockId = 0; blockId < config.blockNum; blockId++) {
+            blockSizes.add(new ArrayList<>(Collections.nCopies(hyperGraph.getNodeWeightDim(), 0.0)));
+        }
     }
 
     public void setRandomSeed(int randomSeed) {
@@ -459,5 +506,13 @@ abstract public class AbstractPartitioner {
             }
         }
         return true;
+    }
+
+    protected static List<Double> vecMulScalar(List<Double> a, Double b) {
+        List<Double> res = new ArrayList<>();
+        for (int i = 0; i < a.size(); i++) {
+            res.add(a.get(i) * b);
+        }
+        return res;
     }
 }

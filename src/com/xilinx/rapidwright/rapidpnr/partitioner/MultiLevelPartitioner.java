@@ -17,15 +17,17 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         public Coarser.Config coarserConfig;
         public int coarsenStopNodeNum = 100;
 
-        // fm refiner configuartion
-        int maxPassNum = 3;
-        double passEarlyExitRatio = 0.25;
-        double extremeLargeRatio = 0.1;
+        // refiner configuartion
+        public int fmMaxPassNum = 3;
+        public double fmPassEarlyExitRatio = 0.25;
+        public double fmExtremeLargeRatio = 0.2;
+        public int randRefineNodeNum = 10000;
+        public int refineEdgeNum = 100000;
 
         //
-        int parallelRunNum = 1;
-        boolean vCycleRefine = false;
-        double vCycleUncoarseLevelRatio = 0.7;
+        public int parallelRunNum = 1;
+        public boolean vCycleRefine = false;
+        public double vCycleUncoarseLevelRatio = 0.5;
 
         @Override
         public String toString() {
@@ -40,9 +42,9 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
             super(config);
             coarserConfig = new Coarser.Config(config.coarserConfig);
             coarsenStopNodeNum = config.coarsenStopNodeNum;
-            maxPassNum = config.maxPassNum;
-            passEarlyExitRatio = config.passEarlyExitRatio;
-            extremeLargeRatio = config.extremeLargeRatio;
+            fmMaxPassNum = config.fmMaxPassNum;
+            fmPassEarlyExitRatio = config.fmPassEarlyExitRatio;
+            fmExtremeLargeRatio = config.fmExtremeLargeRatio;
             parallelRunNum = config.parallelRunNum;
             vCycleRefine = config.vCycleRefine;
             vCycleUncoarseLevelRatio = config.vCycleUncoarseLevelRatio;
@@ -55,19 +57,22 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
             super(logger, config, hyperGraph);
         }
 
-        @Override
-        public List<Integer> run(List<Integer> initialPartRes) {
+        public List<Integer> run(List<Integer> initialPartRes, int refineEdgeNum, int randRefineNodeNum) {
             logger.info("Start partition refinement");
             logger.newSubStep();
 
             setPartResult(initialPartRes, true);
             double initialCutSize = cutSize;
 
-            setupNode2MoveGain(node2BlockId);
+            if (hyperGraph.getEdgeNum() < refineEdgeNum) {
+                edgeBasedRefinement();
+            }
 
-            edgeBasedRefinement();
-
-            vertexBasedRefine();
+            if (hyperGraph.getNodeNum() < randRefineNodeNum) {
+                vertexBasedRefine();
+            } else {
+                randomVertexBasedRefinement();
+            }
 
             printPartitionInfo();
 
@@ -116,20 +121,23 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         logger.info("Start multi-level partitioning");
         logger.newSubStep();
 
+        originHierGraph.setFixedNodes(this.fixedNodes);
+
         List<Integer> partResult;
         if (config.parallelRunNum > 1) {
             partResult = parallelRun(config.parallelRunNum);
         } else {
             partResult = singleRun();
         }
+
         setPartResult(partResult, true);
         printPartitionInfo();
 
         if (config.vCycleRefine) {
             partResult = multiPhaseRefinement(originHierGraph, partResult);
+            setPartResult(partResult, true);
+            printPartitionInfo();
         }
-        setPartResult(partResult, true);
-        printPartitionInfo();
 
         logger.endSubStep();
         logger.info("Complete multi-level partitioning");
@@ -190,15 +198,22 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
                 PartitionThread thread = partitionThreads.get(id);
                 if (thread.isAlive()) continue;
 
-                Double cutSize = thread.partitioner.cutSize;
-                logger.info(String.format("Partition thread %d complete with cutSize=%.2f", id, cutSize));
-
                 threadComplete.set(id, true);
+                completeThreadNum++;
+
+                Boolean isFail = thread.partitioner.node2BlockId.stream().anyMatch(blockId -> blockId < 0);
+                if (isFail) {
+                    logger.info(String.format("Partition thread %d failed", id));
+                    continue;
+                }
+
+                Double cutSize = thread.partitioner.cutSize;
+                int seed = thread.partitioner.config.randomSeed;
+                logger.info(String.format("Partition thread %d completes successfully with cutSize=%.2f seed=%d", id, cutSize, seed));
                 if (cutSize < minCutSize) {
                     minCutSize = cutSize;
                     minCutThreadId = id;
                 }
-                completeThreadNum++;
             }            
         }
 
@@ -227,11 +242,20 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         while(curGraph.getNodeNum() > config.coarsenStopNodeNum) {
             logger.info(String.format("The level of coarsening %d", coarseLevel));
 
+            int originNodeNum = curGraph.getNodeNum();
+            coarserConfig.dontTouchNodes.addAll(curGraph.getFixedNodes().keySet());
             curGraph = Coarser.coarsening(coarserConfig, curGraph);
+            int newNodeNum = curGraph.getNodeNum();
+
             logger.info("Coarsened Hypergraph: \n" + curGraph.getHyperGraphInfo(false), true);
             
             coarseLevel++;
             coarserConfig.seed++; // modify random seed for next coarsening
+
+            if (originNodeNum == newNodeNum) {
+                logger.info("Coarsening aborta due to no reduction in node amount");
+                break;
+            }
         }
 
         logger.info("Coarsest Hypergraph:\n" + curGraph.getHyperGraphInfo(true), true);
@@ -248,6 +272,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         // FM-based initial partitioning
         FMPartitioner.Config fmPartConfig = new FMPartitioner.Config(config);
         FMPartitioner fmPartitioner = new FMPartitioner(logger, fmPartConfig, hyperGraph);
+        fmPartitioner.setFixedNodes(hyperGraph.getFixedNodes());
 
         List<Integer> partResults = fmPartitioner.run();
 
@@ -262,7 +287,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         List<Integer> curPartResult = initPart;
 
         logger.newSubStep();
-        FMPartitioner.Config refinerConfig = new FMPartitioner.Config(config, config.maxPassNum, config.passEarlyExitRatio, config.extremeLargeRatio);
+        FMPartitioner.Config refinerConfig = new FMPartitioner.Config(config, config.fmMaxPassNum, config.fmPassEarlyExitRatio, config.fmExtremeLargeRatio);
         refinerConfig.verbose = false;
         int iterCount = 0;
         while (!curHyperGraph.isRootGraph()) {
@@ -280,12 +305,14 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
 
             // refine partition
             FMRefiner refiner = new FMRefiner(logger, refinerConfig, parentGraph);
+            refiner.setFixedNodes(parentGraph.getFixedNodes());
             
-            curPartResult = refiner.run(parentPartResult);
+            curPartResult = refiner.run(parentPartResult, config.refineEdgeNum, config.randRefineNodeNum);
             curHyperGraph = parentGraph;
 
             logger.endSubStep();
             iterCount++;
+            refinerConfig.randomSeed++;
         }
         logger.endSubStep();
 
@@ -334,7 +361,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
             public double uncoarsenAndRefine(int stopLevel, int seed) { // return cut size gain
                 logger.info("Start uncoarsening and refinement");
                 logger.newSubStep();
-                FMPartitioner.Config refinerConfig = new FMPartitioner.Config(config, config.maxPassNum, config.passEarlyExitRatio, config.extremeLargeRatio);
+                FMPartitioner.Config refinerConfig = new FMPartitioner.Config(config, config.fmMaxPassNum, config.fmPassEarlyExitRatio, config.fmExtremeLargeRatio);
                 refinerConfig.verbose = false;
                 refinerConfig.randomSeed = seed;
 
@@ -401,7 +428,7 @@ public class MultiLevelPartitioner extends AbstractPartitioner{
         Config config = new Config();
         config.randomSeed = 999;
         config.parallelRunNum = 20;
-        config.vCycleRefine = true;
+        config.vCycleRefine = false;
         config.vCycleUncoarseLevelRatio = 0.5;
         config.coarserConfig.maxNodeSizeRatio = 0.4;
 

@@ -5,6 +5,14 @@ import java.util.function.Consumer;
 import com.xilinx.rapidwright.util.Pair;
 
 public class Coordinate2D extends Pair<Integer, Integer> {
+
+    public Coordinate2D() {
+        super(-1, -1);
+    }
+
+    public Coordinate2D(Coordinate2D loc) {
+        super(loc.getX(), loc.getY());
+    }
     
     public Coordinate2D(Integer x, Integer y) {
         super(x, y);
@@ -16,6 +24,14 @@ public class Coordinate2D extends Pair<Integer, Integer> {
 
     public Integer getY() {
         return getSecond();
+    }
+
+    public void setX(int x) {
+        setFirst(x);
+    }
+
+    public void setY(int y) {
+        setSecond(y);
     }
 
     public int getDistX(Coordinate2D other) {

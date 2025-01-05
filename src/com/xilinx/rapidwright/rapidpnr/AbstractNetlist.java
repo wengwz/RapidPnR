@@ -19,7 +19,7 @@ import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 
 abstract public class AbstractNetlist {
 
-    public static boolean calibrateLUTUtils = true;
+    public static boolean calibrateLUTUtils = false;
     
     protected HierarchicalLogger logger;
     protected NetlistDatabase netlistDatabase;
@@ -46,8 +46,6 @@ abstract public class AbstractNetlist {
     }
 
     public void buildAbstractNetlist(NetlistDatabase netlistDatabase) {
-        logger.info("Start building abstract netlist:");
-        logger.newSubStep();
 
         this.netlistDatabase = netlistDatabase;
 
@@ -57,8 +55,6 @@ abstract public class AbstractNetlist {
 
         buildNode2ResUtilMap();
 
-        logger.endSubStep();
-        logger.info("Complete building abstract netlist");
     }
 
     abstract protected void buildNode2CellInstsMap();

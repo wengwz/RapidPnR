@@ -39,8 +39,8 @@ public class MultilevelIslandPlacer extends AbstractIslandPlacer {
         coarserConfig = new Coarser.Config(Coarser.Scheme.FC, 9999, 2.0, 0.1);
 
         ilpPartConfig = new ILPIslandPartitioner.Config();
-        ilpPartConfig.islandDim = gridDim;
-        ilpPartConfig.imbFactors = Arrays.asList(0.05);
+        ilpPartConfig.gridDim = gridDim;
+        //ilpPartConfig.imbFactors = Arrays.asList(0.05);
     }
 
     public List<Coordinate2D> run(AbstractNetlist abstractNetlist) {

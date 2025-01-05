@@ -47,6 +47,7 @@ public class NetlistDatabase {
     //// Resource Utils
     public int netlistUnisimCellNum;
     public int netlistLeafCellNum;
+    public int calibratedLeafCellNum;
     public Map<EDIFCell, Integer> netlistLeafCellUtilMap;
 
 
@@ -282,8 +283,9 @@ public class NetlistDatabase {
         netlistUnisimCellNum = originTopCell.getCellInsts().size(); // TODO: only applicable for flat netlist
         netlistLeafCellUtilMap = new HashMap<>();
         NetlistUtils.getLeafCellUtils(originTopCell, netlistLeafCellUtilMap);
-        NetlistUtils.calibrateLUTUtils(originTopCell, netlistLeafCellUtilMap);
         netlistLeafCellNum = netlistLeafCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
+        NetlistUtils.calibrateLUTUtils(originTopCell, netlistLeafCellUtilMap);
+        calibratedLeafCellNum = netlistLeafCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
 
         logger.info("Complete collecting resource utilization info");
     }
@@ -408,6 +410,7 @@ public class NetlistDatabase {
         logger.newSubStep();
         
         logger.info("Total number of Primitive/Leaf cells: " + netlistLeafCellNum);
+        logger.info("Total number of Calibrated Leaf cells: " + calibratedLeafCellNum);
         logger.info("Primitive/Leaf Cell Distribution:");
         logger.newSubStep();
         for (Map.Entry<EDIFCell, Integer> entry : netlistLeafCellUtilMap.entrySet()) {

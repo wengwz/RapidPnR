@@ -66,9 +66,9 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         }
     }
 
-    public void run(AbstractNetlist abstractNetlist, List<Coordinate2D> groupLocs) {
+    public void run(AbstractNetlist abstractNetlist, List<Coordinate2D> abstractNodeLocs) {
         // load results of previous stages
-        loadPreStepsResult(abstractNetlist, groupLocs, true);
+        loadPreStepsResult(abstractNetlist, abstractNodeLocs, true);
 
         JobQueue jobQueue = new JobQueue();
         RuntimeTrackerTree runtimeTrackerTree = new RuntimeTrackerTree("FastParallelIslandPnR", false);
@@ -143,9 +143,11 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
 
     private Set<EDIFCellInst>[][] buildPartialIslands() {
         Set<EDIFCellInst>[][] partialIslands = new HashSet[gridDim.getX()][gridDim.getY()];
-        
+        Integer[][] partialIslandSizes = new Integer[gridDim.getX()][gridDim.getY()];
+
         gridDim.traverse((Coordinate2D loc) -> {
             partialIslands[loc.getX()][loc.getY()] = new HashSet<>();
+            partialIslandSizes[loc.getX()][loc.getY()] = 0;
         });
 
         Set<EDIFCellInst> boundaryCellInsts = new HashSet<>();
@@ -202,7 +204,7 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
                             Coordinate2D loc = cellInst2IslandLocMap.get(expandCellInst);
                             assert loc != null;
         
-                            // if (neighborSize < designParams.getBoundaryNeighborSize()) {
+                            //if (neighborSize < designParams.getBoundaryNeighborSize()) {
                             if (cellInst2DistMap.get(expandCellInst) <= 1) {
                                 partialIslands[loc.getX()][loc.getY()].add(expandCellInst);
         
@@ -222,7 +224,6 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
                     }
                 }
             }
-
         }
 
         BreadthFirstExpansion expandBoundary = new BreadthFirstExpansion();
@@ -238,7 +239,6 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
     private Design createBoundaryDesign() {
         Design design = new Design("boundary", netlistDB.partName);
         EDIFNetlist netlist = design.getNetlist();
-        //EDIFLibrary workLib = netlist.getWorkLibrary();
         EDIFCell topCell = netlist.getTopCell();
 
         Set<EDIFCellInst>[][] partialIslands;
@@ -381,9 +381,10 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         tclFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
         //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicHigh, false));
-        tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
+        //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
         //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.Quick, false));
         //tclFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.RuntimeOpt, false));
+        tclFile.addCmd(VivadoTclCmd.placeDesign());
 
         tclFile.addCmd(VivadoTclCmd.deletePblock());
 
@@ -554,7 +555,7 @@ public class FastParallelIslandPnR extends AbstractPhysicalImpl{
         tclCmdFile.addCmd(VivadoTclCmd.placeDesign());
         //tclCmdFile.addCmd(VivadoTclCmd.placeDesign(VivadoTclCmd.PlacerDirective.SpreadLogicMedium, false));
         tclCmdFile.addCmd(VivadoTclCmd.routeDesign());
-        tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
+        //tclCmdFile.addCmds(VivadoTclCmd.conditionalPhysOptDesign());
 
         String timingRptPath = addSuffixRpt("timing_summary");
         tclCmdFile.addCmd(VivadoTclCmd.reportTimingSummary(0, timingRptPath));
