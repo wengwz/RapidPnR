@@ -1,0 +1,30 @@
+{
+    "designName": "hardcaml-ntt",
+    "clkPortNames": ["ap_clk"],
+    "mainClkName": "ap_clk",
+    "resetPortNames": ["ap_rst_n"],
+    "clkPeriods": {"ap_clk": 3.3},
+
+    "inputDcpPath": "workspace/dcp/hardcaml-ntt.dcp",
+    "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
+    "workDir": "test/rapidpnr/results2",
+    "vivadoCmd": "vivado",
+    "vivadoMaxThreadNum": 24,
+
+    "abstractLevel": 2,
+
+    "singleBoundaryConstr": false,
+    "prePlaceResTypes": ["URAM"],
+    "randomSeed": 999,
+    "imbalanceFac": 0.02,
+    "parallelRunNum": 2,
+    "partitionKernel": "TRITON",
+
+    "fullRouteMerge": true,
+    "islandIODelayConstr": true,
+    "islandRoutePhysSyn": false,
+    "mergeRouteOpt": "RuntimeOptimized",
+    "mergeRoutePhysSyn": false,
+    "boundaryNeighborSize": 4000,
+    "islandPeriodDecrement": 0.2
+}

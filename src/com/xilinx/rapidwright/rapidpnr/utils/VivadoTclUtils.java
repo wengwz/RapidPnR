@@ -61,6 +61,44 @@ public class VivadoTclUtils {
             public static final String SpreadLogicHigh = "AltSpreadLogic_high";
             public static final String SpreadLogicMedium = "AltSpreadLogic_medium";
             public static final String SpreadLogicLow = "AltSpreadLogic_low";
+
+            public static boolean isVaildDirective(String directive) {
+                Set<String> validDirectives = new HashSet<>();
+                validDirectives.add(Default);
+                validDirectives.add(RuntimeOpt);
+                validDirectives.add(Quick);
+                validDirectives.add(SpreadLogicHigh);
+                validDirectives.add(SpreadLogicMedium);
+                validDirectives.add(SpreadLogicLow);
+                return validDirectives.contains(directive);
+            }
+        }
+
+        public static enum RouteDirective {
+            Default,
+            Quick,
+            RuntimeOptimized,
+            Explore,
+            AggressiveExplore;
+
+            public static RouteDirective fromString(String directive) {
+                if (directive == null) {
+                    return Default;
+                }
+                switch (directive) {
+                    case "Quick":
+                        return Quick;
+                    case "RuntimeOptimized":
+                        return RuntimeOptimized;
+                    case "Explore":
+                        return Explore;
+                    case "AggressiveExplore":
+                        return AggressiveExplore;
+                    default:
+                        assert false : "Invalid route directive: " + directive;
+                        return Default;
+                }
+            }
         }
 
         public static class LockDesignLevel {
@@ -334,7 +372,7 @@ public class VivadoTclUtils {
             return placeDesign(null, false);
         }
     
-        public static String routeDesign(String directive, Boolean ultraThreads) {
+        public static String routeDesign(String directive, Boolean ultraThreads, Boolean noPSIR, Boolean preserve) {
             String cmdString = "route_design";
             if (directive != null) {
                 cmdString += " -directive " + directive;
@@ -342,6 +380,14 @@ public class VivadoTclUtils {
 
             if (ultraThreads) {
                 cmdString += " -ultrathreads";
+            }
+
+            if (noPSIR) {
+                cmdString += " -no_psir";
+            }
+
+            if (preserve) {
+                cmdString += " -preserve";
             }
 
             return cmdString;
@@ -356,7 +402,7 @@ public class VivadoTclUtils {
         }
 
         public static String routeDesign() {
-            return routeDesign(null, false);
+            return routeDesign(null, false, false, false);
         }
 
         public static List<String> routeUnroutedNetsWithMinDelay() {
@@ -493,5 +539,9 @@ public class VivadoTclUtils {
         public static String deletePblock() {
             return "delete_pblock *";
         }
+    }
+
+    public static void main(String[] args) {
+        System.out.println("VivadoTclCmd: " + VivadoTclCmd.RouteDirective.Default);
     }
 }

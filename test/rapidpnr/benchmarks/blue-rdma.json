@@ -1,0 +1,27 @@
+{
+    "designName": "blue-rdma",
+    "clkPortNames": ["CLK"],
+    "mainClkName": "CLK",
+    "resetPortNames": ["RST_N"],
+    "clkPeriods": {"CLK": 3.6},
+
+    "verbose": false,
+
+    "inputDcpPath": "workspace/dcp/blue-rdma-direct-rst-ooc-flat2.dcp",
+    "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
+    "workDir": "test/rapidpnr/results",
+    "vivadoCmd": "vivado",
+    "vivadoMaxThreadNum": 24,
+
+    "abstractLevel": 7,
+
+    "singleBoundaryConstr": true,
+    "randomSeed": 999,
+    "imbalanceFac": 0.01,
+    "partitionKernel": "TRITON",
+
+    "fullRouteMerge": true,
+    "islandIODelayConstr": false,
+    "boundaryNeighborSize": 4000,
+    "islandPeriodDecrement": 0.1
+  }

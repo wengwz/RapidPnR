@@ -1,0 +1,29 @@
+{
+    "designName": "ntt-large",
+    "clkPortNames": ["clk_i"],
+    "mainClkName": "clk_i",
+    "resetPortNames": ["rst_ni"],
+    "clkPeriods": {"clk_i": 1.9},
+
+    "verbose": false,
+
+    "inputDcpPath": "workspace/dcp/ntt-large.dcp",
+    "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
+    "workDir": "test/rapidpnr/results",
+    "vivadoCmd": "vivado",
+    "vivadoMaxThreadNum": 24,
+
+    "abstractLevel": 7,
+
+    "singleBoundaryConstr": true,
+    "randomSeed": 999,
+    "imbalanceFac": 0.01,
+    "partitionKernel": "TRITON",
+
+    "fullRouteMerge": true,
+    "islandIODelayConstr": false,
+    "boundaryNeighborSize": 7000,
+    "boundaryPlaceOpt": "AltSpreadLogic_high",
+    "boundaryNeighborDist": 2,
+    "islandPeriodDecrement": 0.1
+}

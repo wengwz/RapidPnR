@@ -37,7 +37,8 @@ public class TimingEdge extends DefaultEdge {
         if (isLogic) {
             return 1.0;
         } else {
-            return 1.0 + Math.log(netFanout);
+            //return 1.0 + Math.log(netFanout);
+            return 1.0 + 1.5 * Math.log(netFanout);
         }
     }
     

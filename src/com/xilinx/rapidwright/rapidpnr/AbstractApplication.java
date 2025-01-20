@@ -1,10 +1,13 @@
 package com.xilinx.rapidwright.rapidpnr;
 
 import java.nio.file.Path;
+import java.util.logging.Level;
 
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.util.RuntimeTracker;
+import com.xilinx.rapidwright.util.RuntimeTrackerTree;
 
 
 public class AbstractApplication {
@@ -14,6 +17,7 @@ public class AbstractApplication {
 
     protected Design inputDesign;
     protected NetlistDatabase netlistDatabase;
+    protected RuntimeTrackerTree rootTimer;
 
     public AbstractApplication(String jsonFilePath, Boolean enableLogger) {
         // read design parameters from json file
@@ -25,13 +29,17 @@ public class AbstractApplication {
 
         // setup logger
         setupLogger(enableLogger);
+
+        // setup runtime tracker
+        rootTimer = new RuntimeTrackerTree("RapidPnR", false);
     }
 
     protected void setupLogger(Boolean enableLogger) {
         Path logFilePath = dirManager.getRootDir().resolve("rapidPnR.log");
 
         if (enableLogger) {
-            logger = HierarchicalLogger.createLogger("application", logFilePath, true);
+            Level logLevel = designParams.isVerbose() ? Level.FINE : Level.INFO;
+            logger = HierarchicalLogger.createLogger("application", logFilePath, true, logLevel);
         } else {
             logger = HierarchicalLogger.createPseduoLogger("application");
         }
@@ -48,6 +56,9 @@ public class AbstractApplication {
     }
 
     public void setupNetlistDatabase() {
+        RuntimeTracker timer = createSubTimer("Setup NetlistDB");
+        timer.start();
+
         logger.infoHeader("Setup Netlist Database");
         netlistDatabase = new NetlistDatabase(logger, inputDesign, designParams);
         
@@ -56,6 +67,12 @@ public class AbstractApplication {
         netlistDatabase.printCellLibraryInfo();
         netlistDatabase.printNetlistInfo();
         logger.endSubStep();
+
+        timer.stop();
+    }
+
+    public RuntimeTracker createSubTimer(String name) {
+        return rootTimer.createRuntimeTracker(name, rootTimer.getRootRuntimeTracker());
     }
 
 }

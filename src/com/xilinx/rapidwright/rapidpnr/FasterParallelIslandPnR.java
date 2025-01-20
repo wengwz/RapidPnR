@@ -366,7 +366,7 @@ public class FasterParallelIslandPnR extends AbstractPhysicalImpl{
         tclCmdFile.addCmd(VivadoTclCmd.openCheckpoint(VivadoProject.INPUT_DCP_NAME));
 
         if (designParams.isFullRouteMerge()) {
-            tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null, false));
+            tclCmdFile.addCmd(VivadoTclCmd.routeDesign(null, false, false, false));
         } else {
             tclCmdFile.addCmds(VivadoTclCmd.routeUnroutedNetsWithMinDelay());
         }

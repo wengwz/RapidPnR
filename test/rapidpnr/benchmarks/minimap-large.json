@@ -1,0 +1,28 @@
+{
+    "designName": "minimap-large",
+    "clkPortNames": ["ap_clk"],
+    "mainClkName": "ap_clk",
+    "resetPortNames": ["ap_rst_n"],
+    "clkPeriods": {"ap_clk": 4.8},
+
+    "verbose": false,
+
+    "workDir": "test/rapidpnr/results",
+    "inputDcpPath": "workspace/dcp/minimap-large.dcp",
+    "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
+    "vivadoCmd": "vivado",
+    "vivadoMaxThreadNum": 24,
+
+    "abstractLevel": 2,
+
+    "singleBoundaryConstr": false,
+    "randomSeed": 9999,
+    "imbalanceFac": 0.02,
+    "parallelRunNum": 20,
+    "partitionKernel": "TRITON",
+    "ignoreEdgeDegree": 3000,
+
+    "fullRouteMerge": true,
+    "islandIODelayConstr": true,
+    "islandPeriodDecrement": 0.2
+}

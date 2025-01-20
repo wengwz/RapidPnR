@@ -113,7 +113,7 @@ public class HierarchicalLogger {
         logHeader(Level.INFO, name);
     }
 
-    public static HierarchicalLogger createLogger(String logName, Path logFilePath, Boolean enableConsle) {
+    public static HierarchicalLogger createLogger(String logName, Path logFilePath, Boolean enableConsle, Level level) {
         HierarchicalLogger logger = new HierarchicalLogger(logName);
         logger.setUseParentHandlers(false);
 
@@ -134,13 +134,16 @@ public class HierarchicalLogger {
         } catch (Exception e) {
             System.out.println("Fail to open log file: " + logFilePath.toString());
         }
-        logger.setLevel(Level.INFO);
+        logger.setLevel(level);
 
         return logger;
     }
 
+    public static HierarchicalLogger createLogger(String logName, Path logFilePath, Boolean enableConsle) {
+        return createLogger(logName, logFilePath, enableConsle, Level.INFO);
+    }
     public static HierarchicalLogger createPseduoLogger(String logName) {
-        return createLogger(logName, null, false);
+        return createLogger(logName, null, false, Level.INFO);
     }
 
     public static String insertAtHeadOfEachLine(String head, String logInfo) {

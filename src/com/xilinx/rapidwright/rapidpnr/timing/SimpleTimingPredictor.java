@@ -131,6 +131,7 @@ public class SimpleTimingPredictor {
             Set<TimingVertex> dstVertices = new HashSet<>();
 
             for (EDIFPortInst portInst : net.getPortInsts()) {
+                
                 EDIFCellInst cellInst = portInst.getCellInst();
 
                 TimingVertex vertex = new TimingVertex(portInst.getFullName(), portInst);
@@ -155,7 +156,9 @@ public class SimpleTimingPredictor {
             }
 
             // add timing edges
-            assert srcVertex != null && !dstVertices.isEmpty();
+            assert srcVertex != null: "No source vertex on net " + net.getName();
+            assert !dstVertices.isEmpty(): "No destination vertices on net " + net.getName();
+
             int netFanout = dstVertices.size();
             for (TimingVertex dstVertex : dstVertices) {
                 TimingEdge edge = new TimingEdge(false, netFanout);
@@ -186,9 +189,10 @@ public class SimpleTimingPredictor {
 
                 if (srcVertex == null) {
                     EDIFNet incidentNet = inputPort.getNet();
-                    assert incidentNet.isGND() || incidentNet.isVCC() || 
-                           netlistDB.isIgnoreNet(incidentNet) || netlistDB.isIllegalNet(incidentNet) || 
-                           netlistDB.isGlobalResetNet(incidentNet);
+                    
+                    assert incidentNet.isGND() || incidentNet.isVCC() || netlistDB.isSpecialNet(incidentNet);
+                        //    netlistDB.isIgnoreNet(incidentNet) || netlistDB.isIllegalNet(incidentNet) || 
+                        //    netlistDB.isGlobalResetNet(incidentNet): incidentNet.getName() + cellInst.getName() + ": " + cellInst.getCellName();
                     continue;
                 }
 

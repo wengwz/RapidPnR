@@ -313,6 +313,16 @@ public class HyperGraph {
         return new ArrayList<>(neighbors);
     }
 
+    public List<Integer> getNeighborsOfNode(int nodeId, int edgeId) {
+        Set<Integer> neighbors = new HashSet<>();
+        for (int nNodeId : getNodesOfEdge(edgeId)) {
+            if (nNodeId != nodeId) {
+                neighbors.add(nNodeId);
+            }
+        }
+        return new ArrayList<>(neighbors);
+    }
+
     public boolean hasConnection(int node1, int node2) {
         for (int edgeId : node2Edges.get(node1)) {
             if (edge2Nodes.get(edgeId).contains(node2)) {

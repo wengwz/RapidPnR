@@ -30,7 +30,7 @@ import com.xilinx.rapidwright.rapidpnr.utils.StatisticsUtils;
 import com.xilinx.rapidwright.rapidpnr.utils.VecOps;
 
 public class IslandPlacer3 extends AbstractIslandPlacer {
-
+    private int maxPartialNetlistSize = 300;
     private static Set<String> checkResTypes = new HashSet<>(Arrays.asList("DSP", "BRAM", "URAM"));
     private static Set<Coordinate2D> allowedGridDim;
     static {
@@ -46,6 +46,7 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
     private List<Integer>[][] island2Nodes;
     private List<Integer>[][] horiBoundary2Edges;
     private List<Integer>[][] vertBoundary2Edges;
+    private List<Integer> edgeLengths;
     
     public IslandPlacer3(HierarchicalLogger logger, DirectoryManager dirManager, DesignParams designParams) {
         super(logger, dirManager, designParams);
@@ -64,71 +65,115 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
             node2IslandLoc.add(new Coordinate2D());
         }
 
-        if (gridDim.getY() == 1) {
-            this.node2IslandLoc = biPartitionPlace();
+        if (designParams.hasSingleBoundaryConstr()) {
+            singleBoundaryPartitionPlace();
         } else {
-            this.node2IslandLoc = iterativePartitionPlace();
+            ilpPartialPlace(designParams.getPrePlaceResTypes());
+            genericPartitionPlace();
         }
+
+        buildNode2IslandMap();
+        buildEdge2BoundaryMap();
+        printIslandPlacementResult();
 
         assert checkResUtils(checkResTypes);
 
         return node2IslandLoc;
     }
 
-    private List<Coordinate2D> biPartitionPlace() {
-        ilpPrePlace(designParams.getPrePlaceResTypes());
+    private void genericPartitionPlace() {
+        logger.info("Start generic partition-based placement");
+        logger.newSubStep();
 
-        logger.info("Start bi-partition placement");
-        assert gridDim.getY() == 1: "Bi-partition placement only supports 1-D grid";
-
+        List<Integer> node2XLoc = getXLocOfNodes();
         List<Integer> node2YLoc = getYLocOfNodes();
-        assert node2YLoc.stream().allMatch(y -> (y == -1) || (y == 0));
 
-        AbstractPartitioner partitioner = buildPartitioner(netlistGraph);
+        // partition in the first dimension
         Map<Integer, Integer> fixedNodes = new HashMap<>();
         for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-            int xLoc = getXLocOfNode(nodeId);
+            int xLoc = node2XLoc.get(nodeId);
             if (xLoc != -1) {
                 fixedNodes.put(nodeId, xLoc);
             }
         }
+        AbstractPartitioner partitioner = buildPartitioner(netlistGraph);
         partitioner.setFixedNodes(fixedNodes);
-        List<Integer> partResult = partitioner.run();
+        node2XLoc = partitioner.run();
+        updateXLocOfNodes(node2XLoc);
 
-        for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-            Coordinate2D loc = node2IslandLoc.get(nodeId);
-            loc.setX(partResult.get(nodeId));
-            loc.setY(0);
+
+        // partition in the second dimension
+        if (gridDim.getY() == 1) {
+            updateYLocOfNodes(Collections.nCopies(netlistGraph.getNodeNum(), 0));
+            return;
         }
-        
-        // Map<Integer, Integer> cutEdgeDegree2NumMap = new HashMap<>();
-        // for (int edgeId = 0; edgeId < netlistGraph.getEdgeNum(); edgeId++) {
-        //     Set<Integer> blkIds = new HashSet<>();
-        //     for (int nodeId : netlistGraph.getNodesOfEdge(edgeId)) {
-        //         int blkId = partResult.get(nodeId);
-        //         assert blkId != -1;
-        //         blkIds.add(blkId);
-        //     }
-        //     int degree = blkIds.size();
-        //     if (degree == 1) continue;
-        //     if (!cutEdgeDegree2NumMap.containsKey(degree)) {
-        //         cutEdgeDegree2NumMap.put(degree, 0);
-        //     }
-        //     cutEdgeDegree2NumMap.put(degree, cutEdgeDegree2NumMap.get(degree) + 1);
-        // }
 
-        // logger.info("Cut edge degree distribution: " + cutEdgeDegree2NumMap.toString());
+        for (int x = 0; x < gridDim.getX(); x++) {
+            node2YLoc = getYLocOfNodes();
 
-        buildNode2IslandMap();
-        buildEdge2BoundaryMap();
-        printIslandPlacementResult();
-        logger.info("Complete bi-partition placement");
+            List<List<Integer>> partialNodes = new ArrayList<>();
+            Map<Integer, Integer> fixedPartialNodes = new HashMap<>();
+            List<List<Integer>> virtualNodeCls = new ArrayList<>();
 
-        return node2IslandLoc;
+            for (int y = 0; y < gridDim.getY(); y++) {
+                virtualNodeCls.add(new ArrayList<>());
+            }   
+
+            for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
+                int xLoc = node2XLoc.get(nodeId);
+                int yLoc = node2YLoc.get(nodeId);
+
+                if (xLoc == x) {
+                    int partialNodeId = partialNodes.size();
+                    partialNodes.add(Arrays.asList(nodeId));
+                    if (yLoc != -1) {
+                        fixedPartialNodes.put(partialNodeId, yLoc);
+                    }
+                } else {
+                    if (yLoc != -1) {
+                        virtualNodeCls.get(yLoc).add(nodeId);
+                    }
+                }
+            }
+
+            Set<Integer> virtualClsIds = new HashSet<>();
+            for (int y = 0; y < gridDim.getY(); y++) {
+                if (virtualNodeCls.get(y).size() > 0) {
+                    int virtualClsId = partialNodes.size();
+                    virtualClsIds.add(virtualClsId);
+                    partialNodes.add(virtualNodeCls.get(y));
+                    fixedPartialNodes.put(virtualClsId, y);
+                }
+            }
+
+            
+            HierHyperGraph subClsGraph = netlistGraph.createClusteredChildGraph(partialNodes, false);
+            
+            // disable virtual nodes and edges
+            for (int clsId : virtualClsIds) {
+                subClsGraph.setNodeWeights(clsId, Arrays.asList(0.0));
+            }
+            for (int edgeId = 0; edgeId < subClsGraph.getEdgeNum(); edgeId++) {
+                Set<Integer> nodeIds = new HashSet<>(subClsGraph.getNodesOfEdge(edgeId));
+                if (nodeIds.containsAll(virtualClsIds) && nodeIds.size() == virtualClsIds.size()) {
+                    subClsGraph.setEdgeWeights(edgeId, Arrays.asList(0.0));
+                }
+            }
+
+            partitioner = buildPartitioner(subClsGraph);
+            partitioner.setFixedNodes(fixedPartialNodes);
+            logger.info("Fixed Node Constraints: " + fixedPartialNodes);
+            List<Integer> subPartResult = partitioner.run();
+            subClsGraph.updatePartResultOfParent(subPartResult, node2YLoc);
+            updateYLocOfNodes(node2YLoc);
+        }
+
+        logger.endSubStep();
+        logger.info("Complete generic partition-based placement");
     }
 
-    private List<Coordinate2D> iterativePartitionPlace() {
-        logger.info("Start iterative min-cut placement");
+    private void singleBoundaryPartitionPlace() {
+        logger.info("Start partition-based placement with single boundary constraint");
         logger.newSubStep();
 
         // iterative partition placement dont support pre-placement now
@@ -136,85 +181,17 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
         List<Integer> node2YLoc = getYLocOfNodes();
         assert node2YLoc.stream().allMatch(y -> y == -1) && node2XLoc.stream().allMatch(x -> x == -1);
 
-        AbstractPartitioner partitioner;
         // partition in the first dimension
-        Set<String> prePlaceResTypes = designParams.getPrePlaceResTypes();
+        AbstractPartitioner partitioner = buildPartitioner(netlistGraph);
         Map<Integer, Integer> fixedNodes = new HashMap<>();
-        
-        if (prePlaceResTypes.size() > 0) {
-            HierHyperGraph partialGraph = buildPartialGraphOfRes(prePlaceResTypes, true);
-            List<List<Double>> gridLimits = new ArrayList<>();
-            for (int x = 0; x < gridDim.getX(); x++) {
-                List<Double> acculimits = new ArrayList<>(Collections.nCopies(prePlaceResTypes.size(), 0.0));
-                for (int y = 0; y < gridDim.getY(); y++) {
-                    List<Double> limits = new ArrayList<>();
-                    for (String resType : prePlaceResTypes) {
-                        limits.add((double) designParams.getGridLimit(resType, Coordinate2D.of(x, y)));
-                    }
-                    VecOps.accu(acculimits, limits);                 
-                }
-                gridLimits.add(acculimits);
-            }
-            List<Integer> partialPartRes = ilpBiPartPrePlace(partialGraph, gridLimits);
-            partialGraph.updatePartResultOfParent(partialPartRes, node2XLoc);
-            
-            for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-                int xLoc = node2XLoc.get(nodeId);
-                if (xLoc != -1) {
-                    fixedNodes.put(nodeId, xLoc);
-                }
-            }
-        }
-
-        partitioner = buildPartitioner(netlistGraph);
         partitioner.setFixedNodes(fixedNodes);
         node2XLoc = partitioner.run();
         updateXLocOfNodes(node2XLoc);
-
-        // Coarser.Config config = new Coarser.Config();
-        // config.scheme = Coarser.Scheme.HEC;
-        // config.maxNodeSizeRatio = 0.3;
-        // HierHyperGraph clsGraph = Coarser.coarsening(config, netlistGraph);
-        // logger.info(clsGraph.getHyperGraphInfo(false));
-        // partitioner = buildPartitioner(clsGraph);
-        // List<Integer> clsPartResult = partitioner.run();
-        // clsGraph.updatePartResultOfParent(clsPartResult, node2XLoc);
-        // updateXLocOfNodes(node2XLoc);
-
-        // if (node2XLoc.stream().allMatch(x -> x == -1)) {
-        //     partitioner = buildPartitioner(netlistGraph);
-        //     node2XLoc = partitioner.run();
-        // } else {
-        //     List<List<Integer>> clusters = new ArrayList<>();
-        //     for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-        //         clusters.add(Arrays.asList(nodeId));
-        //     }
-        //     Map<Integer, Integer> fixedClusters = getFixedClusters(clusters, node2XLoc);
-        //     HierHyperGraph clsGraph = netlistGraph.createClusteredChildGraph(clusters, false);
-        //     partitioner = buildPartitioner(clsGraph);
-        //     partitioner.setFixedNodes(fixedClusters);
-        //     List<Integer> clsPartRes = partitioner.run();
-        //     clsGraph.updatePartResultOfParent(clsPartRes, node2XLoc);
-        // }
-
-        // update node2IslandLoc
-        // for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-        //     Coordinate2D nodeLoc = node2IslandLoc.get(nodeId);
-        //     int xLoc = node2XLoc.get(nodeId);
-        //     assert nodeLoc.getX() == -1 || nodeLoc.getX() == xLoc;
-        //     nodeLoc.setX(xLoc);
-        // }
         
         // cluster nodes of cut edges
         List<List<Integer>> cluster2Nodes = clusterNodesOfCutEdges(netlistGraph, node2XLoc);
-        // HierHyperGraph clsGraph = netlistGraph.createClusteredChildGraph(cluster2Nodes, false);
-        // partitioner = buildPartitioner(clsGraph);
-        // List<Integer> clsPartResult = partitioner.run();
-        // node2XLoc = clsGraph.getPartResultOfParent(clsPartResult);
-        // cluster2Nodes = clusterNodesOfCutEdges(netlistGraph, node2XLoc);
-        // updateXLocOfNodes(node2XLoc);
 
-        // partition in the second dimension
+        //partition in the second dimension
         for (int x = 0; x < gridDim.getX(); x++) {
             node2YLoc = getYLocOfNodes();
             Map<Integer, Integer> fixedClusters = getFixedClusters(cluster2Nodes, node2YLoc);
@@ -242,121 +219,22 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
             }
             
             HierHyperGraph subClsGraph = netlistGraph.createClusteredChildGraph(subCluster2Nodes, false);
+
             partitioner = buildPartitioner(subClsGraph);
             partitioner.setFixedNodes(fixedSubClusters);
             logger.info("Fixed Node Constraints: " + fixedSubClusters);
             List<Integer> subPartResult = partitioner.run();
             subClsGraph.updatePartResultOfParent(subPartResult, node2YLoc);
-
-            for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-                int yLoc = node2YLoc.get(nodeId);
-                Coordinate2D nodeLoc = node2IslandLoc.get(nodeId);
-                assert nodeLoc.getY() == -1 || yLoc == nodeLoc.getY();
-                nodeLoc.setY(yLoc);
-            }
+            updateYLocOfNodes(node2YLoc);
         }
-
-        buildNode2IslandMap();
-        buildEdge2BoundaryMap();
-
-        printIslandPlacementResult();
 
         logger.endSubStep();
-        logger.info("Complete iterative min-cut placement");
-
-        return node2IslandLoc;
+        logger.info("Complete partition-based placement with single boundary constraint");
     }
 
-    private List<Integer> ilpBiPartPrePlace(HierHyperGraph partialGraph, List<List<Double>> gridLimits) {
-        logger.info("Start ILP-based bi-partition pre-placement");
-        // run ILP solver
-        ILPIslandPartitioner.Config ilpPartCfg = new ILPIslandPartitioner.Config();
-        ilpPartCfg.compressGraph = true;
-        ilpPartCfg.gridDim = Coordinate2D.of(2, 1);
-        ilpPartCfg.gridLimits = gridLimits;
-
-        ILPIslandPartitioner ilpPlacer = new ILPIslandPartitioner(logger, ilpPartCfg, partialGraph);
-        List<Coordinate2D> placeResults = ilpPlacer.run();
-        partialGraph.updateLocOfParent(placeResults, node2IslandLoc);
-
-        List<Integer> partResult = new ArrayList<>();
-        for (int nodeId = 0; nodeId < partialGraph.getNodeNum(); nodeId++) {
-            Coordinate2D loc = node2IslandLoc.get(nodeId);
-            partResult.add(loc.getX());
-        }
-        logger.info("Complete ILP-based bi-partition pre-placement");
-        return partResult;
-    }
-
-    private HierHyperGraph buildPartialGraphOfRes(Set<String> resTypes, boolean addPeriNodes) {
-        logger.info("Construct partial hypergraph for pre-placement");
-
-        Set<Integer> criticalNodes = new HashSet<>();
-        for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-            Map<String, Integer> resUtils = abstractNetlist.getResUtilOfNode(nodeId);
-            boolean isCriticalNode = false;
-            for (String resType : resTypes) {
-                if (resUtils.containsKey(resType) && resUtils.get(resType) > 0) {
-                    isCriticalNode = true;
-                    break;
-                }
-            }
-            if (isCriticalNode) {
-                criticalNodes.add(nodeId);
-            }
-        }
-
-        if (addPeriNodes) {
-            List<Integer> periNodes = new ArrayList<>();
-            for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-                if (criticalNodes.contains(nodeId)) continue;
-                Set<Integer> netWithCriticalNodes = new HashSet<>();
-                for (int edgeId : netlistGraph.getEdgesOfNode(nodeId)) {
-                    Set<Integer> criticalNodeIds = new HashSet<>();
-                    for (int nNodeId : netlistGraph.getNodesOfEdge(edgeId)) {
-                        if (criticalNodes.contains(nNodeId)) {
-                            criticalNodeIds.add(nNodeId);
-                        }
-                    }
-                    if (criticalNodeIds.size() > 0) {
-                        netWithCriticalNodes.add(edgeId);
-                    }
-                }
-                if (netWithCriticalNodes.size() > 3) {
-                    periNodes.add(nodeId);
-                }
-            }
-            // add peripheral nodes to critical nodes
-            criticalNodes.addAll(periNodes);            
-        }
-
-
-        List<List<Integer>> partialNodes = criticalNodes.stream().map(Arrays::asList).collect(Collectors.toList());
-        HierHyperGraph partialGraph = netlistGraph.createClusteredChildGraph(partialNodes, false);
-
-        // update node weights of partial graph
-        partialGraph.setNodeWeightsFactor(Collections.nCopies(resTypes.size(), 1.0));
-        for (int nodeId = 0; nodeId < partialGraph.getNodeNum(); nodeId++) {
-            int parentId = partialGraph.getParentsOfNode(nodeId).get(0);
-            List<Double> weights = new ArrayList<>();
-            Map<String, Integer> resUtil = abstractNetlist.getResUtilOfNode(parentId);
-            for (String resType : resTypes) {
-                if (resUtil.containsKey(resType)) {
-                    weights.add((double) resUtil.get(resType));
-                } else {
-                    weights.add(0.0);
-                }
-            }
-            partialGraph.setNodeWeights(nodeId, weights);
-        }
-        logger.info("Partial Graph Info:\n" + partialGraph.getHyperGraphInfo(true), true);
-
-        return partialGraph;
-    }
-
-    private void ilpPrePlace(Set<String> criticalResTypes) {
+    private void ilpPartialPlace(Set<String> criticalResTypes) {
         if (criticalResTypes.size() == 0) return;
-        logger.info("Start pre-placement of critical nodes");
+        logger.info("Start pre-placement of nodes with critical resources");
         logger.newSubStep();
 
         // construct partial graph
@@ -376,31 +254,46 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
             }
         }
 
+        logger.info(String.format("Total number of critical nodes: %d (Maximum: %d)", criticalNodes.size(), maxPartialNetlistSize));
         List<Integer> periNodes = new ArrayList<>();
-        for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-            if (criticalNodes.contains(nodeId)) continue;
-            Set<Integer> netWithCriticalNodes = new HashSet<>();
-            for (int edgeId : netlistGraph.getEdgesOfNode(nodeId)) {
-                Set<Integer> criticalNodeIds = new HashSet<>();
-                for (int nNodeId : netlistGraph.getNodesOfEdge(edgeId)) {
-                    if (criticalNodes.contains(nNodeId)) {
-                        criticalNodeIds.add(nNodeId);
-                    }
-                }
-                if (criticalNodeIds.size() > 0) {
-                    netWithCriticalNodes.add(edgeId);
-                }
-            }
-            if (netWithCriticalNodes.size() > 3) {
-                periNodes.add(nodeId);
-            }
-        }
-        // add peripheral nodes to critical nodes
-        criticalNodes.addAll(periNodes);
+        if (criticalNodes.size() < maxPartialNetlistSize) {
+            Map<Integer, Double> nodes2Connectivity = new HashMap<>();
 
-        List<List<Integer>> partialNodes = criticalNodes.stream().map(Arrays::asList).collect(Collectors.toList());
+            for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
+                if (criticalNodes.contains(nodeId)) continue;
+                Double connectivity = 0.0;
+                for (int edgeId : netlistGraph.getEdgesOfNode(nodeId)) {
+                    int criticalNodeNum = 0;
+                    for (int nNodeId : netlistGraph.getNodesOfEdge(edgeId)) {
+                        if (criticalNodes.contains(nNodeId)) {
+                            criticalNodeNum++;
+                        }
+                    }
+                    connectivity += criticalNodeNum * netlistGraph.getEdgeWeightsSum(edgeId);
+                }
+                nodes2Connectivity.put(nodeId, connectivity);
+            }
+            
+            List<Integer> sortedPeriNodes = nodes2Connectivity.entrySet().stream()
+                .sorted(Map.Entry.<Integer, Double>comparingByValue().reversed())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+            int extraNodeNum = maxPartialNetlistSize - criticalNodes.size();
+            periNodes = sortedPeriNodes.subList(0, extraNodeNum);
+            logger.info("Total number of added peripheral nodes: " + periNodes.size());
+            // for (int nodeId : periNodes) {
+            //     logger.info(" Node-" + nodeId + " Connectivity: " + nodes2Connectivity.get(nodeId));
+            // }
+        }
+
+        List<List<Integer>> partialNodes = new ArrayList<>();
+        for (int nodeId : criticalNodes) {
+            partialNodes.add(Arrays.asList(nodeId));
+        }
+        for (int nodeId : periNodes) {
+            partialNodes.add(Arrays.asList(nodeId));
+        }
         HierHyperGraph partialGraph = netlistGraph.createClusteredChildGraph(partialNodes, false);
-        logger.info("Total number of critical nodes: " + criticalNodes.size());
 
         // update node weights of partial graph
         partialGraph.setNodeWeightsFactor(Collections.nCopies(criticalResTypes.size(), 1.0));
@@ -421,6 +314,12 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
 
         // run ILP solver
         ILPIslandPartitioner.Config ilpPartCfg = new ILPIslandPartitioner.Config();
+        if (designParams.hasSingleBoundaryConstr()) {
+            ilpPartCfg.maxEdgeLen = 1;
+        } else {
+            ilpPartCfg.maxEdgeLen = gridDim.getX() + gridDim.getY() - 2;
+        }
+
         ilpPartCfg.compressGraph = true;
         ilpPartCfg.gridDim = gridDim;
         ilpPartCfg.gridLimits = new ArrayList<>();
@@ -437,141 +336,16 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
 
         ILPIslandPartitioner ilpPlacer = new ILPIslandPartitioner(logger, ilpPartCfg, partialGraph);
         List<Coordinate2D> placeResults = ilpPlacer.run();
-        partialGraph.updateLocOfParent(placeResults, node2IslandLoc);
 
-        // update locations of nodes incident to cut edges
-        for (int edgeId = 0; edgeId < netlistGraph.getEdgeNum(); edgeId++) {
-            Set<Coordinate2D> nodeLocs = new HashSet<>();
-            for (int nodeId : netlistGraph.getNodesOfEdge(edgeId)) {
-                Coordinate2D loc = node2IslandLoc.get(nodeId);
-                if (loc.getX() != -1 && loc.getY() != -1) {
-                    nodeLocs.add(loc);
-                }
-            }
-
-            if (nodeLocs.size() > 1) {
-                Iterator<Coordinate2D> iter = nodeLocs.iterator();
-                Coordinate2D loc1 = iter.next();
-                Coordinate2D loc2 = iter.next();
-                int xDist = loc1.getDistX(loc2);
-                int yDist = loc1.getDistY(loc2);
-                assert xDist + yDist == 1: loc1 + " " + loc2;
-                if (xDist != 0) {
-                    for (int nodeId : netlistGraph.getNodesOfEdge(edgeId)) {
-                        node2IslandLoc.get(nodeId).setY(loc1.getY());
-                    }
-                } else {
-                    for (int nodeId : netlistGraph.getNodesOfEdge(edgeId)) {
-                        node2IslandLoc.get(nodeId).setX(loc1.getX());
-                    }
-                }
-            }
+        for (int nodeId = 0; nodeId < criticalNodes.size(); nodeId++) {
+            int parentId = partialGraph.getParentsOfNode(nodeId).get(0);
+            Coordinate2D loc = placeResults.get(nodeId);
+            node2IslandLoc.set(parentId, loc);
         }
 
         logger.endSubStep();
-        logger.info("Complete pre-placement of critical nodes");
+        logger.info("Complete pre-placement of nodes with critical resources");
     }
-
-    // private List<Coordinate2D> legalization() {
-    //     logger.info("Start legalization of inital placement");
-    //     logger.newSubStep();
-    //     Set<String> illegalResTypes = new HashSet<>();
-    //     for (String resType : checkResTypes) {
-    //         if (!checkResUtils(resType)) {
-    //             illegalResTypes.add(resType);
-    //         }
-    //     }
-
-    //     //assert illegalResTypes.size() == 0: "Resource overflow found";
-
-    //     if (illegalResTypes.size() > 0) {
-    //         logger.info("Start legalizing resource overflow of " + illegalResTypes.toString());
-    //         List<Integer> criticalNodes = new ArrayList<>();
-
-    //         for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
-    //             Map<String, Integer> resUtils = abstractNetlist.getResUtilOfNode(nodeId);
-    //             boolean isCriticalNode = false;
-    //             for (String resType : illegalResTypes) {
-    //                 if (resUtils.containsKey(resType) && resUtils.get(resType) > 0) {
-    //                     isCriticalNode = true;
-    //                     break;
-    //                 }
-    //             }
-    //             if (isCriticalNode) {
-    //                 criticalNodes.add(nodeId);
-    //             }
-    //         }
-    //         logger.info("Total number of critical nodes: " + criticalNodes.size());
-
-    //         List<List<Integer>> dist2Nodes = netlistGraph.getDistance2Nodes(criticalNodes, 0);
-    //         List<List<Integer>> partialNodes = new ArrayList<>();
-    //         Map<Coordinate2D, List<Integer>> loc2Nodes = new HashMap<>();
-    //         for (int dist = 0; dist < dist2Nodes.size(); dist++) {
-    //             for (int nodeId : dist2Nodes.get(dist)) {
-    //                 if (dist == 0) {
-    //                     partialNodes.add(Arrays.asList(nodeId));
-    //                 } else {
-    //                     Coordinate2D loc = node2IslandLoc.get(nodeId);
-    //                     if (!loc2Nodes.containsKey(loc)) {
-    //                         loc2Nodes.put(loc, new ArrayList<>());
-    //                     }
-    //                     loc2Nodes.get(loc).add(nodeId);
-    //                 }
-    //             }
-    //         }
-
-    //         Map<Integer, Coordinate2D> fixedNodes = new HashMap<>();
-    //         for (Coordinate2D loc : loc2Nodes.keySet()) {
-    //             fixedNodes.put(partialNodes.size(), loc);
-    //             partialNodes.add(loc2Nodes.get(loc));
-    //         }
-
-    //         logger.info("Total number of partial nodes: " + partialNodes.size());
-
-    //         HierHyperGraph partialGraph = netlistGraph.createClusteredChildGraph(partialNodes, false);
-    //         // update node weights of partial graph
-    //         partialGraph.setNodeWeightsFactor(Collections.nCopies(illegalResTypes.size(), 1.0));
-    //         for (int nodeId = 0; nodeId < partialGraph.getNodeNum(); nodeId++) {
-    //             int parentId = partialGraph.getParentsOfNode(nodeId).get(0);
-    //             List<Double> weights = new ArrayList<>();
-
-    //             for (String resType : illegalResTypes) {
-    //                 Map<String, Integer> resUtil = abstractNetlist.getResUtilOfNode(parentId);
-    //                 if (resUtil.containsKey(resType)) {
-    //                     weights.add((double) resUtil.get(resType));
-    //                 } else {
-    //                     weights.add(0.0);
-    //                 }
-    //             }
-    //             partialGraph.setNodeWeights(nodeId, weights);
-    //         }
-            
-    //         logger.info("Num of fixed nodes: " + fixedNodes.size());
-    //         HyperGraph compPartialGraph = partialGraph.getCompressedGraph();
-    //         logger.info("Compressed Partial Graph Info:\n" + compPartialGraph.getHyperGraphInfo(true), true);
-        
-    //         ILPIslandPartitioner.Config ilpPartCfg = new ILPIslandPartitioner.Config();
-    //         ilpPartCfg.gridDim = gridDim;
-    //         ilpPartCfg.gridLimits = new ArrayList<>();
-    //         gridDim.traverse((Coordinate2D loc) -> {
-    //             List<Double> limits = new ArrayList<>();
-    //             for (String resType : illegalResTypes) {
-    //                 limits.add((double) designParams.getGridLimit(resType, loc));
-    //             }
-    //             ilpPartCfg.gridLimits.add(limits);
-    //         });
-
-    //         ILPIslandPartitioner ilpPart = new ILPIslandPartitioner(logger, ilpPartCfg, compPartialGraph);
-    //         ilpPart.setFixedNodes(fixedNodes);
-    //         List<Coordinate2D> ilpPartRes = ilpPart.run();
-    //     }
-
-
-    //     logger.endSubStep();
-    //     logger.info("Complete legalization of inital placement");
-    //     return node2IslandLoc;
-    // }
-
 
     private boolean checkResUtils(Set<String> resTypes) {
         List<String> illegalResTypes = new ArrayList<>();
@@ -615,7 +389,7 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
                 utilsStr += String.format("%d(%d)  ", resUtils[x][y], limit);
 
                 if (singleExtremeNode[x][y]) continue; // skip single extreme node
-                if (resUtils[x][y] > limit) {
+                if (resUtils[x][y] > limit + 30) { //
                     hasOverflow = true;
                 }
             }
@@ -823,18 +597,16 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
 
     private void buildEdge2BoundaryMap() {
         horiBoundary2Edges = new ArrayList[horiBoundaryDim.getX()][horiBoundaryDim.getY()];
-        for (int x = 0; x < horiBoundaryDim.getX(); x++) {
-            for (int y = 0; y < horiBoundaryDim.getY(); y++) {
-                horiBoundary2Edges[x][y] = new ArrayList<>();
-            }
-        }
-
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            horiBoundary2Edges[loc.getX()][loc.getY()] = new ArrayList<>();
+        });
+        
         vertBoundary2Edges = new ArrayList[vertBoundaryDim.getX()][vertBoundaryDim.getY()];
-        for (int x = 0; x < vertBoundaryDim.getX(); x++) {
-            for (int y = 0; y < vertBoundaryDim.getY(); y++) {
-                vertBoundary2Edges[x][y] = new ArrayList<>();
-            }
-        }
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            vertBoundary2Edges[loc.getX()][loc.getY()] = new ArrayList<>();
+        });
+
+        edgeLengths = new ArrayList<>();
 
         for (int edgeId = 0; edgeId < netlistGraph.getEdgeNum(); edgeId++) {
             List<Integer> nodeIds = netlistGraph.getNodesOfEdge(edgeId);
@@ -843,25 +615,28 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
                 incidentNodeLocs.add(getLocOfNode(nodeId));
             }
 
-            assert incidentNodeLocs.size() <= 2;
-            if (incidentNodeLocs.size() < 2) continue;
+            int edgeLen = Coordinate2D.getHPWL(incidentNodeLocs);
+            boolean hasSingleBoundConstr = designParams.hasSingleBoundaryConstr();
+            assert !hasSingleBoundConstr || (hasSingleBoundConstr && edgeLen <= 1);
+            edgeLengths.add(edgeLen);
 
-            Iterator<Coordinate2D> iter = incidentNodeLocs.iterator();
-            Coordinate2D loc0 = iter.next();
-            Coordinate2D loc1 = iter.next();
+            if (edgeLen == 1) {
+                assert incidentNodeLocs.size() == 2;
+                Iterator<Coordinate2D> iter = incidentNodeLocs.iterator();
+                Coordinate2D loc0 = iter.next();
+                Coordinate2D loc1 = iter.next();
+    
+                Integer xDist = loc0.getDistX(loc1);
 
-            Integer xDist = loc0.getDistX(loc1);
-            Integer yDist = loc0.getDistY(loc1);
-            assert xDist + yDist == 1: "dist=" + (xDist + yDist);
-
-            if (xDist == 1) {
-                Integer boundaryX = Math.min(loc0.getX(), loc1.getX());
-                Integer boundaryY = loc0.getY();
-                vertBoundary2Edges[boundaryX][boundaryY].add(edgeId);
-            } else {
-                Integer boundaryX = loc0.getX();
-                Integer boundaryY = Math.min(loc0.getY(), loc1.getY());
-                horiBoundary2Edges[boundaryX][boundaryY].add(edgeId);
+                if (xDist == 1) {
+                    Integer boundaryX = Math.min(loc0.getX(), loc1.getX());
+                    Integer boundaryY = loc0.getY();
+                    vertBoundary2Edges[boundaryX][boundaryY].add(edgeId);
+                } else {
+                    Integer boundaryX = loc0.getX();
+                    Integer boundaryY = Math.min(loc0.getY(), loc1.getY());
+                    horiBoundary2Edges[boundaryX][boundaryY].add(edgeId);
+                }
             }
         }
     }
@@ -894,11 +669,11 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
         List<Double> maxIslandSizeImbRatio = StatisticsUtils.getImbalanceRatio(maxIslandSize, islandSizes);
         logger.info("Max Imb ratio of island size in each dim: " + maxIslandSizeImbRatio.toString());
 
-        logger.info("Distribution of horizontal boundary size:");
+        logger.info("Distribution of horizontal single-cut edges:");
         List<Double>[][] horiBoundarySizeDist = getWeightsDist(horiBoundary2Edges, netlistGraph::getWeightsOfEdge);
         printWeightDist(horiBoundarySizeDist, horiBoundaryDim);
 
-        logger.info("Distribution of vertical boundary size:");
+        logger.info("Distribution of vertical single-cut edges:");
         List<Double>[][] vertBoundarySizeDist = getWeightsDist(vertBoundary2Edges, netlistGraph::getWeightsOfEdge);
         printWeightDist(vertBoundarySizeDist, vertBoundaryDim);
 
@@ -921,6 +696,25 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
         logger.info("Std var of boundary cut size: " + boundarySizeStdVar.toString());
         List<Double> maxBoundarySize = StatisticsUtils.getMax(boundarySizes, 0);
         logger.info("Max boundary cut size: " + maxBoundarySize.toString());
+        
+        int totalEdgeLen = 0;
+        Map<Integer, Integer> len2EdgeWeight = new HashMap<>();
+        for (int edgeId = 0; edgeId < netlistGraph.getEdgeNum(); edgeId++) {
+            int edgeWeight = netlistGraph.getWeightsOfEdge(edgeId).get(0).intValue();
+            int edgeLen = edgeLengths.get(edgeId);
+            totalEdgeLen += edgeLen * edgeWeight;
+            if (len2EdgeWeight.containsKey(edgeLen)) {
+                len2EdgeWeight.put(edgeLen, len2EdgeWeight.get(edgeLen) + edgeWeight);
+            } else {
+                len2EdgeWeight.put(edgeLen, edgeWeight);
+            }
+        }
+        logger.info("Total length of edges: " + totalEdgeLen);
+        logger.info("Distribution of edge length:");
+        for (Map.Entry<Integer, Integer> entry : len2EdgeWeight.entrySet()) {
+            logger.info(entry.getKey() + ": " + entry.getValue());
+        }
+        
         logger.endSubStep();
     }
 
@@ -959,6 +753,7 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
         for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
             Coordinate2D nodeLoc = node2IslandLoc.get(nodeId);
             int xLoc = xLocs.get(nodeId);
+            assert nodeLoc.getX() == -1 || nodeLoc.getX() == xLoc;
             nodeLoc.setX(xLoc);
         }
     }
@@ -968,6 +763,7 @@ public class IslandPlacer3 extends AbstractIslandPlacer {
         for (int nodeId = 0; nodeId < netlistGraph.getNodeNum(); nodeId++) {
             Coordinate2D nodeLoc = node2IslandLoc.get(nodeId);
             int yLoc = yLocs.get(nodeId);
+            assert nodeLoc.getY() == -1 || nodeLoc.getY() == yLoc;
             nodeLoc.setY(yLoc);
         }
     }

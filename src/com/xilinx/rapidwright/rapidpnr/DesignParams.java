@@ -10,16 +10,15 @@ import java.util.Map;
 import java.util.Set;
 
 import java.util.HashSet;
-import java.lang.reflect.Type;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import com.google.gson.reflect.TypeToken;
 
 import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
 import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 import com.xilinx.rapidwright.rapidpnr.utils.VivadoProject;
-
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd;
+import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd.RouteDirective;
 
 
 public class DesignParams {
@@ -39,6 +38,8 @@ public class DesignParams {
     private Map<String, Double> clkPeriods;
     private List<String> ignoreNetNames;
 
+    private Boolean verbose = true;
+
     private Path inputDcpPath;
     private Path workDir;
 
@@ -56,6 +57,7 @@ public class DesignParams {
 
     // Island Placer Parameters
     private Set<String> prePlaceResTypes;
+    private Boolean singleBoundaryConstr = true;
     private Double imbalanceFac = 0.01;
     private Integer randomSeed = 999;
     private Integer parallelRunNum = 20;
@@ -67,8 +69,15 @@ public class DesignParams {
     private Double coarserMaxNodeSizeRatio = 1.0;
 
     // Physical Implementation Parameters
+    private String boundaryPlaceOpt = null;
+    private RouteDirective mergeRouteOpt = RouteDirective.Default;
+    private Boolean mergeRoutePhysSyn = true;
+    private RouteDirective islandRouteOpt = RouteDirective.Default;
+    private Boolean islandRoutePhysSyn = true;
+    private Boolean islandIODelayConstr = false;
     private Boolean fullRouteMerge = false;
     private Integer boundaryNeighborSize = 5000;
+    private Integer boundaryNeighborDist = 1;
     private Double islandPeriodDecrement = 0.0;
 
     private class ParamsJson {
@@ -78,6 +87,7 @@ public class DesignParams {
         public List<String> resetPortNames;
         public Map<String, Double> clkPeriods;
         public List<String> ignoreNetNames;
+        public Boolean verbose;
     
         public String inputDcpPath;
         public String workDir;
@@ -89,6 +99,7 @@ public class DesignParams {
         public Integer abstractLevel;
         
         public List<String> prePlaceResTypes;
+        public Boolean singleBoundaryConstr;
         public Integer randomSeed;
         public Double imbalanceFac;
         public Integer ignoreEdgeDegree;
@@ -98,9 +109,16 @@ public class DesignParams {
         public String partitionKernel;
         public Double coarserLevelShrinkRatio;
         public Double coarserMaxNodeSizeRatio;
+        public Boolean islandIODelayConstr;
 
         public Boolean fullRouteMerge;
+        public String boundaryPlaceOpt;
+        public String islandRouteOpt;
+        public Boolean islandRoutePhysSyn;
+        public String mergeRouteOpt;
+        public Boolean mergeRoutePhysSyn;
         public Integer boundaryNeighborSize;
+        public Integer boundaryNeighborDist;
         public Double islandPeriodDecrement;
     }
 
@@ -152,6 +170,10 @@ public class DesignParams {
                 ignoreNetNames.addAll(ignoreNetNameSet);
             }
 
+            if (params.verbose != null) {
+                this.verbose = params.verbose;
+            }
+
             assert params.inputDcpPath != null: "inputDcpPath not found in json file";
             inputDcpPath = Path.of(params.inputDcpPath).toAbsolutePath();
 
@@ -201,12 +223,16 @@ public class DesignParams {
 
             //
             if (params.abstractLevel != null) {
-                assert params.abstractLevel >= 1 && params.abstractLevel <= 7: 
-                "The level of netlist abstraction should in the range of [1, 7]"; 
+                assert params.abstractLevel >= 0 && params.abstractLevel <= 7: 
+                "The level of netlist abstraction should in the range of [0, 7]"; 
                 this.abstractLevel = params.abstractLevel;
             }
 
             // set parameters related with Island Placer
+            if (params.singleBoundaryConstr != null) {
+                this.singleBoundaryConstr = params.singleBoundaryConstr;
+            }
+
             this.prePlaceResTypes = new HashSet<>();
             if (params.prePlaceResTypes != null) {
                 for (String resName : params.prePlaceResTypes) {
@@ -260,8 +286,35 @@ public class DesignParams {
             if (params.boundaryNeighborSize != null) {
                 this.boundaryNeighborSize = params.boundaryNeighborSize;
             }
+            if (params.boundaryNeighborDist != null) {
+                this.boundaryNeighborDist = params.boundaryNeighborDist;
+            }
             if (params.islandPeriodDecrement != null) {
                 this.islandPeriodDecrement = params.islandPeriodDecrement;
+            }
+            if (params.islandIODelayConstr != null) {
+                this.islandIODelayConstr = params.islandIODelayConstr;
+            }
+
+            if (params.boundaryPlaceOpt != null) {
+                assert VivadoTclCmd.PlacerDirective.isVaildDirective(params.boundaryPlaceOpt);
+                this.boundaryPlaceOpt = params.boundaryPlaceOpt;
+            }
+
+            if (params.mergeRouteOpt != null) {
+                this.mergeRouteOpt = RouteDirective.fromString(params.mergeRouteOpt);
+            }
+
+            if (params.islandRouteOpt != null) {
+                this.islandRouteOpt = RouteDirective.fromString(params.islandRouteOpt);
+            }
+
+            if (params.mergeRoutePhysSyn != null) {
+                this.mergeRoutePhysSyn = params.mergeRoutePhysSyn;
+            }
+
+            if (params.islandRoutePhysSyn != null) {
+                this.islandRoutePhysSyn = params.islandRoutePhysSyn;
             }
 
         } catch (Exception e) {
@@ -278,6 +331,11 @@ public class DesignParams {
     public void setClkPeriod(String clkName, Double period) {
         assert clkPortNames.contains(clkName): "Clock port name not found: " + clkName;
         clkPeriods.replace(clkName, period);
+    }
+
+    public void setAbstractLevel(int level) {
+        assert level >= 0 && level <= 7: "The level of netlist abstraction should in the range of [0, 7]";
+        this.abstractLevel = level;
     }
 
     // getters
@@ -380,6 +438,10 @@ public class DesignParams {
         }
     }
 
+    public boolean isVerbose() {
+        return verbose;
+    }
+
     public Map<String, String> getPblockName2Range() {
         return Collections.unmodifiableMap(pblockName2Range);
     }
@@ -394,6 +456,10 @@ public class DesignParams {
 
     public Path getIslandPlaceResPath() {
         return islandPlaceResPath;
+    }
+
+    public boolean hasSingleBoundaryConstr() {
+        return singleBoundaryConstr;
     }
 
     public Set<String> getPrePlaceResTypes() {
@@ -436,10 +502,38 @@ public class DesignParams {
         return boundaryNeighborSize;
     }
 
+    public int getBoundaryNeighborDist() {
+        return boundaryNeighborDist;
+    }
+
     public double getIslandPeriodDecrement() {
         return islandPeriodDecrement;
     }
 
+    public boolean hasIslandIODelayConstr() {
+        return islandIODelayConstr;
+    }
+
+    public String getBoundaryPlaceOpt() {
+        return boundaryPlaceOpt;
+    }
+
+    public RouteDirective getMergeRouteOpt() {
+        return mergeRouteOpt;
+    }
+
+    public RouteDirective getIslandRouteOpt() {
+        return islandRouteOpt;
+    }
+
+    public boolean hasMergeRoutePhysSyn() {
+        return mergeRoutePhysSyn;
+    }
+
+    public boolean hasIslandRoutePhysSyn() {
+        return islandRoutePhysSyn;
+    }
+ 
     public static void main(String[] args) {
         Path jsonConfigPath = Path.of("workspace/json/test_config.json");
 

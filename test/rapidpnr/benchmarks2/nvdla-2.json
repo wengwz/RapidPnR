@@ -1,0 +1,29 @@
+{
+    "designName": "nvdla-2",
+    "clkPortNames": ["core_clk", "csb_clk"],
+    "mainClkName": "core_clk",
+    "resetPortNames": ["rstn"],
+    "clkPeriods": {"core_clk": 5.1, "csb_clk":10.0},
+
+    "verbose": false,
+
+    "inputDcpPath": "workspace/dcp/nvdla-small-256-full.dcp",
+    "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
+    "workDir": "test/rapidpnr/results2",
+    "vivadoCmd": "vivado",
+    "vivadoMaxThreadNum": 24,
+
+    "abstractLevel": 7,
+
+    "singleBoundaryConstr": true,
+    "randomSeed": 999,
+    "imbalanceFac": 0.02,
+    "partitionKernel": "TRITON",
+
+    "fullRouteMerge": true,
+    "islandIODelayConstr": false,
+    "boundaryNeighborSize": 6000,
+    "boundaryPlaceOpt": "AltSpreadLogic_high",
+    "islandPeriodDecrement": 0.1,
+    "islandRoutePhysSyn": false
+}

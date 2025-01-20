@@ -1,0 +1,28 @@
+{
+    "designName": "ispd16-fpga02",
+    "clkPortNames": ["clk1"],
+    "mainClkName": "clk1",
+    "resetPortNames": ["ip_150"],
+    "ignoreNetNames": ["ip_151"],
+    "clkPeriods": {"clk1": 3.9},
+
+    "verbose": false,
+
+    "inputDcpPath": "workspace/dcp/ispd16-fpga02.dcp",
+    "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
+    "workDir": "test/rapidpnr/results",
+    "vivadoCmd": "vivado",
+    "vivadoMaxThreadNum": 24,
+
+    "abstractLevel": 2,
+
+    "singleBoundaryConstr": false,
+    "randomSeed": 66,
+    "imbalanceFac": 0.01,
+    "partitionKernel": "TRITON",
+
+    "fullRouteMerge": true,
+    "islandIODelayConstr": true,
+    "boundaryNeighborSize": 20000,
+    "islandPeriodDecrement": 0.0
+}

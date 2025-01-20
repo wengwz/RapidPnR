@@ -1,7 +1,6 @@
 package com.xilinx.rapidwright.rapidpnr.partitioner;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -32,6 +31,7 @@ import com.xilinx.rapidwright.util.RuntimeTracker;
 public class ILPIslandPartitioner {
 
     public static class Config {
+        public int maxEdgeLen = 1;
         public boolean compressGraph = true;
         public Coordinate2D gridDim = Coordinate2D.of(2, 2);
         public List<List<Double>> gridLimits = null;
@@ -43,6 +43,7 @@ public class ILPIslandPartitioner {
     // config
     private int islandNum;
     private Coordinate2D gridDim;
+    private int maxEdgeLen;
     private List<Double>[][] gridLimits;
     private Map<Integer, Coordinate2D> fixedNodes;
 
@@ -60,6 +61,7 @@ public class ILPIslandPartitioner {
 
         this.gridDim = config.gridDim;
         this.islandNum = gridDim.getX() * gridDim.getY();
+        this.maxEdgeLen = config.maxEdgeLen;
         this.gridLimits = new ArrayList[gridDim.getX()][gridDim.getY()];
         
         gridDim.traverse((Coordinate2D loc) -> {
@@ -434,6 +436,7 @@ public class ILPIslandPartitioner {
     // }
 
     private List<Coordinate2D> runCpSATSolver() {
+        // runCpSATSolver only applicable to 2x2, 1x2 or 2x1 grid
         assert gridDim.getX() >= 1 && gridDim.getY() >= 1;
         assert gridDim.getX() <= 2 && gridDim.getY() <= 2;
 
@@ -460,6 +463,7 @@ public class ILPIslandPartitioner {
                 node2Island[nodeId][islandId] = model.newBoolVar("node2Island_" + nodeId + "_" + islandId);
             }
         }
+
         //// bound locations of edges
         Literal[] edgeLeftX = new Literal[hyperGraph.getEdgeNum()];
         Literal[] edgeRightX = new Literal[hyperGraph.getEdgeNum()];
@@ -505,13 +509,15 @@ public class ILPIslandPartitioner {
         }
 
         //// edge length constraints
-        for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
-            LinearExprBuilder expr = LinearExpr.newBuilder();
-            expr.addTerm(edgeLeftX[edgeId], -1);
-            expr.addTerm(edgeRightX[edgeId], 1);
-            expr.addTerm(edgeLowerY[edgeId], -1);
-            expr.addTerm(edgeUpperY[edgeId], 1);
-            model.addLessOrEqual(expr, 1);
+        if (maxEdgeLen == 1) {
+            for (int edgeId = 0; edgeId < hyperGraph.getEdgeNum(); edgeId++) {
+                LinearExprBuilder expr = LinearExpr.newBuilder();
+                expr.addTerm(edgeLeftX[edgeId], -1);
+                expr.addTerm(edgeRightX[edgeId], 1);
+                expr.addTerm(edgeLowerY[edgeId], -1);
+                expr.addTerm(edgeUpperY[edgeId], 1);
+                model.addLessOrEqual(expr, 1);
+            }            
         }
         
         //// island size constraints
@@ -595,6 +601,8 @@ public class ILPIslandPartitioner {
         RuntimeTracker timer = new RuntimeTracker("CP-SAT Solver", (short) 0);
         timer.start();
         CpSolver solver = new CpSolver();
+        solver.getParameters().setRandomSeed(778899110);
+        solver.getParameters().setNumWorkers(8);
         CpSolverStatus resultStatus = solver.solve(model);
         timer.stop();
         logger.info(String.format("Complete running kernel solver in %.2f sec", timer.getTimeInSec()));
@@ -673,22 +681,14 @@ public class ILPIslandPartitioner {
                 nodeLocs.add(node2IslandLoc.get(nodeId));
             }
 
-            if (nodeLocs.size() > 2) {
+            int edgeLength = Coordinate2D.getHPWL(nodeLocs);
+            if (edgeLength > maxEdgeLen) {
                 violatedEdgeNum++;
-            } else if (nodeLocs.size() == 2) {
-                Iterator<Coordinate2D> iter = nodeLocs.iterator();
-                Coordinate2D loc0 = iter.next();
-                Coordinate2D loc1 = iter.next();
-
-                if (loc0.getManhattanDist(loc1) > 1) {
-                    violatedEdgeNum++;
-                }
             }
 
-            if (nodeLocs.size() > 1) {
+            if (edgeLength > 0) {
                 VecOps.accu(cutSize, hyperGraph.getWeightsOfEdge(edgeId));
             }
-
         }
         logger.info("Cut Size: " + cutSize);
         logger.info("The number of violated edges: " + violatedEdgeNum);

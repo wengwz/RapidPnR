@@ -115,6 +115,20 @@ public class EdgeBasedClustering extends AbstractNetlist {
         return !isCarryOrMuxNet;
     };
 
+    public static final Predicate<EDIFNet> nonTopPortDrivenNetFilter = net -> {
+        boolean isTopPortDrivenNet = false;
+        for (EDIFPortInst portInst : net.getPortInsts()) {
+            if (portInst.getCellInst() == null && portInst.isInput()) {
+                isTopPortDrivenNet = true;
+                break;
+            }
+        }
+
+        return !isTopPortDrivenNet;
+    };
+
+    public static final Predicate<EDIFNet> basicNetFilter = nonCarryOrMuxNetFilter.and(nonTopPortDrivenNetFilter);
+
     public static final class CLBAwareFilter implements Predicate<EDIFNet> {
         private Predicate<EDIFNet> lutFFNetFilter;
 

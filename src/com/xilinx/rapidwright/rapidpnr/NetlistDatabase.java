@@ -140,14 +140,14 @@ public class NetlistDatabase {
             EDIFNet fanoutRstNet;
             if (searchRstInsts.isEmpty()) {
                 fanoutRstNet = originResetNet;
-                logger.info("Toplevel Reset Port "+ resetPortName + " -> " + originResetNet.getName() + ":");
+                logger.fine("Toplevel Reset Port "+ resetPortName + " -> " + originResetNet.getName() + ":");
             } else {
                 EDIFCellInst searchRstInst = searchRstInsts.poll();
                 List<EDIFPortInst> fanoutPortInsts = NetlistUtils.getOutPortInstsOf(searchRstInst);
                 assert fanoutPortInsts.size() == 1;
                 EDIFPortInst fanoutPortInst = fanoutPortInsts.get(0);
                 fanoutRstNet = fanoutPortInst.getNet();
-                logger.info("  " + searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
+                logger.fine("  " + searchRstInst.getName() + ":" + fanoutPortInst.getName() + "->" + fanoutRstNet.getName() + ":");
             }
             
             assert !globalResetNets.contains(fanoutRstNet);
@@ -157,7 +157,7 @@ public class NetlistDatabase {
                 
                 EDIFCellInst incidentCellInst = incidentPortInst.getCellInst();
                 if (incidentCellInst == null) continue; // Special case for toplevel reset ports
-                logger.info("    " + incidentCellInst.getName() + "(" + incidentCellInst.getCellName() + ")" + ": " + incidentPortInst.getName());
+                logger.fine("    " + incidentCellInst.getName() + "(" + incidentCellInst.getCellName() + ")" + ": " + incidentPortInst.getName());
                 
                 //assert isRegisterCellInst(incidentCellInst): "Non-Register Instances on The Reset Tree";
                 // Reset Signals may connect to RAMB36E2 and DSP
@@ -179,7 +179,7 @@ public class NetlistDatabase {
                     List<EDIFPortInst> incidentCellInstOutPorts = NetlistUtils.getOutPortInstsOf(incidentCellInst);
                     //assert incidentCellInstOutPorts.size() == 1;
                     EDIFPortInst incidentCellInstOutPort = incidentCellInstOutPorts.get(0);
-                    logger.info("    LUT Reset Signal Fanout: " + (incidentCellInstOutPort.getNet().getPortInsts().size() - 1));
+                    logger.fine("    LUT Reset Signal Fanout: " + (incidentCellInstOutPort.getNet().getPortInsts().size() - 1));
                     for (EDIFPortInst portInst : NetlistUtils.getSinkPortsOf(incidentCellInstOutPort.getNet())) {
                         if (!NetlistUtils.isRegisterCellInst(portInst.getCellInst())) {
                             nonRegLutResetSinkInsts.add(portInst.getCellInst());
@@ -198,21 +198,21 @@ public class NetlistDatabase {
             
         }
 
-        logger.info("Global Reset Signal Bridges CellInsts: ");
+        logger.fine("Global Reset Signal Bridges CellInsts: ");
         for (EDIFCellInst cellInst : globalResetTreeCellInsts) {
-            logger.info("    " + cellInst.getName() + "(" + cellInst.getCellName() + ")");
+            logger.fine("    " + cellInst.getName() + "(" + cellInst.getCellName() + ")");
         }
-        logger.info("Global Reset Signal Nets: ");
+        logger.fine("Global Reset Signal Nets: ");
         for (EDIFNet net : globalResetNets) {
-            logger.info("    " + net.getName());
+            logger.fine("    " + net.getName());
         }
-        logger.info("Non-Register Reset Sink Cell Insts: ");
+        logger.fine("Non-Register Reset Sink Cell Insts: ");
         for (EDIFCellInst cellInst : nonRegResetSinkInsts) {
-            logger.info("    " + cellInst.getName() + "( " + cellInst.getCellName() + " )");
+            logger.fine("    " + cellInst.getName() + "( " + cellInst.getCellName() + " )");
         }
-        logger.info("Non-Register LUT-Reset Cell Insts: ");
+        logger.fine("Non-Register LUT-Reset Cell Insts: ");
         for (EDIFCellInst cellInst : nonRegLutResetSinkInsts) {
-            logger.info("    " + cellInst.getName() + "( " + cellInst.getCellName() + " )");
+            logger.fine("    " + cellInst.getName() + "( " + cellInst.getCellName() + " )");
         }
 
         logger.endSubStep();
@@ -284,7 +284,7 @@ public class NetlistDatabase {
         netlistLeafCellUtilMap = new HashMap<>();
         NetlistUtils.getLeafCellUtils(originTopCell, netlistLeafCellUtilMap);
         netlistLeafCellNum = netlistLeafCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
-        NetlistUtils.calibrateLUTUtils(originTopCell, netlistLeafCellUtilMap);
+        //NetlistUtils.calibrateLUTUtils(originTopCell, netlistLeafCellUtilMap);
         calibratedLeafCellNum = netlistLeafCellUtilMap.values().stream().mapToInt(Integer::intValue).sum();
 
         logger.info("Complete collecting resource utilization info");

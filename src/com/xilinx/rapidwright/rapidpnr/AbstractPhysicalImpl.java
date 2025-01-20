@@ -1,14 +1,19 @@
 package com.xilinx.rapidwright.rapidpnr;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+
 
 import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.design.NetType;
@@ -26,7 +31,9 @@ import static com.xilinx.rapidwright.rapidpnr.NameConvention.*;
 import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
 import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
 import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
+import com.xilinx.rapidwright.rapidpnr.utils.HyperGraph;
 import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
+import com.xilinx.rapidwright.rapidpnr.utils.StatisticsUtils;
 import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.VivadoTclCmd;
 
 abstract public class AbstractPhysicalImpl {
@@ -42,7 +49,7 @@ abstract public class AbstractPhysicalImpl {
     protected String designName;
     protected Map<String, Double> clkName2PeriodMap;
     protected String resetPortName; // TODO: only support single reset design
-    //// Layout Informatio
+    //// Layout Information
     protected Coordinate2D gridDim;
     protected Coordinate2D vertBoundaryDim;
     protected Coordinate2D horiBoundaryDim;
@@ -59,8 +66,6 @@ abstract public class AbstractPhysicalImpl {
 
     protected Set<EDIFNet>[][] vertBoundary2Nets;
     protected Set<EDIFNet>[][] horiBoundary2Nets;
-    protected Map<EDIFNet, Coordinate2D> net2vertBoundaryLocMap;
-    protected Map<EDIFNet, Coordinate2D> net2horiBoundaryLocMap;
 
     boolean hasBoundaryCell;
     protected Set<EDIFCellInst>[][] vertBoundary2CellInsts;
@@ -140,14 +145,17 @@ abstract public class AbstractPhysicalImpl {
         buildCellInst2IslandMap();
 
         // Build net to boundary map
-        //buildNet2BoundaryMap();
-        buildNet2BoundaryMapWithCellRep();
+        //buildNet2BoundaryMap(true);
+        //buildNet2BoundaryMapWithCellRep();
+        buildNet2BoundaryMap(false, false);
 
         // Build cellInst to boundary map
         this.hasBoundaryCell = hasBoundaryCell;
         if (hasBoundaryCell) {
             buildCellInst2BoundaryMap();
         }
+
+        //insertAnchorBufForBoundaryNet();
 
         logger.endSubStep();
         logger.info("Complete loading results from previous steps");
@@ -170,8 +178,7 @@ abstract public class AbstractPhysicalImpl {
             Set<EDIFCellInst> cellInstSet = abstractNetlist.getCellInstsOfNode(i);
             for (EDIFCellInst cellInst : cellInstSet) {
                 assert getCellInstsOfIsland(islandLoc).contains(cellInst) == false;
-                island2CellInsts[islandLoc.getX()][islandLoc.getY()].add(cellInst);
-                cellInst2IslandLocMap.put(cellInst, islandLoc);
+                addCellInstToIsland(cellInst, islandLoc);
             }
         }
 
@@ -184,6 +191,282 @@ abstract public class AbstractPhysicalImpl {
 
         logger.endSubStep();
         logger.info("Complete building cellInst to region map");
+    }
+
+    private void buildNet2BoundaryMap(boolean insertAnchorBuf, boolean extraAnchorBuf) {
+        logger.info("Start building net to boundary map");
+        boolean twoByTwoGrid = gridDim.getX() == 2 && gridDim.getY() == 2;
+        boolean singleBoundConstr = designParams.hasSingleBoundaryConstr();
+        assert singleBoundConstr || (!singleBoundConstr && twoByTwoGrid);
+
+        vertBoundary2Nets = new HashSet[vertBoundaryDim.getX()][vertBoundaryDim.getY()];
+        horiBoundary2Nets = new HashSet[horiBoundaryDim.getX()][horiBoundaryDim.getY()];
+
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            vertBoundary2Nets[loc.getX()][loc.getY()] = new HashSet<>();
+        });
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            horiBoundary2Nets[loc.getX()][loc.getY()] = new HashSet<>();
+        });
+        
+        // filter inter-island nets
+        Map<EDIFNet, Integer> interIslandNet2Dsit = new HashMap<>();
+        int regInterIslandNetNum = 0;
+        int regCascadedWithMuxNum = 0;
+
+        List<EDIFNet> originNets = new ArrayList<>(netlistDB.originTopCell.getNets());
+        for (EDIFNet net : originNets) {
+            if (netlistDB.isSpecialNet(net)) continue;
+            Map<Coordinate2D, List<EDIFPortInst>> loc2PortInsts = new HashMap<>();
+            Coordinate2D srcPortLoc = null;
+            EDIFCellInst srcCellInst = null;
+
+            for (EDIFPortInst portInst : net.getPortInsts()) {
+                EDIFCellInst cellInst = portInst.getCellInst();
+                if (cellInst == null) continue; // Skip top-level ports
+
+                Coordinate2D cellInstLoc = cellInst2IslandLocMap.get(cellInst);
+                assert cellInstLoc != null;
+
+                List<EDIFPortInst> portInsts = loc2PortInsts.get(cellInstLoc);
+                if (portInsts == null) {
+                    portInsts = new ArrayList<>();
+                    loc2PortInsts.put(cellInstLoc, portInsts);
+                }
+                portInsts.add(portInst);
+
+                if (NetlistUtils.isSourcePortInst(portInst)) {
+                    assert srcPortLoc == null;
+                    srcPortLoc = cellInstLoc;
+                    srcCellInst = cellInst;
+                }
+            }
+
+            int netHPWL = Coordinate2D.getHPWL(loc2PortInsts.keySet());
+            assert !singleBoundConstr || (singleBoundConstr && netHPWL <= 1);
+
+            if (netHPWL > 0) {
+                assert srcPortLoc != null && srcCellInst != null;
+                for (Coordinate2D loc : loc2PortInsts.keySet()) {
+                    if (loc.equals(srcPortLoc)) continue;
+
+                    List<EDIFPortInst> portInsts = loc2PortInsts.get(loc);
+                    EDIFNet interIslandNet = net;
+
+                    if (insertAnchorBuf) {
+                        EDIFCellInst anchorBufInst = NetlistUtils.insertLUTBufOnNet(net, portInsts);
+                        addCellInstToIsland(anchorBufInst, srcPortLoc);
+                        interIslandNet = NetlistUtils.getFanoutNetOf(anchorBufInst).get(0);
+                    } else {
+                        boolean cascadedWithMux = NetlistUtils.isCascadedWithMUXF(srcCellInst);
+                        if (cascadedWithMux) {
+                            regCascadedWithMuxNum++;
+                        }
+                        if (netHPWL > 1 || cascadedWithMux) {
+                        //if (netHPWL > 1) {
+                            EDIFCellInst anchorBufInst;
+                            if (NetlistUtils.isRegisterCellInst(srcCellInst) && !cascadedWithMux) {
+                                anchorBufInst = NetlistUtils.cellReplication(srcCellInst, portInsts);
+                            } else {
+                                logger.info("Insert anchor buffer on net: " + net.getName());
+                                anchorBufInst = NetlistUtils.insertLUTBufOnNet(net, portInsts);
+                            }
+                            // logger.info("Replicate cell " + srcCellInst.getName() + " to " + loc);
+                            // anchorBufInst = NetlistUtils.cellReplication(srcCellInst, portInsts);
+                            addCellInstToIsland(anchorBufInst, srcPortLoc);
+                            interIslandNet = NetlistUtils.getFanoutNetOf(anchorBufInst).get(0);
+                        }
+                    }
+                    // if (insertAnchorBuf) {
+                    //     EDIFCellInst srcCellInst = NetlistUtils.getSourceCellInstOfNet(net);
+                    //     EDIFCellInst anchorBufInst;
+
+                    //     if (NetlistUtils.isRegisterCellInst(srcCellInst)) {
+                    //         anchorBufInst = NetlistUtils.cellReplication(srcCellInst, portInsts);
+                    //     } else {
+
+                    //     }
+                    //     EDIFCellInst anchorBufInst = NetlistUtils.insertLUTBufOnNet(net, portInsts);
+                    //     addCellInstToIsland(anchorBufInst, srcPortLoc);
+                    //     interIslandNet = anchorBufInst.getPortInst("O").getNet();
+                    // }
+
+                    int dist = srcPortLoc.getManhattanDist(loc);
+                    interIslandNet2Dsit.put(interIslandNet, dist);
+                    if (NetlistUtils.isRegFanoutNet(interIslandNet)) {
+                        regInterIslandNetNum++;
+                    }
+                }
+            }
+        }
+
+        routeInterIslandNets(interIslandNet2Dsit, extraAnchorBuf);
+
+        logger.info("Total number of unrouted nets: " + interIslandNet2Dsit.size());
+        List<Double> netLens = interIslandNet2Dsit.values()
+                                          .stream()
+                                          .map(Integer::doubleValue)
+                                          .collect(Collectors.toList());
+        String netLenDist = StatisticsUtils.getValueDistInfo(netLens, 2);
+        logger.info("Length distribution of unrouted nets:\n" + netLenDist, true);
+        logger.info("Number of register-driven nets: " + regInterIslandNetNum);
+        logger.info("Number of cascaded with MUX nets: " + regCascadedWithMuxNum);
+
+        int totalBoundaryNetNum = 0;
+        logger.info("Vertical Boundary Nets Dist:");
+        for (int y = vertBoundaryDim.getY() - 1; y >= 0; y--) {
+            String lineStr = "";
+            for (int x = 0; x < vertBoundaryDim.getX(); x++) {
+                lineStr += String.format("%d\t", vertBoundary2Nets[x][y].size());
+                totalBoundaryNetNum += vertBoundary2Nets[x][y].size();
+            }
+            logger.info(lineStr);
+        }
+
+        logger.info("Horizontal Boundary Nets Dist:");
+        for (int y = horiBoundaryDim.getY() - 1; y >= 0; y--) {
+            String lineStr = "";
+            for (int x = 0; x < horiBoundaryDim.getX(); x++) {
+                lineStr += String.format("%d\t", horiBoundary2Nets[x][y].size());
+                totalBoundaryNetNum += horiBoundary2Nets[x][y].size();
+            }
+            logger.info(lineStr);
+        }
+
+        logger.info("Total number of boundary nets: " + totalBoundaryNetNum);
+        logger.info("Complete building net to boundary map");
+    }
+    
+    private void routeInterIslandNets(Map<EDIFNet, Integer> interIslandNet2Dist, boolean extraAnchorBuf) {
+        logger.info("Start routing inter-island nets");
+        logger.newSubStep();
+
+        logger.info("Start building island graph");
+        HyperGraph islandGraph = new HyperGraph(Arrays.asList(1.0), Arrays.asList(1.0));
+        List<Set<EDIFNet>> boundary2Nets = new ArrayList<>();
+
+        // add nodes of islands
+        int islandNum = gridDim.getX() * gridDim.getY();
+        for (int i = 0; i < islandNum; i++) {
+            islandGraph.addNode(Arrays.asList(1.0));
+        }
+
+        // add edges of boundaries
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            boundary2Nets.add(horiBoundary2Nets[loc.getX()][loc.getY()]);
+            Set<Integer> islandIds = new HashSet<>();
+            islandIds.add(gridDim.getIdxOf(loc));
+            Coordinate2D neighborLoc = Coordinate2D.of(loc.getX(), loc.getY() + 1);
+            islandIds.add(gridDim.getIdxOf(neighborLoc));
+            islandGraph.addEdge(islandIds, Arrays.asList(1.0));
+        });
+
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            boundary2Nets.add(vertBoundary2Nets[loc.getX()][loc.getY()]);
+            Set<Integer> islandIds = new HashSet<>();
+            islandIds.add(gridDim.getIdxOf(loc));
+            Coordinate2D neighborLoc = Coordinate2D.of(loc.getX() + 1, loc.getY());
+            islandIds.add(gridDim.getIdxOf(neighborLoc));
+            islandGraph.addEdge(islandIds, Arrays.asList(1.0));
+        });
+        logger.info("Island Graph Info: " + islandGraph.getHyperGraphInfo(false), true);
+        logger.info("Complete building island graph");
+
+        List<EDIFNet> sortedNets = interIslandNet2Dist.entrySet()
+            .stream()
+            .sorted(Map.Entry.comparingByValue())
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toList());
+
+
+        for (EDIFNet net : sortedNets) {
+            int srcIslandId = -1;
+            int dstIslandId = -1;
+
+            Set<Integer> dstIslandIds = new HashSet<>();
+            for (EDIFPortInst portInst : net.getPortInsts()) {
+                EDIFCellInst cellInst = portInst.getCellInst();
+
+                if (cellInst == null) continue; // Skip top-level ports
+                //assert cellInst != null: "illegal nets to be routed: " + net.getName();
+                Coordinate2D loc = cellInst2IslandLocMap.get(cellInst);
+                int islandId = gridDim.getIdxOf(loc);
+                if (NetlistUtils.isSourcePortInst(portInst)) {
+                    assert srcIslandId == -1;
+                    srcIslandId = gridDim.getIdxOf(loc);
+                } else {
+                    dstIslandIds.add(islandId);
+                }
+            }
+            assert dstIslandIds.size() <= 2;
+            for (int islandId : dstIslandIds) {
+                if (islandId != srcIslandId) {
+                    dstIslandId = islandId;
+                    break;
+                }
+            }
+            
+            assert srcIslandId != -1 && dstIslandId != -1 && srcIslandId != dstIslandId;
+
+            List<Integer> island2PathCost = new ArrayList<>(Collections.nCopies(islandNum, Integer.MAX_VALUE));
+            List<Integer> island2PathDist = new ArrayList<>(Collections.nCopies(islandNum, Integer.MAX_VALUE));
+            List<List<Integer>> island2BestPath = new ArrayList<>();
+            for (int i = 0; i < islandNum; i++) {
+                island2BestPath.add(new ArrayList<>());
+            }
+            Queue<Integer> searchQ = new LinkedList<>();
+            searchQ.add(srcIslandId);
+            island2PathCost.set(srcIslandId, 0);
+            island2PathDist.set(srcIslandId, 0);
+    
+            while (!searchQ.isEmpty()) {
+                int islandId = searchQ.poll();
+                for (int edgeId : islandGraph.getEdgesOfNode(islandId)) {
+                    for (int nIslandId : islandGraph.getNodesOfEdge(edgeId)) {
+                        if (nIslandId == islandId) continue;
+                        Integer cost = island2PathCost.get(islandId) + boundary2Nets.get(edgeId).size();
+                        Integer dist = island2PathDist.get(islandId) + 1;
+                        if (cost < island2PathCost.get(nIslandId) && dist <= island2PathDist.get(nIslandId)) {
+                            island2PathCost.set(nIslandId, cost);
+                            island2PathDist.set(nIslandId, dist);
+                            List<Integer> path = island2BestPath.get(nIslandId);
+                            path.clear();
+                            path.addAll(island2BestPath.get(islandId));
+                            path.add(edgeId);
+                            searchQ.add(nIslandId);
+                        }
+                    }
+                }
+            }
+
+            List<Integer> bestPath = island2BestPath.get(dstIslandId);
+            int curIslandId = srcIslandId;
+            for (int i = 0; i < bestPath.size(); i++) {
+                if (i > 0) {
+                    logger.info("Insert anchor buffer on multi-boundary net: " + net.getName());
+                    EDIFCellInst extraAnchorBufInst = NetlistUtils.insertLUTBufOnNet(net);
+                    addCellInstToIsland(extraAnchorBufInst, gridDim.getLocOf(curIslandId));
+                    net = NetlistUtils.getFanoutNetOf(extraAnchorBufInst).get(0);
+
+                    // extraAnchorBufInst = NetlistUtils.insertLUTBufOnNet(net);
+                    // addCellInstToIsland(extraAnchorBufInst, gridDim.getLocOf(curIslandId));
+                    // net = NetlistUtils.getFanoutNetOf(extraAnchorBufInst).get(0);
+                }
+
+                int boundaryId = bestPath.get(i);
+                List<Integer> neighbors = islandGraph.getNeighborsOfNode(curIslandId, boundaryId);
+                curIslandId = neighbors.get(0);
+                boundary2Nets.get(boundaryId).add(net);
+
+                if (extraAnchorBuf && curIslandId == dstIslandId && NetlistUtils.getFanoutOfNet(net) > 100) {
+                    EDIFCellInst extraAnchorBufInst = NetlistUtils.insertLUTBufOnNet(net);
+                    addCellInstToIsland(extraAnchorBufInst, gridDim.getLocOf(curIslandId));
+                }
+            }
+        }
+
+        logger.endSubStep();
+        logger.info("Complete routing inter-island nets");
     }
 
     private void buildNet2BoundaryMapWithCellRep() {
@@ -199,9 +482,6 @@ abstract public class AbstractPhysicalImpl {
         horiBoundaryDim.traverse((Coordinate2D loc) -> {
             horiBoundary2Nets[loc.getX()][loc.getY()] = new HashSet<>();
         });
-
-        net2horiBoundaryLocMap = new HashMap<>();
-        net2vertBoundaryLocMap = new HashMap<>();
 
         List<EDIFNet> originNets = new ArrayList<>(netlistDB.originTopCell.getNets());
         for (EDIFNet net : originNets) {
@@ -240,7 +520,7 @@ abstract public class AbstractPhysicalImpl {
                 assert xDist + yDist <= 1: String.format("distance=%d", xDist + yDist);
                 if (xDist + yDist == 0) continue;
 
-                String repCellName = NameConvention.getRepCellName(srcCellInst, loc);
+
                 List<EDIFPortInst> transferPortInsts = loc2PortInsts.get(loc);
                 EDIFCellInst repCellInst;
                 
@@ -248,7 +528,7 @@ abstract public class AbstractPhysicalImpl {
                     repCellInst = srcCellInst;
                 } else {
                     //logger.info(String.format("Replicate cell %s to %s", srcCellInst.getName(), repCellName));
-                    repCellInst = NetlistUtils.cellReplication(srcCellInst, repCellName, transferPortInsts);
+                    repCellInst = NetlistUtils.cellReplication(srcCellInst, transferPortInsts);
                 }
 
                 if (!cellInst2IslandLocMap.containsKey(repCellInst)) {
@@ -264,10 +544,8 @@ abstract public class AbstractPhysicalImpl {
                 Coordinate2D boundaryLoc = Coordinate2D.of(boundaryX, boundaryY);
                 if (xDist == 1) {
                     getNetsOfVertBoundary(boundaryLoc).add(newNet);
-                    net2vertBoundaryLocMap.put(net, boundaryLoc);
                 } else {
                     getNetsOfHoriBoundary(boundaryLoc).add(newNet);
-                    net2horiBoundaryLocMap.put(net, boundaryLoc);
                 }
             }
         }
@@ -276,7 +554,7 @@ abstract public class AbstractPhysicalImpl {
         logger.info("Complete building net to boundary map with cell replication");
     }
 
-    private void buildNet2BoundaryMap() {
+    private void buildNet2BoundaryMap(boolean hasNetLocConstr) {
         logger.info("Start building net to boundary map");
         logger.newSubStep();
 
@@ -291,42 +569,60 @@ abstract public class AbstractPhysicalImpl {
             horiBoundary2Nets[loc.getX()][loc.getY()] = new HashSet<>();
         });
 
-        net2horiBoundaryLocMap = new HashMap<>();
-        net2vertBoundaryLocMap = new HashMap<>();
-
         for (EDIFNet net : netlistDB.originTopCell.getNets()) {
             Set<Coordinate2D> netIncidentPortLocs = new HashSet<>();
-            if (net.isGND() || net.isVCC()) continue;
-            if (netlistDB.isGlobalClockNet(net) || netlistDB.isGlobalResetNet(net)) continue;
-            if (netlistDB.isIgnoreNet(net)) continue;
+            Coordinate2D srcPortLoc = null;
+
+            if (netlistDB.isSpecialNet(net)) continue;
 
             for (EDIFPortInst portInst : net.getPortInsts()) {
                 EDIFCellInst cellInst = portInst.getCellInst();
                 if (cellInst == null) continue; // Skip top-level ports
 
-                assert cellInst2IslandLocMap.containsKey(cellInst);
-                netIncidentPortLocs.add(cellInst2IslandLocMap.get(cellInst));
+                Coordinate2D cellInstLoc = cellInst2IslandLocMap.get(cellInst);
+                assert cellInstLoc != null;
+                netIncidentPortLocs.add(cellInstLoc);
+                if (NetlistUtils.isSourcePortInst(portInst)) {
+                    assert srcPortLoc == null;
+                    srcPortLoc = cellInstLoc;
+                }
             }
 
             assert netIncidentPortLocs.size() <= 2;
-            if (netIncidentPortLocs.size() == 2) {
-                Iterator<Coordinate2D> iter = netIncidentPortLocs.iterator();
-                Coordinate2D loc0 = iter.next();
-                Coordinate2D loc1 = iter.next();
-                Integer xDist = loc0.getDistX(loc1);
-                Integer yDist = loc0.getDistY(loc1);
-                assert xDist + yDist == 1;
-                if (xDist == 1) {
-                    Integer boundaryX = Math.min(loc0.getX(), loc1.getX());
-                    Integer boundaryY = loc0.getY();
-                    vertBoundary2Nets[boundaryX][boundaryY].add(net);
-                    net2vertBoundaryLocMap.put(net, new Coordinate2D(boundaryX, boundaryY));
-                } else {
-                    Integer boundaryX = loc0.getX();
-                    Integer boundaryY = Math.min(loc0.getY(), loc1.getY());
-                    horiBoundary2Nets[boundaryX][boundaryY].add(net);
-                    net2horiBoundaryLocMap.put(net, new Coordinate2D(boundaryX, boundaryY));
+            assert !hasNetLocConstr || (hasNetLocConstr && netIncidentPortLocs.size() <= 2);
+            if (netIncidentPortLocs.size() > 1) {
+                assert srcPortLoc != null;
+
+                for (Coordinate2D portLoc : netIncidentPortLocs) {
+                    if (portLoc.equals(srcPortLoc)) continue;
+                    int xDist = srcPortLoc.getDistX(portLoc);
+                    int yDist = srcPortLoc.getDistY(portLoc);
+                    assert xDist + yDist == 1: "Only allow net crossing neighboring islands";
+                    int boundaryX = Math.min(srcPortLoc.getX(), portLoc.getX());
+                    int boundaryY = Math.min(srcPortLoc.getY(), portLoc.getY());
+                    if (xDist == 1) {
+                        vertBoundary2Nets[boundaryX][boundaryY].add(net);
+                    } else {
+                        horiBoundary2Nets[boundaryX][boundaryY].add(net);
+                    }
                 }
+                // Iterator<Coordinate2D> iter = netIncidentPortLocs.iterator();
+                // Coordinate2D loc0 = iter.next();
+                // Coordinate2D loc1 = iter.next();
+                // Integer xDist = loc0.getDistX(loc1);
+                // Integer yDist = loc0.getDistY(loc1);
+                // assert xDist + yDist == 1;
+                // if (xDist == 1) {
+                //     Integer boundaryX = Math.min(loc0.getX(), loc1.getX());
+                //     Integer boundaryY = loc0.getY();
+                //     vertBoundary2Nets[boundaryX][boundaryY].add(net);
+                //     net2vertBoundaryLocMap.put(net, new Coordinate2D(boundaryX, boundaryY));
+                // } else {
+                //     Integer boundaryX = loc0.getX();
+                //     Integer boundaryY = Math.min(loc0.getY(), loc1.getY());
+                //     horiBoundary2Nets[boundaryX][boundaryY].add(net);
+                //     net2horiBoundaryLocMap.put(net, new Coordinate2D(boundaryX, boundaryY));
+                // }
             }
         }
 
@@ -357,22 +653,87 @@ abstract public class AbstractPhysicalImpl {
         logger.info("Complete building net to boundary map");
     }
 
+    private void insertAnchorBufForBoundaryNet() {
+        logger.info("Start inserting anchor buffer for boundary net");
+        vertBoundary2CellInsts = new HashSet[vertBoundaryDim.getX()][vertBoundaryDim.getY()];
+        horiBoundary2CellInsts = new HashSet[horiBoundaryDim.getX()][horiBoundaryDim.getY()];
+
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            vertBoundary2CellInsts[loc.getX()][loc.getY()] = new HashSet<>();
+        });
+
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            horiBoundary2CellInsts[loc.getX()][loc.getY()] = new HashSet<>();
+        });
+
+        cellInst2VertBoundaryLocMap = new HashMap<>();
+        cellInst2HoriBoundaryLocMap = new HashMap<>();
+
+        Set<EDIFNet> crossBoundaryNets = new HashSet<>();
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            crossBoundaryNets.addAll(vertBoundary2Nets[loc.getX()][loc.getY()]);
+        });
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            crossBoundaryNets.addAll(horiBoundary2Nets[loc.getX()][loc.getY()]);
+        });
+
+        for (EDIFNet net : crossBoundaryNets) {
+            Map<Coordinate2D, List<EDIFPortInst>> island2PortInstsMap = new HashMap<>();
+            Coordinate2D srcPortInstLoc = null;
+
+            for (EDIFPortInst portInst : net.getPortInsts()) {
+                EDIFCellInst cellInst = portInst.getCellInst();
+                assert cellInst != null;
+                Coordinate2D cellInstLoc = cellInst2IslandLocMap.get(cellInst);
+
+                List<EDIFPortInst> portInsts = island2PortInstsMap.get(cellInstLoc);
+                if (portInsts == null) {
+                    portInsts = new ArrayList<>();
+                    island2PortInstsMap.put(cellInstLoc, portInsts);
+                }
+                portInsts.add(portInst);
+
+                if (NetlistUtils.isSourcePortInst(portInst)) {
+                    srcPortInstLoc = cellInstLoc;
+                }
+            }
+            assert srcPortInstLoc != null;
+
+            for (Coordinate2D islandLoc : island2PortInstsMap.keySet()) {
+                if (islandLoc.equals(srcPortInstLoc)) continue;
+                List<EDIFPortInst> portInsts = island2PortInstsMap.get(islandLoc);
+                EDIFCellInst anchorBuffer = NetlistUtils.insertLUTBufOnNet(net, portInsts);
+
+                int xDist = srcPortInstLoc.getDistX(islandLoc);
+                int yDist = srcPortInstLoc.getDistY(islandLoc);
+                assert xDist + yDist == 1;
+                int boundaryX = Math.min(srcPortInstLoc.getX(), islandLoc.getX());
+                int boundaryY = Math.min(srcPortInstLoc.getY(), islandLoc.getY());
+                if (xDist == 1) {
+                    vertBoundary2CellInsts[boundaryX][boundaryY].add(anchorBuffer);
+                    cellInst2VertBoundaryLocMap.put(anchorBuffer, new Coordinate2D(boundaryX, boundaryY));
+                } else {
+                    horiBoundary2CellInsts[boundaryX][boundaryY].add(anchorBuffer);
+                    cellInst2HoriBoundaryLocMap.put(anchorBuffer, new Coordinate2D(boundaryX, boundaryY));
+                }
+            }
+        }
+        
+        logger.info("Complete inserting anchor buffer for boundary net");
+    }
+
     private void buildCellInst2BoundaryMap() {
         logger.info("Start building cellInst to boundary map");
         vertBoundary2CellInsts = new HashSet[vertBoundaryDim.getX()][vertBoundaryDim.getY()];
         horiBoundary2CellInsts = new HashSet[horiBoundaryDim.getX()][horiBoundaryDim.getY()];
 
-        for (int x = 0; x < vertBoundaryDim.getX(); x++) {
-            for (int y = 0; y < vertBoundaryDim.getY(); y++) {
-                vertBoundary2CellInsts[x][y] = new HashSet<>();
-            }
-        }
+        vertBoundaryDim.traverse((Coordinate2D loc) -> {
+            vertBoundary2CellInsts[loc.getX()][loc.getY()] = new HashSet<>();
+        });
 
-        for (int x = 0; x < horiBoundaryDim.getX(); x++) {
-            for (int y = 0; y < horiBoundaryDim.getY(); y++) {
-                horiBoundary2CellInsts[x][y] = new HashSet<>();
-            }
-        }
+        horiBoundaryDim.traverse((Coordinate2D loc) -> {
+            horiBoundary2CellInsts[loc.getX()][loc.getY()] = new HashSet<>();
+        });
 
         cellInst2HoriBoundaryLocMap = new HashMap<>();
         cellInst2VertBoundaryLocMap = new HashMap<>();
@@ -487,21 +848,12 @@ abstract public class AbstractPhysicalImpl {
         allCopiedCellInsts.addAll(getCellInstsOfIsland(loc));
         islandCell.createCellInst(getIslandName(loc), topCell);
 
-        //String pblockRange = getPblockRangeOfIsland(loc);
-        // if (addPblockOnTop) {
-        //     VivadoTclCmd.addCellPblockConstr(topDesign, pblockRange, false, false, true);
-        // } else {
-        //     VivadoTclCmd.addCellPblockConstr(topDesign, islandCellInst, pblockRange, false, false, true);
-        // }
-        //VivadoTclCmd.addStrictPblockConstr(topDesign, getPblockRangeOfIsland(loc));
-
         // add boundary cells
         Coordinate2D upBoundaryLoc = getUpBoundaryLocOf(loc);
         if (upBoundaryLoc != null) {
             EDIFCell newCell = new EDIFCell(workLib, getHoriBoundaryName(upBoundaryLoc));
             copyPartialNetlistToCell(newCell, netlistDB.originTopCell, getCellInstsOfHoriBoundary(upBoundaryLoc));
             newCell.createCellInst(getHoriBoundaryName(upBoundaryLoc), topCell);
-            //VivadoTclCmd.addStrictCellPblockConstr(topDesign, newCellInst, getPblockRangeOfHoriBoundary(upBoundaryLoc));
             allCopiedCellInsts.addAll(getCellInstsOfHoriBoundary(upBoundaryLoc));
         }
 
@@ -510,8 +862,6 @@ abstract public class AbstractPhysicalImpl {
             EDIFCell newCell = new EDIFCell(workLib, getHoriBoundaryName(downBoundaryLoc));
             copyPartialNetlistToCell(newCell, netlistDB.originTopCell, getCellInstsOfHoriBoundary(downBoundaryLoc));
             newCell.createCellInst(getHoriBoundaryName(downBoundaryLoc), topCell);
-            //VivadoTclCmd.addStrictCellPblockConstr(topDesign, newCellInst, getPblockRangeOfHoriBoundary(downBoundaryLoc));
-
             allCopiedCellInsts.addAll(getCellInstsOfHoriBoundary(downBoundaryLoc));
         }
 
@@ -520,8 +870,6 @@ abstract public class AbstractPhysicalImpl {
             EDIFCell newCell = new EDIFCell(workLib, getVertBoundaryName(leftBoundaryLoc));
             copyPartialNetlistToCell(newCell, netlistDB.originTopCell, getCellInstsOfVertBoundary(leftBoundaryLoc));
             newCell.createCellInst(getVertBoundaryName(leftBoundaryLoc), topCell);
-            // VivadoTclCmd.addStrictCellPblockConstr(topDesign, newCellInst, getPblockRangeOfVertBoundary(leftBoundaryLoc));
-
             allCopiedCellInsts.addAll(getCellInstsOfVertBoundary(leftBoundaryLoc));
         }
 
@@ -989,6 +1337,11 @@ abstract public class AbstractPhysicalImpl {
 
     protected Set<EDIFCellInst> getCellInstsOfIsland(Coordinate2D loc) {
         return getCellInstsOfIsland(loc.getX(), loc.getY());
+    }
+
+    protected void addCellInstToIsland(EDIFCellInst cellInst, Coordinate2D loc) {
+        island2CellInsts[loc.getX()][loc.getY()].add(cellInst);
+        cellInst2IslandLocMap.put(cellInst, loc);
     }
 
     protected Set<EDIFNet> getNetsOfVertBoundary(int x, int y) {

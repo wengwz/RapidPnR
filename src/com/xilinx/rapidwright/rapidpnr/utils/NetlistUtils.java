@@ -40,19 +40,19 @@ public class NetlistUtils {
             put("LUT5", "LUT");
             put("LUT6", "LUT");
             
-            // put("RAMD32", "LUT");
-            // put("RAMS32", "LUT");
-            // put("RAMD64E", "LUT");
-            // put("SRL16E", "LUT");
-            // put("SRLC32E", "LUT");
-            // put("RAMS64E", "LUT");
+            put("RAMD32", "LUT");
+            put("RAMS32", "LUT");
+            put("RAMD64E", "LUT");
+            put("SRL16E", "LUT");
+            put("SRLC32E", "LUT");
+            put("RAMS64E", "LUT");
 
-            put("RAMD32",  "LUTM");
-            put("RAMS32",  "LUTM");
-            put("RAMD64E", "LUTM");
-            put("SRL16E",  "LUTM");
-            put("SRLC32E", "LUTM");
-            put("RAMS64E", "LUTM");
+            // put("RAMD32",  "LUTM");
+            // put("RAMS32",  "LUTM");
+            // put("RAMD64E", "LUTM");
+            // put("SRL16E",  "LUTM");
+            // put("SRLC32E", "LUTM");
+            // put("RAMS64E", "LUTM");
 
             // CARRY
             put("CARRY8", "CARRY");
@@ -131,6 +131,15 @@ public class NetlistUtils {
         return isClkPort(portInst.getPort());
     }
 
+    public static boolean isSourcePortInst(EDIFPortInst portInst) {
+        EDIFCellInst cellInst = portInst.getCellInst();
+        return cellInst != null ? portInst.isOutput() : portInst.isInput();
+    }
+
+    public static boolean isSinkPortInst(EDIFPortInst portInst) {
+        return !isSourcePortInst(portInst);
+    }
+
     public static HashSet<String> pseudoLeafCellNames = new HashSet<>(Arrays.asList("DSP48E2"));
 
     public static Map<String, Map<String, Integer>> nonPrimUnisimCellUtils;
@@ -184,6 +193,16 @@ public class NetlistUtils {
         return sinkPortInsts;
     }
 
+    public static List<EDIFNet> getFanoutNetOf(EDIFCellInst cellInst) {
+        List<EDIFNet> outNets = new ArrayList<>();
+        for (EDIFPortInst portInst : cellInst.getPortInsts()) {
+            if (portInst.isOutput() && portInst.getNet() != null) {
+                outNets.add(portInst.getNet());
+            }
+        }
+        return outNets;
+    }
+
     public static int getFanoutOfNet(EDIFNet net) {
         return net.getPortInsts().size() - 1;
     } 
@@ -217,7 +236,6 @@ public class NetlistUtils {
         }
         return leafCellNum;
     }
-        
 
     public static void getLeafCellUtils(EDIFCell cell, Map<EDIFCell, Integer> leafCellUtilMap) {
         assert leafCellUtilMap != null;
@@ -383,14 +401,26 @@ public class NetlistUtils {
         return isRegisterCellInst(srcCellInst);
     }
 
-    public static EDIFCellInst cellReplication(EDIFCellInst originCellInst, String repCellInstName, List<EDIFPortInst> transferPortInsts) {
+    public static EDIFCellInst cellReplication(EDIFCellInst originCellInst, List<EDIFPortInst> transferPortInsts) {
         // replicate register originCellInst and transfer fanout cell insts specified in transferCellInsts to new register
         assert isRegisterCellInst(originCellInst) || isLutCellInst(originCellInst): "originCellInst must be FF or LUT";
         EDIFCell originCellType = originCellInst.getCellType();
         EDIFCell parentCell = originCellInst.getParentCell();
 
+        EDIFPortInst outPortInst = getOutPortInstsOf(originCellInst).get(0);
+        Set<EDIFPortInst> fanoutPortInsts = new HashSet<>(getSinkPortsOf(outPortInst.getNet()));
+        assert fanoutPortInsts.containsAll(transferPortInsts): "transferPortInsts must be subset of fanoutPortInsts";
+        if (fanoutPortInsts.size() == transferPortInsts.size()) {
+            return originCellInst;
+        }
+
         // check name confliction
-        assert parentCell.getCellInst(repCellInstName) == null: String.format("Cell instance %s already exists", repCellInstName);
+        int repCellId = 0;
+        String repCellInstName = originCellInst.getName() + "_rep_" + repCellId;
+        while (parentCell.getCellInst(repCellInstName) != null) {
+            repCellId++;
+            repCellInstName = originCellInst.getName() + "_rep_" + repCellId;
+        }
         assert parentCell.getNet(repCellInstName) == null: String.format("Net %s already exists", repCellInstName);
 
         EDIFCellInst repCellInst = parentCell.createChildCellInst(repCellInstName, originCellType);
@@ -404,16 +434,10 @@ public class NetlistUtils {
             if (portInst.isInput()) { // copy connections of input ports
                 net.createPortInst(port, repCellInst);
             } else { // transfer connections with specified output ports to new replicated cellInsts
-                Set<EDIFPortInst> fanoutPortInsts = new HashSet<>();
-                fanoutPortInsts.addAll(getSinkPortsOf(net));
-                assert transferPortInsts.size() < fanoutPortInsts.size();
 
                 EDIFNet newNet = parentCell.createNet(repCellInstName);
                 newNet.createPortInst(port, repCellInst);
                 for (EDIFPortInst transferPortInst : transferPortInsts) {
-                    assert fanoutPortInsts.contains(transferPortInst):
-                    String.format("Port %s is not incident to cell instance %s", transferPortInst.getName(), originCellInst.getName());
-
                     net.removePortInst(transferPortInst);
                     newNet.addPortInst(transferPortInst);
                 }
@@ -422,7 +446,46 @@ public class NetlistUtils {
         return repCellInst;
     }
 
-    public EDIFCellInst createLUTBuf(String cellInstName, EDIFCell parentCell) {
+    public static EDIFCellInst insertLUTBufOnNet(EDIFNet net, List<EDIFPortInst> transferPortInsts) {
+        EDIFCell parentCell = net.getParentCell();
+
+        int bufId = 0;
+        String bufCellInstName = net.getName() + "_buf_" + bufId;
+        while (parentCell.getCellInst(bufCellInstName) != null) {
+            bufId++;
+            bufCellInstName = net.getName() + "_buf_" + bufId;
+        }
+        EDIFCellInst bufCellInst = createLUTBuf(bufCellInstName, parentCell);
+
+
+        net.createPortInst("I0", bufCellInst);
+
+        EDIFNet bufOutNet = parentCell.createNet(bufCellInstName);
+        
+        EDIFPortInst bufOutPortInst = bufOutNet.createPortInst("O", bufCellInst);
+        assert bufOutPortInst != null;
+
+        int transferPortNum = 0;
+        Set<EDIFPortInst> originNetPortInsts = new HashSet<>(net.getPortInsts());
+        for (EDIFPortInst portInst : transferPortInsts) {
+            if (originNetPortInsts.contains(portInst) && isSinkPortInst(portInst)) {
+                net.removePortInst(portInst);
+                bufOutNet.addPortInst(portInst);
+                transferPortNum++;
+            }
+        }
+
+        assert transferPortNum > 0: "No legal transferred port instrances for buffer";
+
+        return bufCellInst;
+    }
+
+    public static EDIFCellInst insertLUTBufOnNet(EDIFNet net) {
+        List<EDIFPortInst> transferPortInsts = new ArrayList<>(net.getPortInsts());
+        return insertLUTBufOnNet(net, transferPortInsts);
+    }
+
+    public static EDIFCellInst createLUTBuf(String cellInstName, EDIFCell parentCell) {
         EDIFNetlist netlist = parentCell.getNetlist();
         EDIFLibrary hdiPrimLibrary = netlist.getHDIPrimitivesLibrary();
         EDIFCell lut1Cell = hdiPrimLibrary.getCell("LUT1");
@@ -430,12 +493,12 @@ public class NetlistUtils {
             lut1Cell = Design.getUnisimCell(Unisim.LUT1);
             hdiPrimLibrary.addCell(lut1Cell);
         }
-        EDIFCellInst lut1CellInst = parentCell.createCellInst(cellInstName, lut1Cell);
+        EDIFCellInst lut1CellInst = lut1Cell.createCellInst(cellInstName, parentCell);
         lut1CellInst.addProperty("INIT", "2'h2");
         return lut1CellInst;
     }
 
-    public boolean isCellHasIllegalNet(EDIFCell topCell) {
+    public static boolean isCellHasIllegalNet(EDIFCell topCell) {
         boolean hasIllegalNet = false;
         for (EDIFNet net : topCell.getNets()) {
             int netDegree = net.getPortInsts().size();
@@ -447,6 +510,15 @@ public class NetlistUtils {
             }
         }
         return hasIllegalNet;
+    }
+
+    public static boolean isCascadedWithMUXF(EDIFCellInst cellInst) {
+        if (!isRegisterCellInst(cellInst)) return false;
+        EDIFPortInst inPortInst = cellInst.getPortInst("D");
+        EDIFNet inNet = inPortInst.getNet();
+        EDIFCellInst srcCellInst = getSourceCellInstOfNet(inNet);
+        if (srcCellInst == null) return false;
+        return srcCellInst.getCellName().equals("MUXF7") || srcCellInst.getCellName().equals("MUXF8");
     }
         
 }
