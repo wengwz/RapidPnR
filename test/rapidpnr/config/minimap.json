@@ -1,23 +1,23 @@
 {
-    "designName": "minimap-large",
+    "designName": "minimap-small",
     "clkPortNames": ["ap_clk"],
     "mainClkName": "ap_clk",
     "resetPortNames": ["ap_rst_n"],
-    "clkPeriods": {"ap_clk": 4.8},
+    "clkPeriods": {"ap_clk": 3.8},
 
     "verbose": false,
 
     "workDir": "test/rapidpnr/results",
-    "inputDcpPath": "workspace/dcp/minimap-large.dcp",
+    "inputDcpPath": "test/rapidpnr/dcp/minimap.dcp",
     "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
     "vivadoCmd": "vivado",
     "vivadoMaxThreadNum": 24,
 
     "abstractLevel": 2,
 
-    "singleBoundaryConstr": false,
-    "randomSeed": 9999,
-    "imbalanceFac": 0.02,
+    "singleBoundaryConstr": true,
+    "randomSeed": 999,
+    "imbalanceFac": 0.03,
     "parallelRunNum": 20,
     "partitionKernel": "TRITON",
     "ignoreEdgeDegree": 3000,

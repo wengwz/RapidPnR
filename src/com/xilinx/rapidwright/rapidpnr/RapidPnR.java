@@ -210,55 +210,17 @@ public class RapidPnR extends AbstractApplication {
     }
 
     public static void main(String[] args) {
-        // tpw:
-        //String jsonFilePath = "workspace/json/nvdla-small.json";
-        //String jsonFilePath = "workspace/json/nvdla-small-256.json"; //seed=1001
-        //String jsonFilePath = "workspace/json/nvdla-small-256-full.json";
-        //String jsonFilePath = "workspace/json/blue-rdma.json";
-        //String jsonFilePath = "workspace/json/ntt-small.json";
-        //String jsonFilePath = "workspace/json/corundum.json";
-        //String jsonFilePath = "workspace/json/ntt-large.json";
-        
-        // none-tpw:
-        //String jsonFilePath = "workspace/json/minimap-small.json";
-        //String jsonFilePath = "workspace/json/tensil.json";
-        //String jsonFilePath = "workspace/json/hardcaml-ntt.json";
-        //String jsonFilePath = "workspace/json/ispd16-fpga02.json";
-        //String jsonFilePath = "workspace/json/ispd16-fpga02-2x1.json";
-        //String jsonFilePath = "workspace/json/ispd16-fpga04.json";
-        //String jsonFilePath = "workspace/json/fireflyv2.json";
-        //String jsonFilePath = "workspace/json/boom.json";
-        //String jsonFilePath = "workspace/json/boom-large.json";
-        //String jsonFilePath = "workspace/json/serpens.json";
 
-        // other:
-        //String jsonFilePath = "workspace/json/toooba.json";
-        //String jsonFilePath = "workspace/json/miaow.json";
-        //String jsonFilePath = "workspace/json/mm_int16.json";
-        //String jsonFilePath = "workspace/json/minimap.json";
-        //String jsonFilePath = "workspace/json/isp.json";
-
-        // final
-        //String jsonFilePath = "test/rapidpnr/benchmarks/blue-rdma.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/nvdla-1.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/nvdla-2.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/nvdla-3.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/ntt-small.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/ntt-large.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/corundum.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/minimap-small.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/minimap-large.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/ispd16-fpga02.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks/hardcaml-ntt.json";
-
-        //String jsonFilePath = "test/rapidpnr/benchmarks2/blue-rdma.json";
-        // String jsonFilePath = "test/rapidpnr/benchmarks2/corundum.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks2/ntt-small.json";
-        String jsonFilePath = "test/rapidpnr/benchmarks2/nvdla-2.json";
-        // String jsonFilePath = "test/rapidpnr/benchmarks2/corundum.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks2/hardcaml-ntt.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks2/ntt-large.json";
-        //String jsonFilePath = "test/rapidpnr/benchmarks2/nvdla-3.json";
+        String jsonFilePath = "test/rapidpnr/config/blue-rdma.json";
+        // String jsonFilePath = "test/rapidpnr/config/corundum.json";
+        // String jsonFilePath = "test/rapidpnr/config/hardcaml-ntt.json";
+        // String jsonFilePath = "test/rapidpnr/config/ispd-fpga02.json";
+        // String jsonFilePath = "test/rapidpnr/config/minimap.json";
+        // String jsonFilePath = "test/rapidpnr/config/ntt-large.json";
+        // String jsonFilePath = "test/rapidpnr/config/ntt-small.json";
+        // String jsonFilePath = "test/rapidpnr/config/nvdla-1.json";
+        // String jsonFilePath = "test/rapidpnr/config/nvdla-2.json";
+        // String jsonFilePath = "test/rapidpnr/config/nvdla-3.json";
 
         RapidPnR rapidPnR = new RapidPnR(jsonFilePath, true);
         //rapidPnR.run(RapidPnRStep.NETLIST_ABSTRACTION);

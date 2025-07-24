@@ -14,6 +14,7 @@ interchange/schema/capnp/java.capnp
 *.orig
 
 test/rapidpnr/results/
-test/rapidpnr/results2/
-workspace
+test/rapidpnr/dcp/
 .vscode
+
+bin/data

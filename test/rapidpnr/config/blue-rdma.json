@@ -7,8 +7,8 @@
 
     "verbose": false,
 
-    "inputDcpPath": "workspace/dcp/blue-rdma-direct-rst-ooc-flat2.dcp",
-    "layoutInfoJsonPath": "workspace/json/layout/vu3p-2x2.json",
+    "inputDcpPath": "test/rapidpnr/dcp/blue-rdma.dcp",
+    "layoutInfoJsonPath": "test/rapidpnr/config/vu3p-2x2.json",
     "workDir": "test/rapidpnr/results",
     "vivadoCmd": "vivado",
     "vivadoMaxThreadNum": 24,
@@ -16,7 +16,7 @@
     "abstractLevel": 7,
 
     "singleBoundaryConstr": true,
-    "randomSeed": 999,
+    "randomSeed": 99,
     "imbalanceFac": 0.01,
     "partitionKernel": "TRITON",
 
