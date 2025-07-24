@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021-2022, Xilinx, Inc.
- * Copyright (c) 2022-2024, Advanced Micro Devices, Inc.
+ * Copyright (c) 2022-2025, Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Author: Jakob Wenzel, Xilinx Research Labs.
@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 
 import org.junit.jupiter.api.Assertions;
@@ -62,6 +63,8 @@ import com.xilinx.rapidwright.util.Job;
 import com.xilinx.rapidwright.util.JobQueue;
 import com.xilinx.rapidwright.util.LocalJob;
 import com.xilinx.rapidwright.util.ParallelismTools;
+import com.xilinx.rapidwright.util.ReportRouteStatusResult;
+import com.xilinx.rapidwright.util.VivadoTools;
 import com.xilinx.rapidwright.util.VivadoToolsHelper;
 
 /**
@@ -348,7 +351,7 @@ public class TestDesign {
         Assertions.assertTrue(si.routeIntraSiteNet(oldNet, si.getBELPin("A1", "A1"),
                 si.getBELPin(unisim.toString(), "DI0")));
         Assertions.assertEquals("[IN SLICE_X32Y73.A1, OUT SLICE_X32Y73.HQ]", oldNet.getPins().toString());
-        Assertions.assertEquals("[A1, HQ, A5LUT_O5]", si.getSiteWiresFromNet(oldNet).toString());
+        Assertions.assertEquals("[A1, A5LUT_O5, HQ]", si.getSiteWiresFromNet(oldNet).toString());
 
         Net newNet = d.createNet("newNet");
         SitePinInst h6 = newNet.createPin("H6", si);
@@ -362,7 +365,7 @@ public class TestDesign {
         Assertions.assertNull(d.getNet(oldNet.getName()));
         Assertions.assertSame(newNet, d.getNet(newNet.getName()));
         Assertions.assertEquals("[IN SLICE_X32Y73.H6, IN SLICE_X32Y73.A1, OUT SLICE_X32Y73.HQ]", newNet.getPins().toString());
-        Assertions.assertEquals("[H6, A1, HQ, A5LUT_O5]", si.getSiteWiresFromNet(newNet).toString());
+        Assertions.assertEquals("[A1, A5LUT_O5, H6, HQ]", si.getSiteWiresFromNet(newNet).toString());
         Assertions.assertEquals("[INT_X21Y73/INT.VCC_WIRE->>IMUX_E47]", newNet.getPIPs().toString());
     }
 
@@ -389,8 +392,48 @@ public class TestDesign {
         Assertions.assertNull(d.getNet(oldNet.getName()));
         Assertions.assertSame(newNet, d.getNet(newNet.getName()));
         Assertions.assertEquals("[IN SLICE_X32Y73.H6]", newNet.getPins().toString());
-        Assertions.assertEquals("[H6, B_O, FFMUXB1_OUT1]", si.getSiteWiresFromNet(newNet).toString());
+        Assertions.assertEquals("[B_O, FFMUXB1_OUT1, H6]", si.getSiteWiresFromNet(newNet).toString());
         Assertions.assertTrue(newNet.getPIPs().isEmpty());
+    }
+
+    @Test
+    public void testCreateModuleInstFromBlackBox(@TempDir Path dir) {
+        Design d = RapidWrightDCP.loadDCP("microblazeAndILA_3pblocks_2024.1.dcp");
+        String ilaName = "u_ila_0";
+        Design d2 = new Design(ilaName, d.getPartName());
+        DesignTools.copyImplementation(d, d2, false, false, Collections.singletonMap(ilaName, ""));
+        d.setAutoIOBuffers(false);
+        d.setDesignOutOfContext(true);
+        Path ilaPath = dir.resolve("ila.dcp");
+        d2.writeCheckpoint(ilaPath);
+
+        String origCellName = d.getNetlist().getHierCellInstFromName(ilaName).getCellName();
+
+        DesignTools.makeBlackBox(d, ilaName);
+        d.getNetlist().removeUnusedCellsFromAllWorkLibraries();
+        // DesignTools.makeBlackBox renames to black box to "black_box0", we want to
+        // test the collision scenario so we want to rename it back to the original name
+        EDIFCell blackBoxCell = d.getNetlist().getHierCellInstFromName(ilaName).getCellType();
+        Assertions.assertTrue(blackBoxCell.getName().startsWith("black_box"));
+        blackBoxCell.rename(origCellName);
+
+        Path microblazePath = dir.resolve("microblaze_bb.dcp");
+        d.writeCheckpoint(microblazePath);
+
+        Design microblazeBB = Design.readCheckpoint(microblazePath);
+        Design ila = Design.readCheckpoint(ilaPath);
+        Module m = new Module(ila);
+
+        EDIFHierCellInst bb = microblazeBB.getNetlist().getHierCellInstFromName(ilaName);
+        Assertions.assertTrue(bb.getInst().isBlackBox());
+        String bbCellName = bb.getCellName();
+        EDIFCell bbCellType = bb.getCellType();
+        Assertions.assertEquals(m.getNetlist().getTopCell().getName(), bbCellName);
+
+        ModuleInst mi = microblazeBB.createModuleInst(ilaName, m);
+
+        Assertions.assertEquals(bbCellName, mi.getCellInst().getCellName());
+        Assertions.assertNotEquals(bb.getCellName(), bbCellType.getName());
     }
 
     @ParameterizedTest
@@ -513,6 +556,50 @@ public class TestDesign {
             Design design2 = RapidWrightDCP.loadDCP(dcpFileName);
             Object[] nets2 = design2.getNets().toArray();
             Assertions.assertTrue(Arrays.equals(nets1, nets2));
+        }
+    }
+
+    @Test
+    public void testPlaceCellPinMappings() {
+        final EDIFNetlist netlist = TestEDIF.createEmptyNetlist();
+        final Design design = new Design(netlist);
+
+        final Cell myCell = design.createCell("myCell", Unisim.FDRE);
+        Assertions.assertTrue(myCell.getPinMappingsL2P().isEmpty());
+
+        final Site site = design.getDevice().getSite(SITE);
+        design.createSiteInst(site);
+        BEL bel = site.getBEL("AFF");
+        Assertions.assertNotNull(bel);
+        design.placeCell(myCell, site, bel);
+
+        // Check that L2P and P2L are consistent
+        for (String logPin : new String[]{"CE", "C", "D", "R", "Q"}) {
+            String physPin = myCell.getPhysicalPinMapping(logPin);
+            Assertions.assertEquals(logPin, myCell.getLogicalPinMapping(physPin));
+        }
+
+        // Move the Cell to another BEL
+        myCell.unplace();
+        bel = site.getBEL("BFF");
+        design.placeCell(myCell, site, bel);
+
+        // Check that L2P and P2L remain consistent
+        for (String logPin : new String[]{"CE", "C", "D", "R", "Q"}) {
+            String physPin = myCell.getPhysicalPinMapping(logPin);
+            Assertions.assertEquals(logPin, myCell.getLogicalPinMapping(physPin));
+        }
+    }
+
+    @Test
+    public void testRouteSites(@TempDir Path tempDir) {
+        Design d = RapidWrightDCP.loadDCP("bug780.dcp");
+        d.unrouteSites();
+        d.routeSites();
+        if (FileTools.isVivadoOnPath()) {
+            ReportRouteStatusResult rrs = VivadoTools.routeDesignAndGetStatus(d, tempDir);
+            Assertions.assertTrue(rrs.isFullyRouted());
+            Assertions.assertTrue(rrs.routableNets > 0);
         }
     }
 }

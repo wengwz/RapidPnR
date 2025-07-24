@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (c) 2021 Ghent University.
- * Copyright (c) 2022-2024, Advanced Micro Devices, Inc.
+ * Copyright (c) 2022-2025, Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Author: Yun Zhou, Ghent University.
@@ -28,7 +28,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -44,7 +43,6 @@ import com.xilinx.rapidwright.device.IntentCode;
 import com.xilinx.rapidwright.device.Node;
 import com.xilinx.rapidwright.device.PIP;
 import com.xilinx.rapidwright.device.Series;
-import com.xilinx.rapidwright.device.Tile;
 import com.xilinx.rapidwright.router.UltraScaleClockRouting;
 import com.xilinx.rapidwright.tests.CodePerfTracker;
 import com.xilinx.rapidwright.timing.ClkRouteTiming;
@@ -71,12 +69,8 @@ public class PartialRouter extends RWRoute {
 
     protected static class RouteNodeGraphPartial extends RouteNodeGraph {
 
-        public RouteNodeGraphPartial(Design design, RWRouteConfig config, Map<Tile, RouteNode[]> nodesMap) {
-            super(design, config, nodesMap);
-        }
-
         public RouteNodeGraphPartial(Design design, RWRouteConfig config) {
-            this(design, config, new HashMap<>());
+            super(design, config);
         }
 
         @Override
@@ -92,15 +86,8 @@ public class PartialRouter extends RWRoute {
     protected static class RouteNodeGraphPartialTimingDriven extends RouteNodeGraphTimingDriven {
         public RouteNodeGraphPartialTimingDriven(Design design,
                                                  RWRouteConfig config,
-                                                 DelayEstimatorBase delayEstimator,
-                                                 Map<Tile, RouteNode[]> nodesMap) {
-            super(design, config, delayEstimator, nodesMap);
-        }
-
-        public RouteNodeGraphPartialTimingDriven(Design design,
-                                                 RWRouteConfig config,
                                                  DelayEstimatorBase delayEstimator) {
-            this(design, config, delayEstimator, new HashMap<>());
+            super(design, config, delayEstimator);
         }
 
         @Override
@@ -168,7 +155,7 @@ public class PartialRouter extends RWRoute {
                 return false;
             }
 
-            if (prev.equals(start) && routingGraph.isPreserved(end)) {
+            if (prev == start && routingGraph.isPreserved(end)) {
                 // Arc matches start node and end node is preserved
                 // This implies that both start and end nodes must be preserved for the same net
                 // (which assumedly is the net we're currently routing, and is asserted upstream)
@@ -202,7 +189,7 @@ public class PartialRouter extends RWRoute {
     protected int getNumIndirectConnectionPins() {
         int totalSitePins = 0;
         for (Connection connection : indirectConnections) {
-            totalSitePins += (connection.getSink().isRouted() && !connection.isCongested()) ? 0 : 1;
+            totalSitePins += (connection.isRouted() && !connection.isCongested()) ? 0 : 1;
         }
         return totalSitePins;
     }
@@ -211,7 +198,7 @@ public class PartialRouter extends RWRoute {
     protected int getNumConnectionsCrossingSLRs() {
         int numCrossingSLRs = 0;
         for (Connection c : indirectConnections) {
-            numCrossingSLRs += (!c.isCrossSLR() || (c.getSink().isRouted() && !c.isCongested())) ? 0 : 1;
+            numCrossingSLRs += (!c.isCrossSLR() || (c.isRouted() && !c.isCongested())) ? 0 : 1;
         }
         return numCrossingSLRs;
     }
@@ -239,9 +226,7 @@ public class PartialRouter extends RWRoute {
     }
 
     @Override
-    protected void determineRoutingTargets() {
-        super.determineRoutingTargets();
-
+    protected Set<Net> ensureSinkRoutability() {
         // With all routingGraph.preserveAsync() calls having completed,
         // now check that no sinks are preserved by another net
         // (e.g. a pin was moved from one net to the other, but
@@ -249,25 +234,53 @@ public class PartialRouter extends RWRoute {
         // if so, unpreserve that blocking net
         Set<Net> unpreserveNets = new HashSet<>();
         for (Connection connection : indirectConnections) {
-            Net net = connection.getNetWrapper().getNet();
+            if (connection.hasAltSinks()) {
+                // Skip connections that have alternate sinks
+                continue;
+            }
+            Net net = connection.getNet();
             Net preservedNet;
             assert((preservedNet = routingGraph.getPreservedNet(connection.getSourceRnode())) == null || preservedNet == net);
+
             RouteNode sinkRnode = connection.getSinkRnode();
+            assert(sinkRnode.getType().isAnyExclusiveSink());
             preservedNet = routingGraph.getPreservedNet(sinkRnode);
             if (preservedNet != null && preservedNet != net) {
                 unpreserveNets.add(preservedNet);
-                assert(sinkRnode.getType() == RouteNodeType.PINFEED_I);
             }
         }
 
         if (!unpreserveNets.isEmpty()) {
-            System.out.println("INFO: Unpreserving " + unpreserveNets.size() + " nets to improve sink routability");
+            System.out.println("INFO: Unpreserving " + unpreserveNets.size() + " nets to ensure sink routability");
             for (Net net : unpreserveNets) {
                 System.out.println("\t" + net);
                 assert(!net.isStaticNet());
-                unpreserveNet(net);
+                NetWrapper netWrapper = unpreserveNet(net);
+                for (Connection connection : netWrapper.getConnections()) {
+                    List<RouteNode> rnodes = connection.getRnodes();
+                    if (rnodes.size() < 3) {
+                        continue;
+                    }
+                    // Look for overused exclusive sinks within
+                    // this connection's used nodes (except for the first and last used node,
+                    // corresponding to source and sink)
+                    for (RouteNode rnode : rnodes.subList(1, rnodes.size() - 1)) {
+                        if (!rnode.getType().isAnyExclusiveSink() || !rnode.isOverUsed()) {
+                            continue;
+                        }
+
+                        // If an overused exclusive sink is found -- it must also be used
+                        // by the net to which that sink belongs to, so rip up this connection's
+                        // routing
+                        ripUp(connection);
+                        connection.resetRoute();
+                        connection.setRouted(false);
+                        break;
+                    }
+                }
             }
         }
+        return unpreserveNets;
     }
 
     @Override
@@ -290,8 +303,17 @@ public class PartialRouter extends RWRoute {
 
     @Override
     protected void addStaticNetRoutingTargets(Net staticNet) {
-        preserveNet(staticNet, true);
         if (staticNet.hasPIPs()) {
+            // Preserve only the static net's PIPs and its output pins; its input pins will be
+            // preserved by routeStaticNets()
+            List<SitePinInst> outputPins = new ArrayList<>();
+            for (SitePinInst spi : staticNet.getPins()) {
+                if (!spi.isOutPin()) {
+                    continue;
+                }
+                outputPins.add(spi);
+            }
+            routingGraph.preserveAsync(staticNet, outputPins);
             numPreservedStaticNets++;
         }
 
@@ -310,8 +332,12 @@ public class PartialRouter extends RWRoute {
 
     @Override
     protected void preserveNet(Net net, boolean async) {
-        List<SitePinInst> pinsToRoute = netToPins.get(net);
-        // Only preserve those pins that are not to be routed
+        List<SitePinInst> pinsToRoute = null;
+        if (!net.isStaticNet()) {
+            // For signal nets, only preserve those pins that are not to be routed
+            // All sink pins must be preserved for static nets since the static router does not resolve conflicts
+            pinsToRoute = netToPins.get(net);
+        }
         List<SitePinInst> pinsToPreserve;
         if (pinsToRoute == null) {
             pinsToPreserve = net.getPins();
@@ -359,7 +385,7 @@ public class PartialRouter extends RWRoute {
 
                     // Do not include arcs that the router wouldn't explore
                     // e.g. those that leave the INT tile, since we project pins to their INT tile
-                    if (routingGraph.isExcludedTile(end)) {
+                    if (RouteNodeGraph.isExcludedTile(end)) {
                         continue;
                     }
 
@@ -384,6 +410,9 @@ public class PartialRouter extends RWRoute {
 
                     RouteNode rstart = routingGraph.getOrCreate(start);
                     RouteNode rend = routingGraph.getOrCreate(end);
+                    if (pip.isPIPFixed()) {
+                        rend.setArcLocked(true);
+                    }
                     assert(rend.getPrev() == null);
                     rend.setPrev(rstart);
                 }
@@ -393,13 +422,6 @@ public class PartialRouter extends RWRoute {
                     if (connection.isDirect()) {
                         continue;
                     }
-
-                    // Even though this connection is not expected to have any routing yet,
-                    // perform a rip up anyway in order to release any exclusive sinks
-                    // ahead of finishRouteConnection()
-                    assert(connection.getRnodes().isEmpty());
-                    connection.getSink().setRouted(false);
-                    ripUp(connection);
 
                     RouteNode sinkRnode = connection.getSinkRnode();
                     finishRouteConnection(connection, sinkRnode);
@@ -431,7 +453,7 @@ public class PartialRouter extends RWRoute {
         assert(rnodes.size() > 1);
 
         // Check if alternate source exists (without creating one if it doesn't)
-        if (connection.getNetWrapper().getNet().getAlternateSource() != null) {
+        if (connection.getNet().getAlternateSource() != null) {
             Pair<SitePinInst,RouteNode> altSourceAndRnode = connection.getOrCreateAlternateSource(routingGraph);
             assert(altSourceAndRnode != null);
             RouteNode altSourceRnode = altSourceAndRnode.getSecond();
@@ -450,13 +472,8 @@ public class PartialRouter extends RWRoute {
     protected void finishRouteConnection(Connection connection, RouteNode rnode) {
         super.finishRouteConnection(connection, rnode);
 
-        if (!connection.getSink().isRouted()) {
+        if (!connection.isRouted()) {
             connection.resetRoute();
-            if (connection.getAltSinkRnodes().isEmpty()) {
-                // Undo what ripUp() would have done for this connection which has a single exclusive sink
-                rnode.incrementUser(connection.getNetWrapper());
-                rnode.updatePresentCongestionCost(presentCongestionFactor);
-            }
         }
     }
 
@@ -524,7 +541,7 @@ public class PartialRouter extends RWRoute {
         return unpreserveNets.size();
     }
 
-    protected void unpreserveNet(Net net) {
+    protected NetWrapper unpreserveNet(Net net) {
         assert(!net.getName().equals(Net.Z_NET));
 
         Set<RouteNode> rnodes = new HashSet<>();
@@ -544,19 +561,25 @@ public class PartialRouter extends RWRoute {
 
                 // Do not include arcs that the router wouldn't explore
                 // e.g. those that leave the INT tile, since we project pins to their INT tile
-                if (routingGraph.isExcludedTile(end))
+                if (RouteNodeGraph.isExcludedTile(end))
                     continue;
 
                 // Since net already exists, all the nodes it uses must already
                 // have been created
+                RouteNode rend = routingGraph.getNode(end);
+                assert(rend != null);
+                if (pip.isPIPFixed()) {
+                    // Do not unpreserve locked nodes
+                    assert(rend.isArcLocked());
+                    continue;
+                }
+
                 RouteNode rstart = routingGraph.getNode(start);
                 assert(rstart != null);
                 boolean rstartAdded = rnodes.add(rstart);
                 boolean startPreserved = routingGraph.unpreserve(start);
                 assert(rstartAdded == startPreserved);
 
-                RouteNode rend = routingGraph.getNode(end);
-                assert(rend != null);
                 boolean rendAdded = rnodes.add(rend);
                 boolean endPreserved = routingGraph.unpreserve(end);
                 assert(rendAdded == endPreserved);
@@ -575,8 +598,15 @@ public class PartialRouter extends RWRoute {
 
                 // Do not include arcs that the router wouldn't explore
                 // e.g. those that leave the INT tile, since we project pins to their INT tile
-                if (routingGraph.isExcludedTile(end))
+                if (RouteNodeGraph.isExcludedTile(end))
                     continue;
+
+                if (pip.isPIPFixed()) {
+                    // Do not unpreserve locked nodes
+                    RouteNode rend = routingGraph.getNode(end);
+                    assert(rend == null);
+                    continue;
+                }
 
                 boolean startPreserved = routingGraph.unpreserve(start);
                 boolean endPreserved = routingGraph.unpreserve(end);
@@ -598,15 +628,8 @@ public class PartialRouter extends RWRoute {
                 assert(!connection.isDirect());
                 RouteNode sourceRnode = connection.getSourceRnode();
                 RouteNode sinkRnode = connection.getSinkRnode();
-                assert(sourceRnode.getType() == RouteNodeType.PINFEED_O);
-                assert(sinkRnode.getType() == RouteNodeType.PINFEED_I);
-
-                // Even though this connection is not expected to have any routing yet,
-                // perform a rip up anyway in order to release any exclusive sinks
-                // ahead of finishRouteConnection()
-                assert(connection.getRnodes().isEmpty());
-                connection.getSink().setRouted(false);
-                ripUp(connection);
+                assert(sourceRnode.getType() == RouteNodeType.EXCLUSIVE_SOURCE);
+                assert(sinkRnode.getType().isAnyExclusiveSink());
 
                 finishRouteConnection(connection, sinkRnode);
             }
@@ -642,6 +665,7 @@ public class PartialRouter extends RWRoute {
 
         numPreservedWire--;
         numPreservedRoutableNets--;
+        return netWrapper;
     }
 
     @Override
@@ -652,9 +676,9 @@ public class PartialRouter extends RWRoute {
         }
         if (softPreserve && (
                 // First iteration, without alternate source
-                (routeIteration == 1 && connection.getNetWrapper().getNet().getAlternateSource() == null) ||
+                (routeIteration == 1 && connection.getNet().getAlternateSource() == null) ||
                 // Second iteration, with alternate source
-                (routeIteration == 2 && connection.getNetWrapper().getNet().getAlternateSource() != null))
+                (routeIteration == 2 && connection.getNet().getAlternateSource() != null))
         ) {
              int netsUnpreserved = unpreserveNetsAndReleaseResources(connection);
              if (netsUnpreserved > 0) {
@@ -666,7 +690,7 @@ public class PartialRouter extends RWRoute {
     }
 
     /**
-     * Partially routes a {@link Design} instance; specifically, all nets with no routing PIPs already present.
+     * Partially routes all unrouted sinks in a {@link Design} instance; fully-routed sinks will have their routing preserved.
      * @param design The {@link Design} instance to be routed.
      * @param args An array of string arguments, can be null.
      * If null, the design will be routed in the full timing-driven routing mode with default a {@link RWRouteConfig} instance.
@@ -677,13 +701,13 @@ public class PartialRouter extends RWRoute {
         boolean softPreserve = false;
         List<SitePinInst> pinsToRoute = null;
 
-        // Instantiates a RWRouteConfig Object and parses the arguments.
         // Uses the default configuration if basic usage only.
         return routeDesignWithUserDefinedArguments(design, args, pinsToRoute, softPreserve);
     }
 
     /**
-     * Partially routes a {@link Design} instance; specifically, all nets with no routing PIPs already present.
+     * Partially routes all given sinks in a {@link Design} instance; fully-routed sinks will have their routing preserved
+     * if "softPreserve" is false, otherwise such sinks may be lazily-rerouted when attempting to route other congested sinks.
      * @param design The {@link Design} instance to be routed.
      * @param args An array of string arguments, can be null.
      * If null, the design will be routed in the full timing-driven routing mode with default a {@link RWRouteConfig} instance.
@@ -708,7 +732,7 @@ public class PartialRouter extends RWRoute {
             System.out.println("WARNING: Masking nodes across RCLK for partial routing could result in routability problems.");
         }
 
-        return routeDesign(design, new PartialRouter(design, config, pinsToRoute, softPreserve));
+        return routeDesign(new PartialRouter(design, config, pinsToRoute, softPreserve));
     }
 
     /**
@@ -791,7 +815,8 @@ public class PartialRouter extends RWRoute {
     /**
      * The main interface of {@link PartialRouter} that reads in a {@link Design} checkpoint,
      * and parses the arguments for the {@link RWRouteConfig} object of the router.
-     * Specifically, all nets with no routing PIPs already present will be partially routed.
+     * Specifically, only unrouted sinks will be tackled; all routed sinks will have their routing preserved
+     * and not be re-routed.
      * @param args An array of strings that are used to create a {@link RWRouteConfig} object for the router.
      */
     public static void main(String[] args) {

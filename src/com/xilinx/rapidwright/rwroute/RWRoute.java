@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (c) 2021 Ghent University.
- * Copyright (c) 2022-2024, Advanced Micro Devices, Inc.
+ * Copyright (c) 2022-2025, Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Author: Yun Zhou, Ghent University.
@@ -67,6 +67,7 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -178,14 +179,14 @@ public class RWRoute {
     /** A map storing routes from CLK_OUT to different INT tiles that connect to sink pins of a global clock net */
     protected Map<String, List<String>> routesToSinkINTTiles;
 
-    public static final EnumSet<Series> SUPPORTED_SERIES;
-
-    static {
-        SUPPORTED_SERIES = EnumSet.of(
+    public static final EnumSet<Series> SUPPORTED_SERIES = EnumSet.of(
                 Series.UltraScale,
                 Series.UltraScalePlus,
                 Series.Versal);
-    }
+
+    /** For connections that require SLR crossing(s), snap back to the previous Laguna column if the (horizontal) detour
+     *  is no more than this number of tiles */
+    protected int maxDetourToSnapBackToPrevLagunaColumn = 4;
 
     public RWRoute(Design design, RWRouteConfig config) {
         this.design = design;
@@ -254,6 +255,7 @@ public class RWRoute {
 
         routerTimer.createRuntimeTracker("determine route targets", "Initialization").start();
         determineRoutingTargets();
+        ensureSinkRoutability();
         routerTimer.getRuntimeTracker("determine route targets").stop();
 
         if (config.isTimingDriven()) {
@@ -320,11 +322,16 @@ public class RWRoute {
         // an alternate sink for one net later becomes an exclusive sink for another net.
         // Examine for all connections for this case and remove such alternate sinks.
         for (Connection connection : indirectConnections) {
-            connection.getAltSinkRnodes().removeIf((rnode) -> rnode.getOccupancy() > 0);
+            connection.getAltSinkRnodes().removeIf(RouteNode::isUsed);
         }
 
         // Wait for all outstanding RouteNodeGraph.preserveAsync() calls to complete
         routingGraph.awaitPreserve();
+    }
+
+    protected Set<Net> ensureSinkRoutability() {
+        // RWRoute routes designs from scratch -- all sinks must be reachable
+        return Collections.emptySet();
     }
 
     private void categorizeNets() {
@@ -421,6 +428,11 @@ public class RWRoute {
      * @return NodeStatus result.
      */
     protected NodeStatus getGlobalRoutingNodeStatus(Net net, Node node) {
+        if (!routingGraph.isAllowedTile(node)) {
+            // Outside of PBlock
+            return NodeStatus.UNAVAILABLE;
+        }
+
         Net preservedNet = routingGraph.getPreservedNet(node);
         if (preservedNet == net) {
             return NodeStatus.INUSE;
@@ -490,14 +502,12 @@ public class RWRoute {
      */
     protected void addStaticNetRoutingTargets(Net staticNet) {
         List<SitePinInst> sinks = staticNet.getSinkPins();
-        if (sinks.size() > 0) {
+        if (!sinks.isEmpty()) {
             staticNet.unroute();
             // Remove all output pins from unrouted net as those used will be repopulated
-            staticNet.getPins().removeIf(SitePinInst::isOutPin);
+            staticNet.setPins(sinks);
 
-            // Preserve all pins (e.g. in case of BOUNCE nodes that may serve as a site pin)
-            preserveNet(staticNet, true);
-            staticNetAndRoutingTargets.put(staticNet, sinks);
+            staticNetAndRoutingTargets.put(staticNet, new ArrayList<>(sinks));
         } else {
             numNotNeedingRoutingNets++;
         }
@@ -507,18 +517,68 @@ public class RWRoute {
      * Routes static nets.
      */
     protected void routeStaticNets() {
-        if (staticNetAndRoutingTargets.isEmpty())
-            return;
+        Net vccNet = design.getVccNet();
+        Net gndNet = design.getGndNet();
 
-        List<SitePinInst> gndPins = staticNetAndRoutingTargets.get(design.getGndNet());
-        if (gndPins != null) {
-            boolean invertGndToVccForLutInputs = config.isInvertGndToVccForLutInputs();
-            Set<SitePinInst> newVccPins = RouterHelper.invertPossibleGndPinsToVccPins(design, gndPins, invertGndToVccForLutInputs);
-            if (!newVccPins.isEmpty()) {
-                gndPins.removeAll(newVccPins);
-                staticNetAndRoutingTargets.computeIfAbsent(design.getVccNet(), (net) -> new ArrayList<>())
-                        .addAll(newVccPins);
+        boolean noStaticRouting = staticNetAndRoutingTargets.isEmpty();
+        if (!noStaticRouting) {
+            List<SitePinInst> gndPins = staticNetAndRoutingTargets.get(gndNet);
+            if (gndPins != null) {
+                boolean invertGndToVccForLutInputs = config.isInvertGndToVccForLutInputs();
+                Set<SitePinInst> newVccPins = RouterHelper.invertPossibleGndPinsToVccPins(design, gndPins, invertGndToVccForLutInputs);
+                if (!newVccPins.isEmpty()) {
+                    gndPins.removeAll(newVccPins);
+                    staticNetAndRoutingTargets.computeIfAbsent(vccNet, (net) -> new ArrayList<>())
+                            .addAll(newVccPins);
+                }
             }
+
+            Iterator<Map.Entry<Net,List<SitePinInst>>> it = staticNetAndRoutingTargets.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<Net,List<SitePinInst>> e = it.next();
+                Net staticNet = e.getKey();
+                List<SitePinInst> pins = e.getValue();
+                // For some encrypted designs, it's possible that RapidWright cannot infer all SitePinInst-s leading to
+                // some site pins (e.g. CKEN) defaulting those to static nets. Detect such cases -- when signal nets are
+                // already routed to and preserved at those uninferrable SitePinInst-s -- and remove them from being a
+                // static net sink
+                pins.removeIf(spi -> {
+                    Node node = spi.getConnectedNode();
+                    if (!routingGraph.isAllowedTile(node)) {
+                        // If sink is not in an allowed tile (e.g. outside routing PBlock) drop it silently
+                        return true;
+                    }
+
+                    Net preservedNet = routingGraph.getPreservedNet(node);
+                    if (preservedNet == null) {
+                        // This sink is not preserved by any net, allow
+                        return false;
+                    }
+                    // Sink preserved by another net, abandon; check that it cannot have been preserved by this static net
+                    assert(preservedNet != staticNet);
+                    return true;
+                });
+
+                // Remove from map if empty
+                if (pins.isEmpty()) {
+                    it.remove();
+                }
+            }
+        }
+
+        // Preserve all static nets' sink pins regardless of whether any routing is necessary
+        for (Net staticNet : Arrays.asList(vccNet, gndNet)) {
+            for (SitePinInst spi : staticNet.getPins()) {
+                if (spi.isOutPin()) {
+                    continue;
+                }
+                routingGraph.preserve(spi.getConnectedNode(), staticNet);
+            }
+        }
+
+        if (noStaticRouting) {
+            // Now that all static nets have been fully preserved, return if no work to be done
+            return;
         }
 
         for (Map.Entry<Net,List<SitePinInst>> e : staticNetAndRoutingTargets.entrySet()) {
@@ -528,7 +588,7 @@ public class RWRoute {
             System.out.println("INFO: Routing " + pins.size() + " pins of " + staticNet);
 
             Function<Node, NodeStatus> gns = (node) -> getGlobalRoutingNodeStatus(staticNet, node);
-            GlobalSignalRouting.routeStaticNet(staticNet, gns, design, routethruHelper);
+            GlobalSignalRouting.routeStaticNet(pins, gns, design, routethruHelper);
 
             preserveNet(staticNet, false);
         }
@@ -546,7 +606,7 @@ public class RWRoute {
         }
     }
 
-    private Map<Short, Integer> connectionSpan = new HashMap<>();
+    private final Map<Short, Integer> connectionSpan = new HashMap<>();
 
     /**
      * Creates a unique {@link NetWrapper} instance and {@link Connection} instances based on a {@link Net} instance.
@@ -589,7 +649,7 @@ public class RWRoute {
                 if (connection.getSourceRnode() == null) {
                     assert(sourceINTNode != null);
                     if (sourceINTRnode == null) {
-                        sourceINTRnode = routingGraph.getOrCreate(sourceINTNode, RouteNodeType.PINFEED_O);
+                        sourceINTRnode = routingGraph.getOrCreate(sourceINTNode, RouteNodeType.EXCLUSIVE_SOURCE);
                         // Where only a single primary source exists, always preserve
                         // its projected-to-INT source node, since it could
                         // be a projection from LAGUNA/RXQ* -> RXD* (node for INT/LOGIC_OUTS_*)
@@ -601,9 +661,21 @@ public class RWRoute {
                 }
 
                 indirectConnections.add(connection);
-                RouteNode sinkRnode = routingGraph.getOrCreate(sinkINTNode, RouteNodeType.PINFEED_I);
-                sinkRnode.setType(RouteNodeType.PINFEED_I);
+
+                RouteNode sinkRnode = routingGraph.getOrCreate(sinkINTNode);
+                RouteNodeType sinkType = sinkRnode.getType();
+                assert(sinkType.isAnyLocal());
                 connection.setSinkRnode(sinkRnode);
+
+                if (sinkINTNode.getTile() != sink.getTile()) {
+                    TileTypeEnum sinkTileType = sink.getTile().getTileTypeEnum();
+                    if (Utils.isLaguna(sinkTileType)) {
+                        // Sinks in Laguna tiles must be Laguna registers (but will be projected into the INT tile)
+                        // however, it's possible for another net to use the sink node as a bounce -- prevent that here
+                        assert(sinkINTNode.getTile().getTileTypeEnum() == TileTypeEnum.INT);
+                        routingGraph.preserve(sink.getConnectedNode(), net);
+                    }
+                }
 
                 // Where appropriate, allow all 6 LUT pins to be swapped to begin with
                 char lutLetter = sink.getName().charAt(0);
@@ -651,16 +723,22 @@ public class RWRoute {
                     if (routingGraph.isPreserved(node)) {
                         continue;
                     }
-                    RouteNode altSinkRnode = routingGraph.getOrCreate(node, RouteNodeType.PINFEED_I);
-                    assert(altSinkRnode.getType() == RouteNodeType.PINFEED_I);
+                    RouteNode altSinkRnode = routingGraph.getOrCreate(node, sinkType);
+                    assert(altSinkRnode.getType() == sinkType);
                     connection.addAltSinkRnode(altSinkRnode);
                 }
 
-                if (connection.getAltSinkRnodes().isEmpty()) {
-                    // Since this connection only has a single sink target, increment
-                    // its usage here immediately
+                if (!connection.hasAltSinks()) {
+                    // Since this connection only has a single sink target, make it exclusive
+                    sinkType = sinkType.isEastLocal() ? RouteNodeType.EXCLUSIVE_SINK_EAST :
+                               sinkType.isWestLocal() ? RouteNodeType.EXCLUSIVE_SINK_WEST :
+                               sinkType == RouteNodeType.LOCAL_BOTH ? RouteNodeType.EXCLUSIVE_SINK_BOTH :
+                               null;
+                    assert(sinkType != null);
+                    sinkRnode.setType(sinkType);
+
+                    // And increment its usage here immediately
                     sinkRnode.incrementUser(netWrapper);
-                    sinkRnode.updatePresentCongestionCost(presentCongestionFactor);
                 }
 
                 connection.setDirect(false);
@@ -713,6 +791,32 @@ public class RWRoute {
         oneMinusTimingWeight = 1 - timingWeight;
         oneMinusWlWeight = 1 - wlWeight;
         printIterationHeader(config.isTimingDriven());
+
+        // On Versal only, reserve all uphills of NODE_(CLE|INTF)_CTRL sinks since
+        // their [BC]NODEs can also be used to reach NODE_INODEs --- not applying this
+        // heuristic can lead to avoidable congestion
+        if (routingGraph.isVersal) {
+            for (Connection connection : indirectConnections) {
+                RouteNode sinkRnode = connection.getSinkRnode();
+                if (sinkRnode.getType() == RouteNodeType.EXCLUSIVE_SINK_BOTH) {
+                    for (Node uphill : sinkRnode.getAllUphillNodes()) {
+                        if (uphill.isTiedToVcc()) {
+                            continue;
+                        }
+                        Net preservedNet = routingGraph.getPreservedNet(uphill);
+                        if (preservedNet != null && preservedNet != connection.getNet()) {
+                            continue;
+                        }
+                        assert((sinkRnode.getIntentCode() == IntentCode.NODE_CLE_CTRL &&
+                                (uphill.getIntentCode() == IntentCode.NODE_CLE_CNODE || uphill.getIntentCode() == IntentCode.NODE_CLE_BNODE)) ||
+                                (sinkRnode.getIntentCode() == IntentCode.NODE_INTF_CTRL &&
+                                        (uphill.getIntentCode() == IntentCode.NODE_INTF_CNODE || uphill.getIntentCode() == IntentCode.NODE_INTF_BNODE)));
+                        RouteNode rnode = routingGraph.getOrCreate(uphill, RouteNodeType.LOCAL_RESERVED);
+                        rnode.setType(RouteNodeType.LOCAL_RESERVED);
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -817,7 +921,7 @@ public class RWRoute {
         System.out.println("\nINFO: Route " + directConnections.size() + " direct connections ");
         for (Connection connection : directConnections) {
             boolean success = RouterHelper.routeDirectConnection(connection);
-            connection.getSink().setRouted(success);
+            connection.setRouted(success);
             // no need to update route delay of direct connection, because it would not be changed
             if (!success) System.err.println("ERROR: Failed to route direct connection " + connection);
         }
@@ -847,6 +951,7 @@ public class RWRoute {
             if (config.isTimingDriven()) {
                 setRerouteCriticality();
             }
+            routingGraph.updatePresentCongestionCosts(presentCongestionFactor);
             routeIndirectConnections(sortedIndirectConnections);
             rnodesTimer.setTime(routingGraph.getCreateRnodeTime());
 
@@ -874,7 +979,7 @@ public class RWRoute {
             long elapsed = RuntimeTracker.elapsed(start);
             printRoutingIterationStatisticsInfo(elapsed, (float) ((rnodesTimer.getTime() - lastIterationRnodeTime) * 1e-9));
 
-            if (overUsedRnodes.size() == 0) {
+            if (overUsedRnodes.isEmpty()) {
                 if (unroutableConnections.isEmpty()) {
                     break;
                 } else {
@@ -910,7 +1015,7 @@ public class RWRoute {
     private List<Connection> getUnroutableConnections() {
         List<Connection> unroutedConnections = new ArrayList<>();
         for (Connection connection : sortedIndirectConnections) {
-            if (!connection.getSink().isRouted()) {
+            if (!connection.isRouted()) {
                 unroutedConnections.add(connection);
             }
         }
@@ -935,7 +1040,7 @@ public class RWRoute {
             return;
         }
 
-        // perform LUT pin mapping updates
+        // Perform LUT pin mapping updates
         if (lutPinSwapping &&
                 !Boolean.getBoolean("rapidwright.rwroute.lutPinSwapping.deferIntraSiteRoutingUpdates")) {
             Map<SitePinInst, String> pinSwaps = new HashMap<>();
@@ -952,7 +1057,7 @@ public class RWRoute {
                 }
                 connection.setSinkRnode(newSinkRnode);
 
-                SitePin newSitePin = newSinkRnode.getNode().getSitePin();
+                SitePin newSitePin = newSinkRnode.getSitePin();
                 String existing = pinSwaps.put(oldSinkSpi, newSitePin.getPinName());
                 assert(existing == null);
             }
@@ -962,8 +1067,10 @@ public class RWRoute {
         assignNodesToConnections();
 
         // fix routes with cycles and / or multi-driver nodes
-        Set<NetWrapper> routes = fixRoutes();
-        if (config.isTimingDriven()) updateTimingAfterFixingRoutes(routes);
+        List<NetWrapper> fixedRoutes = fixRoutes();
+        if (config.isTimingDriven()) {
+            updateTimingAfterFixingRoutes(fixedRoutes);
+        }
 
         // Unset the routed state of all source pins
         for (Map.Entry<Net, NetWrapper> e : nets.entrySet()) {
@@ -971,7 +1078,7 @@ public class RWRoute {
             SitePinInst source = net.getSource();
             SitePinInst altSource = net.getAlternateSource();
             SiteInst si = source.getSiteInst();
-            boolean altSourcePreviouslyRouted = altSource != null ? altSource.isRouted() : false;
+            boolean altSourcePreviouslyRouted = altSource != null && altSource.isRouted();
             assert(source != null);
             boolean sourcePreviouslyRouted = source.isRouted();
             for (SitePinInst spi : Arrays.asList(source, altSource)) {
@@ -1060,14 +1167,14 @@ public class RWRoute {
             }
         }
 
-        if (connection.getAltSinkRnodes().isEmpty()) {
+        if (!connection.hasAltSinks()) {
             // Check that this connection's exclusive sink node is used but never overused
             RouteNode sinkRnode = connection.getSinkRnode();
             assert(sinkRnode.countConnectionsOfUser(connection.getNetWrapper()) > 0);
             assert(!sinkRnode.isOverUsed());
         }
 
-        return !connection.getSink().isRouted() || connection.isCongested();
+        return !connection.isRouted() || connection.isCongested();
     }
 
     /**
@@ -1106,10 +1213,10 @@ public class RWRoute {
 
     /**
      * Updates timing after fixing routes of nets.
-     * @param netsWithIllegalRoutes A set of nets whose routes have been fixed.
+     * @param fixedRoutes A set of nets whose routes have been fixed.
      */
-    private void updateTimingAfterFixingRoutes(Set<NetWrapper> netsWithIllegalRoutes) {
-        timingManager.updateIllegalNetsDelays(netsWithIllegalRoutes, nodesDelays);
+    private void updateTimingAfterFixingRoutes(List<NetWrapper> fixedRoutes) {
+        timingManager.updateIllegalNetsDelays(fixedRoutes, nodesDelays);
         timingManager.patchUpDelayOfConnections(sortedIndirectConnections);
         updateTiming();
     }
@@ -1131,28 +1238,22 @@ public class RWRoute {
             if (sinkRnode == rnodes.get(0)) {
                 List<Node> switchBoxToSink = RouterHelper.findPathBetweenNodes(sinkRnode, connection.getSink().getConnectedNode());
                 if (switchBoxToSink.size() >= 2) {
-                    for (int i = 0; i < switchBoxToSink.size() - 1; i++) {
-                        nodes.add(switchBoxToSink.get(i));
-                    }
+                    nodes.addAll(switchBoxToSink.subList(0, switchBoxToSink.size() - 1));
                 }
             } else {
-                // Routing must go to an alternate sink
-                assert(!connection.getAltSinkRnodes().isEmpty());
+                // sinkRnode could be an alternate sink
+                assert(isValidSink(connection, sinkRnode));
 
                 // Assume that it doesn't need unprojecting back to the sink pin
                 // since the sink node is a site pin
                 assert(rnodes.get(0).getSitePin() != null);
             }
 
-            for (RouteNode rnode : rnodes) {
-                nodes.add(rnode.getNode());
-            }
+            nodes.addAll(rnodes);
 
             List<Node> sourceToSwitchBox = RouterHelper.findPathBetweenNodes(connection.getSource().getConnectedNode(), connection.getSourceRnode());
             if (sourceToSwitchBox.size() >= 2) {
-                for (int i = 1; i <= sourceToSwitchBox.size() - 1; i++) {
-                    nodes.add(sourceToSwitchBox.get(i));
-                }
+                nodes.addAll(sourceToSwitchBox.subList(1, sourceToSwitchBox.size()));
             }
         }
     }
@@ -1236,16 +1337,10 @@ public class RWRoute {
     private void updateCost() {
         overUsedRnodes.clear();
         for (RouteNode rnode : routingGraph.getRnodes()) {
-            int overuse=rnode.getOccupancy() - RouteNode.capacity;
-            if (overuse == 0) {
-                rnode.setPresentCongestionCost(1 + presentCongestionFactor);
-            } else if (overuse > 0) {
+            int overuse = rnode.getOccupancy() - RouteNode.capacity;
+            if (overuse > 0) {
                 overUsedRnodes.add(rnode);
-                rnode.setPresentCongestionCost(1 + (overuse + 1) * presentCongestionFactor);
                 rnode.setHistoricalCongestionCost(rnode.getHistoricalCongestionCost() + overuse * historicalCongestionFactor);
-            } else {
-                assert(overuse < 0);
-                assert(rnode.getPresentCongestionCost() == 1);
             }
         }
     }
@@ -1315,7 +1410,7 @@ public class RWRoute {
                     continue;
                 }
                 totalINTNodes++;
-                int wl = RouteNode.getLength(node);
+                int wl = RouteNode.getLength(node, routingGraph);
                 totalWL += wl;
 
                 RouterHelper.addNodeTypeLengthToMap(node, wl, nodeTypeUsage, nodeTypeLength);
@@ -1367,60 +1462,29 @@ public class RWRoute {
 
     /**
      * Fixes routes of nets with routing path cycles and multi-driver nodes.
-     * @return A set of nets that have been fixed.
      */
-    private Set<NetWrapper> fixRoutes() {
-        Set<NetWrapper> illegalRoutes = findIllegalRoutes();
-        // fix routes with cycles and / or multi-driver nodes
-        for (NetWrapper route:illegalRoutes) {
-            for (Connection connection : route.getConnections()) {
-                try {
-                    if (!connection.isDirect()) ripUp(connection);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-            RouteFixer graphHelper = new RouteFixer(route, routingGraph);
-            graphHelper.finalizeRoutesOfConnections();
-        }
-        return illegalRoutes;
-    }
-
-    /**
-     * Finds nets that have illegal routes by checking its connections' routes.
-     * @return A set of routed {@link NetWrapper} instances whose should be fixed.
-     */
-    private Set<NetWrapper> findIllegalRoutes() {
-        Set<NetWrapper> illegalRoutes = new HashSet<>();
+    private List<NetWrapper> fixRoutes() {
+        List<NetWrapper> fixedRoutes = new ArrayList<>();
+        int sequence = connectionsRouted.get() + 1;
         for (Entry<Net,NetWrapper> e : nets.entrySet()) {
             NetWrapper netWrapper = e.getValue();
-            buildDriverCountsOfRnodes(netWrapper);
-            for (Connection connection : netWrapper.getConnections()) {
-                if (shouldMergePath(connection)) {
-                    illegalRoutes.add(netWrapper);
-                    if (config.isTimingDriven()) addNodesDelays(netWrapper);
-                    break;
+            if (netWrapper.hasMultipleDrivers(sequence)) {
+                fixedRoutes.add(netWrapper);
+                if (config.isTimingDriven()) {
+                    addNodesDelays(netWrapper);
                 }
-            }
-        }
-        return illegalRoutes;
-    }
-
-    /**
-     * Builds the driversCounts map of each {@link RouteNode} instance that is used by a net.
-     * @param netWrapper A NetWrapper instance that represents a net.
-     */
-    private void buildDriverCountsOfRnodes(NetWrapper netWrapper) {
-        for (Connection connection : netWrapper.getConnections()) {
-            RouteNode driver = null;
-            for (int i = connection.getRnodes().size() - 1; i >= 0; i--) {
-                RouteNode rnode = connection.getRnodes().get(i);
-                if (driver != null) {
-                    rnode.incrementDriver(driver);
+                for (Connection connection : netWrapper.getConnections()) {
+                    if (connection.isDirect()) {
+                        continue;
+                    }
+                    ripUp(connection);
                 }
-                driver = rnode;
+                RouteFixer graphHelper = new RouteFixer(netWrapper, routingGraph);
+                graphHelper.finalizeRoutesOfConnections();
             }
+            sequence++;
         }
+        return fixedRoutes;
     }
 
     /**
@@ -1436,33 +1500,35 @@ public class RWRoute {
     }
 
     /**
-     * Checks if a connection has multi-driver nodes.
-     * @param connection The connection in question.
-     * @return true, if the connection has multi-driver nodes.
-     */
-    private boolean shouldMergePath(Connection connection) {
-        return connection.useRnodesWithMultiDrivers();
-    }
-
-    /**
      * Rips up a connection.
      * @param connection The connection to be ripped up.
      */
     protected void ripUp(Connection connection) {
         List<RouteNode> rnodes = connection.getRnodes();
         if (rnodes.isEmpty()) {
-            assert(!connection.getSink().isRouted());
-            if (connection.getAltSinkRnodes().isEmpty()) {
-                // If there is no alternate sink, decrement this one-and-only sink node
-                RouteNode sinkRnode = connection.getSinkRnode();
-                rnodes = Collections.singletonList(sinkRnode);
-            }
+            assert(!connection.isRouted());
+            return;
         }
 
-        for (RouteNode rnode : rnodes) {
-            rnode.decrementUser(connection.getNetWrapper());
-            rnode.updatePresentCongestionCost(presentCongestionFactor);
+        RouteNode sinkRnode = rnodes.get(0);
+        if (sinkRnode == connection.getSinkRnode()) {
+            if (!connection.hasAltSinks()) {
+                // Sink is exclusive -- do not rip up
+                rnodes = rnodes.subList(1, rnodes.size() - 1);
+            }
+        } else {
+            // sinkRnode could be an alternate sink
+            assert(isValidSink(connection, sinkRnode));
+            // In which case it cannot be exclusive -- rip up all used nodes
         }
+
+        NetWrapper netWrapper = connection.getNetWrapper();
+        for (RouteNode rnode : rnodes) {
+            rnode.decrementUser(netWrapper);
+        }
+
+        assert(sinkRnode.countConnectionsOfUser(netWrapper) > 0 ||
+               (sinkRnode.countConnectionsOfUser(netWrapper) == 0 && connection.hasAltSinks()));
     }
 
     /**
@@ -1470,10 +1536,36 @@ public class RWRoute {
      * @param connection The routed connection.
      */
     private void updateUsersAndPresentCongestionCost(Connection connection) {
-        for (RouteNode rnode : connection.getRnodes()) {
-            rnode.incrementUser(connection.getNetWrapper());
-            rnode.updatePresentCongestionCost(presentCongestionFactor);
+        List<RouteNode> rnodes = connection.getRnodes();
+        if (rnodes.isEmpty()) {
+            assert(!connection.isRouted());
+            return;
         }
+
+        RouteNode sinkRnode = rnodes.get(0);
+        if (sinkRnode == connection.getSinkRnode()) {
+            if (!connection.hasAltSinks()) {
+                // Sink is exclusive -- do not increment
+                rnodes = rnodes.subList(1, rnodes.size() - 1);
+            }
+        } else {
+            // sinkRnode could be an alternate sink
+            assert(isValidSink(connection, sinkRnode));
+            // In which case it cannot be exclusive -- increment all used nodes
+        }
+
+        NetWrapper netWrapper = connection.getNetWrapper();
+        for (RouteNode rnode : rnodes) {
+            rnode.incrementUser(netWrapper);
+        }
+        assert(sinkRnode.countConnectionsOfUser(netWrapper) == 1 ||
+               (sinkRnode.countConnectionsOfUser(netWrapper) > 1 &&
+                       // An alternate sink (e.g. LUT routethru to FF) that serves more than one FF
+                       (sinkRnode != connection.getSinkRnode() ||
+                        // A bounce node that is this sink and also used to serve a different sink
+                        sinkRnode.getIntentCode() == IntentCode.NODE_PINBOUNCE)
+               )
+        );
     }
 
     /**
@@ -1486,6 +1578,12 @@ public class RWRoute {
             assert(net.getType() == NetType.WIRE && !NetTools.isGlobalClock(net));
 
             Set<PIP> newPIPs = new HashSet<>();
+            // Start by carrying over all fixed PIPs (even those that didn't get used)
+            for (PIP pip : net.getPIPs()) {
+                if (pip.isPIPFixed()) {
+                    newPIPs.add(pip);
+                }
+            }
             for (Connection connection:netWrapper.getConnections()) {
                 List<PIP> pips = RouterHelper.getConnectionPIPs(connection);
                 newPIPs.addAll(pips);
@@ -1571,6 +1669,11 @@ public class RWRoute {
         protected float dlyWeight;
         protected float estDlyWeight;
 
+        /** Number of nodes popped during the routing of this connection */
+        protected int nodesPopped;
+
+        protected boolean earlyTermination;
+
         protected ConnectionState() {
             this.queue = new PriorityQueue<>();
             this.targets = new ArrayList<>();
@@ -1592,47 +1695,43 @@ public class RWRoute {
         state.estWlWeight = state.rnodeCostWeight * wlWeight;
         state.dlyWeight = connection.getCriticality() * oneMinusTimingWeight / 100f;
         state.estDlyWeight = connection.getCriticality() * timingWeight;
+        state.nodesPopped = 0;
+        state.earlyTermination = false;
 
         PriorityQueue<RouteNode> queue = state.queue;
         assert(queue.isEmpty());
 
         prepareRouteConnection(state);
 
-        int nodesPoppedThisConnection = 0;
         RouteNode rnode;
         while ((rnode = queue.poll()) != null) {
-            nodesPoppedThisConnection++;
+            state.nodesPopped++;
             if (rnode.isTarget()) {
                 break;
             }
             exploreAndExpand(state, rnode);
         }
-        nodesPushed.addAndGet(nodesPoppedThisConnection + queue.size());
-        nodesPopped.addAndGet(nodesPoppedThisConnection);
+        nodesPushed.addAndGet(state.nodesPopped + queue.size());
+        nodesPopped.addAndGet(state.nodesPopped);
 
         if (rnode != null) {
             queue.clear();
             finishRouteConnection(connection, rnode);
-            if (!connection.getSink().isRouted()) {
+            if (!connection.isRouted()) {
                 List<RouteNode> rnodes = connection.getRnodes();
                 throw new RuntimeException("ERROR: Unable to save routing for connection " + connection + "\n" +
                                            "       Backtracking terminated at " + rnodes.get(rnodes.size() -1));
             }
-            if (config.isTimingDriven()) connection.updateRouteDelay();
-            assert(connection.getSink().isRouted());
+            if (config.isTimingDriven()) {
+                connection.updateRouteDelay();
+            }
+            assert(connection.isRouted());
         } else {
             assert(queue.isEmpty());
             // Clears previous route of the connection
             connection.resetRoute();
-            connection.getSink().setRouted(false);
+            connection.setRouted(false);
             assert(connection.getRnodes().isEmpty());
-
-            if (connection.getAltSinkRnodes().isEmpty()) {
-                // Undo what ripUp() did for this connection which has a single exclusive sink
-                RouteNode sinkRnode = connection.getSinkRnode();
-                sinkRnode.incrementUser(connection.getNetWrapper());
-                sinkRnode.updatePresentCongestionCost(presentCongestionFactor);
-            }
         }
 
         // Reset the nodes marked as this connection's target(s)
@@ -1654,9 +1753,9 @@ public class RWRoute {
     protected void abandonConnectionIfUnroutable(Connection connection) {
         if (!config.isUseBoundingBox() || config.isEnlargeBoundingBox()) {
             return;
-       }
+        }
 
-        System.out.println("                 " + "Abandoning");
+        System.out.println("INFO: Abandoning\n");
 
         // Since bounding box is never enlarged there is no hope of routing this connection so abandon it
         indirectConnections.remove(connection);
@@ -1700,7 +1799,7 @@ public class RWRoute {
         RouteNode altSourceRnode = altSourceAndRnode.getSecond();
         connection.setSourceRnode(altSourceRnode);
 
-        connection.getSink().setRouted(false);
+        connection.setRouted(false);
         return true;
     }
 
@@ -1710,10 +1809,14 @@ public class RWRoute {
      */
     protected void finishRouteConnection(Connection connection, RouteNode rnode) {
         boolean routed = saveRouting(connection, rnode);
-        connection.getSink().setRouted(routed);
+        connection.setRouted(routed);
         if (routed) {
             updateUsersAndPresentCongestionCost(connection);
         }
+    }
+
+    protected boolean isValidSink(Connection connection, RouteNode rnode) {
+        return connection.getSinkRnode() == rnode || connection.getAltSinkRnodes().contains(rnode);
     }
 
     /**
@@ -1723,12 +1826,10 @@ public class RWRoute {
      * @return True if backtracking successful.
      */
     protected boolean saveRouting(Connection connection, RouteNode rnode) {
-        RouteNode sinkRnode = connection.getSinkRnode();
-        List<RouteNode> altSinkRnodes = connection.getAltSinkRnodes();
-        if (rnode != sinkRnode && !altSinkRnodes.contains(rnode)) {
+        if (!isValidSink(connection, rnode)) {
             List<RouteNode> prevRouting = connection.getRnodes();
             // Check that this is the sink path marked by prepareRouteConnection()
-            if (!connection.getSink().isRouted() || prevRouting.isEmpty() || !rnode.isTarget()) {
+            if (!connection.isRouted() || prevRouting.isEmpty() || !rnode.isTarget()) {
                 throw new RuntimeException("Unexpected rnode to backtrack from: " + rnode);
             }
             // Backtrack from the sink used on that sink path
@@ -1742,7 +1843,7 @@ public class RWRoute {
 
         List<RouteNode> rnodes = connection.getRnodes();
         RouteNode sourceRnode = rnodes.get(rnodes.size() - 1);
-        // Only succesfully routed if backtracked to this connection's source node
+        // Only successfully routed if backtracked to this connection's source node
         return sourceRnode == connection.getSourceRnode();
     }
 
@@ -1757,17 +1858,16 @@ public class RWRoute {
         final Connection connection = state.connection;
         final int sequence = state.sequence;
         final PriorityQueue<RouteNode> queue = state.queue;
-        for (RouteNode childRNode:rnode.getChildren(routingGraph)) {
-            // Targets that are visited more than once must be overused
-            assert(!childRNode.isTarget() || !childRNode.isVisited(sequence) || childRNode.willOverUse(connection.getNetWrapper()));
+        final NetWrapper netWrapper = connection.getNetWrapper();
+        final RouteNodeType rnodeType = rnode.getType();
+        final boolean rnodeIsLaguna = Utils.isLaguna(rnode.getTile().getTileTypeEnum());
 
-            // If childRnode is preserved, then it must be preserved for the current net we're routing
-            Net preservedNet;
-            assert((preservedNet = routingGraph.getPreservedNet(childRNode)) == null ||
-                    preservedNet == connection.getNetWrapper().getNet());
-
+        for (RouteNode childRNode : rnode.getChildren(routingGraph)) {
             if (childRNode.isVisited(sequence)) {
-                // Node must be in queue already.
+                // Node must be in queue already
+
+                // Targets that are visited more than once must be overused
+                assert(!childRNode.isTarget() || childRNode.willOverUse(netWrapper));
 
                 // Note: it is possible this is a cheaper path to childRNode; however, because the
                 // PriorityQueue class does not support (efficiently) reducing the cost of nodes
@@ -1775,20 +1875,30 @@ public class RWRoute {
                 continue;
             }
 
+            // If childRnode is preserved, then it must be preserved for the current net we're routing
+            Net preservedNet;
+            assert((preservedNet = routingGraph.getPreservedNet(childRNode)) == null ||
+                    preservedNet == connection.getNet());
+
+            boolean lookahead = false;
             if (childRNode.isTarget()) {
-                boolean earlyTermination = false;
-                if (childRNode == connection.getSinkRnode() && connection.getAltSinkRnodes().isEmpty()) {
+                if (childRNode.getType().isAnyExclusiveSink()) {
                     // This sink must be exclusively reserved for this connection already
-                    assert(childRNode.getOccupancy() == 0 ||
-                            childRNode.getIntentCode() == IntentCode.NODE_PINBOUNCE);
-                    earlyTermination = true;
+                    assert((childRNode == connection.getSinkRnode() && !connection.hasAltSinks()) ||
+                           // Or be an exclusive BOUNCE sink for a different connection on the same net
+                           childRNode.getIntentCode() == IntentCode.NODE_PINBOUNCE);
+                    assert(!childRNode.isOverUsed());
+                    assert(!childRNode.willOverUse(netWrapper));
+                    assert(childRNode.countConnectionsOfUser(netWrapper) == 1 ||
+                           childRNode.getIntentCode() == IntentCode.NODE_PINBOUNCE);
+                    state.earlyTermination = true;
                 } else {
                     // Target is not an exclusive sink, only early terminate if this net will not
                     // (further) overuse this node
-                    earlyTermination = !childRNode.willOverUse(connection.getNetWrapper());
+                    state.earlyTermination = !childRNode.willOverUse(netWrapper);
                 }
 
-                if (earlyTermination) {
+                if (state.earlyTermination) {
                     assert(!childRNode.isVisited(sequence));
                     nodesPushed.addAndGet(queue.size());
                     queue.clear();
@@ -1797,9 +1907,47 @@ public class RWRoute {
                 if (!isAccessible(childRNode, connection)) {
                     continue;
                 }
-                switch (childRNode.getType()) {
-                    case WIRE:
-                        if (!routingGraph.isAccessible(childRNode, connection)) {
+                RouteNodeType childType = childRNode.getType();
+                switch (childType) {
+                    case LOCAL_EAST_LEADING_TO_NORTHBOUND_LAGUNA:
+                    case LOCAL_EAST_LEADING_TO_SOUTHBOUND_LAGUNA:
+                    case LOCAL_WEST_LEADING_TO_NORTHBOUND_LAGUNA:
+                    case LOCAL_WEST_LEADING_TO_SOUTHBOUND_LAGUNA:
+                        // Lookahead beyond child nodes leading to a Laguna if it won't get overused
+                        lookahead = !childRNode.willOverUse(netWrapper);
+                        // Fall-through
+                    case LOCAL_BOTH:
+                    case LOCAL_EAST:
+                    case LOCAL_WEST:
+                    case LOCAL_RESERVED:
+                        if (!routingGraph.isAccessible(childRNode, rnode, connection)) {
+                            continue;
+                        }
+                        // Verify invariant that east/west wires stay east/west ...
+                        assert(!rnodeType.isEastLocal() || childType.isEastLocal() ||
+                                // ... unless it's an exclusive sink using a LOCAL_RESERVED node
+                                (childType == RouteNodeType.LOCAL_RESERVED && connection.getSinkRnode().getType() == RouteNodeType.EXCLUSIVE_SINK_BOTH));
+                        assert(!rnodeType.isWestLocal() || childType.isWestLocal() ||
+                                (childType == RouteNodeType.LOCAL_RESERVED && connection.getSinkRnode().getType() == RouteNodeType.EXCLUSIVE_SINK_BOTH));
+                        break;
+                    case NON_LOCAL_LEADING_TO_NORTHBOUND_LAGUNA:
+                    case NON_LOCAL_LEADING_TO_SOUTHBOUND_LAGUNA:
+                        if (connection.isCrossSLR() && connection.getSinkRnode().getSLRIndex(routingGraph) != childRNode.getSLRIndex(routingGraph) &&
+                                ((connection.isCrossSLRnorth() && childType == RouteNodeType.NON_LOCAL_LEADING_TO_NORTHBOUND_LAGUNA) ||
+                                 (connection.isCrossSLRsouth() && childType == RouteNodeType.NON_LOCAL_LEADING_TO_SOUTHBOUND_LAGUNA))) {
+                            // Only lookahead beyond child nodes leading to a Laguna if we require an SLR crossing in that direction,
+                            // and it won't get overused
+                            lookahead = !childRNode.willOverUse(netWrapper);
+                        }
+                        // Fall-through
+                    case NON_LOCAL:
+                        // LOCALs cannot connect to NON_LOCALs except
+                        //   (a) IMUX (LOCAL_*_LEADING_TO_*_LAGUNA) -> LAG_MUX_ATOM_\\d+_TXOUT
+                        //   (b) via a LUT routethru: IMUX (LOCAL*) -> CLE_CLE_*_SITE_0_[A-H]_O
+                        assert(!rnodeType.isAnyLocal() || rnodeType.isLocalLeadingToLaguna() ||
+                               (routingGraph.lutRoutethru && rnode.getIntentCode() == IntentCode.NODE_PINFEED));
+
+                        if (!routingGraph.isAccessible(childRNode, rnode, connection)) {
                             continue;
                         }
                         if (!config.isUseUTurnNodes() && childRNode.getDelay() > 10000) {
@@ -1807,37 +1955,52 @@ public class RWRoute {
                             // such as U-turn shape nodes near the boundary
                             continue;
                         }
+
+                        // Lookahead if parent or child is in a Laguna tile
+                        // (e.g. LAG_MUX_ATOM_\\d+_TXOUT -> UBUMP\\d+
+                        //       LAG_LAGUNA_SITE_[0-3]_RXD[0-5] -> RXD\\d+
+                        //       RXD\\d+ -> INT_NODE_SDQ_\\d+_INT_OUT[01]
+                        // )
+                        // NOTE: UBUMP\\d+ wires have RouteNodeType.SUPER_LONG_LINE
+                        lookahead |= (rnodeIsLaguna || Utils.isLaguna(childRNode.getTile().getTileTypeEnum()));
                         break;
-                    case PINBOUNCE:
-                        // A PINBOUNCE can only be a target if this connection has an alternate sink
-                        assert(!childRNode.isTarget() || connection.getAltSinkRnodes().isEmpty());
-                        if (!isAccessiblePinbounce(childRNode, connection)) {
+                    case EXCLUSIVE_SINK_BOTH:
+                    case EXCLUSIVE_SINK_EAST:
+                    case EXCLUSIVE_SINK_WEST:
+                    case EXCLUSIVE_SINK_NON_LOCAL:
+                        assert(childType != RouteNodeType.EXCLUSIVE_SINK_EAST || rnodeType == RouteNodeType.LOCAL_EAST ||
+                                // Must be an INODE that services Laguna but also feedsthrough above/below to a SLICE sink
+                                rnodeType.isLocalLeadingToLaguna());
+                        assert(childType != RouteNodeType.EXCLUSIVE_SINK_WEST || rnodeType == RouteNodeType.LOCAL_WEST ||
+                                // Must be an INODE that services Laguna but also feedsthrough above/below to a SLICE sink
+                                rnodeType.isLocalLeadingToLaguna());
+                        assert(childType != RouteNodeType.EXCLUSIVE_SINK_BOTH || rnodeType == RouteNodeType.LOCAL_BOTH ||
+                               // [BC]NODEs are LOCAL_{EAST,WEST} since they connect to INODEs, but also service CTRL sinks
+                               (routingGraph.isVersal && EnumSet.of(IntentCode.NODE_CLE_BNODE, IntentCode.NODE_CLE_CNODE,
+                                                                    IntentCode.NODE_INTF_BNODE, IntentCode.NODE_INTF_CNODE)
+                                       .contains(rnode.getIntentCode())));
+                        if (!isAccessibleSink(childRNode, connection)) {
                             continue;
                         }
-                        break;
-                    case PINFEED_I:
-                        if (!isAccessiblePinfeedI(childRNode, connection)) {
-                            continue;
-                        }
-                        break;
-                    case LAGUNA_I:
-                        if (!connection.isCrossSLR() ||
-                            connection.getSinkRnode().getSLRIndex(routingGraph) == childRNode.getSLRIndex(routingGraph)) {
-                            // Do not consider approaching a SLL if not needing to cross
-                            continue;
-                        }
+                        assert(childRNode.getIntentCode() == IntentCode.NODE_PINBOUNCE);
+                        assert(childRNode.countConnectionsOfUser(netWrapper) > 0);
+                        assert(!childRNode.willOverUse(netWrapper));
                         break;
                     case SUPER_LONG_LINE:
                         assert(connection.isCrossSLR() &&
-                                connection.getSinkRnode().getSLRIndex(routingGraph) != rnode.getSLRIndex(routingGraph));
+                               connection.getSinkRnode().getSLRIndex(routingGraph) != rnode.getSLRIndex(routingGraph));
+                        // Do not lookahead beyond the SLL, since looking-ahead may push many SLLs onto the queue,
+                        // and we want to pick the best (least expensive/congested) one
+                        assert(!lookahead);
                         break;
                     default:
-                        throw new RuntimeException("Unexpected rnode type: " + childRNode.getType());
+                        throw new RuntimeException("Unexpected rnode type: " + childType);
                 }
             }
 
-            evaluateCostAndPush(state, rnode, longParent, childRNode);
-            if (childRNode.isTarget() && queue.size() == 1) {
+            evaluateCostAndPush(state, rnode, longParent, childRNode, lookahead);
+            if (state.earlyTermination) {
+                assert(queue.size() == 1 && queue.peek().isTarget() && !queue.peek().willOverUse(netWrapper));
                 // Target is uncongested and the only thing in the (previously cleared) queue, abandon immediately
                 break;
             }
@@ -1854,26 +2017,9 @@ public class RWRoute {
         return !config.isUseBoundingBox() || child.isInConnectionBoundingBox(connection);
     }
 
-    /**
-     * Checks if a NODE_PINBOUNCE is suitable to be used for routing to a target.
-     * @param child The PINBOUNCE rnode in question.
-     * @param connection The connection to route.
-     * @return true, if the PINBOUNCE rnode is in the same column as the target and within one INT tile of the target.
-     */
-    protected boolean isAccessiblePinbounce(RouteNode child, Connection connection) {
-        assert(child.getType() == RouteNodeType.PINBOUNCE);
-
-        return routingGraph.isAccessible(child, connection);
-    }
-
-    protected boolean isAccessiblePinfeedI(RouteNode child, Connection connection) {
-        // When LUT pin swapping is enabled, PINFEED_I are not exclusive anymore
-        return isAccessiblePinfeedI(child, connection, !lutPinSwapping);
-    }
-
-    protected boolean isAccessiblePinfeedI(RouteNode child, Connection connection, boolean assertOnOveruse) {
-        assert(child.getType() == RouteNodeType.PINFEED_I);
-        assert(!assertOnOveruse || !child.isOverUsed());
+    protected boolean isAccessibleSink(RouteNode child, Connection connection) {
+        assert(child.getType().isAnyExclusiveSink());
+        assert(!child.isOverUsed());
 
         if (child.isTarget()) {
             return true;
@@ -1886,6 +2032,7 @@ public class RWRoute {
             return false;
         }
 
+        // Must be a NODE_PINBOUNCE that is an exclusive sink of some other connection on the same net
         return true;
     }
 
@@ -1895,12 +2042,16 @@ public class RWRoute {
      * @param rnode The parent rnode of the child in question.
      * @param longParent A boolean value to indicate if the parent is a Long node
      * @param childRnode The child rnode in question.
+     * @param lookahead A boolean for whether we should skipping pushing this child node on the queue and immediately explore it.
      */
-    protected void evaluateCostAndPush(ConnectionState state, RouteNode rnode, boolean longParent, RouteNode childRnode) {
+    protected void evaluateCostAndPush(ConnectionState state,
+                                       RouteNode rnode,
+                                       boolean longParent,
+                                       RouteNode childRnode,
+                                       boolean lookahead) {
         final Connection connection = state.connection;
         final int countSourceUses = childRnode.countConnectionsOfUser(connection.getNetWrapper());
         final float sharingFactor = 1 + state.shareWeight * countSourceUses;
-
         // Set the prev pointer, as RouteNode.getEndTileYCoordinate() and
         // RouteNode.getSLRIndex() require this
         childRnode.setPrev(rnode);
@@ -1920,6 +2071,12 @@ public class RWRoute {
         int deltaX = Math.abs(childX - sinkX);
         int deltaY = Math.abs(childY - sinkY);
         if (connection.isCrossSLR()) {
+            assert(!childRnode.getType().isLocalLeadingToLaguna() || (
+                    (connection.isCrossSLRnorth() && childRnode.getType().leadsToNorthboundLaguna()) ||
+                    (connection.isCrossSLRsouth() && childRnode.getType().leadsToSouthboundLaguna()) ||
+                    (deltaX == 0 && deltaY <= 1)
+            ));
+
             int deltaSLR = Math.abs(sinkRnode.getSLRIndex(routingGraph) - childRnode.getSLRIndex(routingGraph));
             if (deltaSLR != 0) {
                 // Check for overshooting which occurs when child and sink node are in
@@ -1932,37 +2089,64 @@ public class RWRoute {
                     }
                 }
 
-                // Account for any detours that must be taken to get to and back from the closest Laguna column
+                // Account for any detours that must be taken to get to the closest Laguna column
+                // and from there onto the sink
                 int nextLagunaColumn = routingGraph.nextLagunaColumn[childX];
                 int prevLagunaColumn = routingGraph.prevLagunaColumn[childX];
-                int nextLagunaColumnDist = Math.abs(nextLagunaColumn - childX);
-                int prevLagunaColumnDist = Math.abs(prevLagunaColumn - childX);
-                if (sinkX >= childX) {
-                    if (nextLagunaColumnDist <= prevLagunaColumnDist || prevLagunaColumn == Integer.MIN_VALUE) {
-                        assert (nextLagunaColumn != Integer.MAX_VALUE);
-                        deltaX = Math.abs(nextLagunaColumn - childX) + Math.abs(nextLagunaColumn - sinkX);
+                if (nextLagunaColumn == prevLagunaColumn) {
+                    // On top of the column
+                    assert(deltaX == Math.abs(sinkX - nextLagunaColumn));
+                } else {
+                    assert(rnode.getType() != RouteNodeType.SUPER_LONG_LINE);
+
+                    final int deltaXToNextColumn;
+                    final int deltaXToPrevColumn;
+                    final int deltaXToAndFromNextColumn;
+                    final int deltaXToAndFromPrevColumn;
+                    if (nextLagunaColumn == Integer.MAX_VALUE  || nextLagunaColumn >= connection.getXMaxBB()) {
+                        deltaXToNextColumn = Integer.MAX_VALUE;
+                        deltaXToAndFromNextColumn = Integer.MAX_VALUE;
                     } else {
-                        deltaX = Math.abs(childX - prevLagunaColumn) + Math.abs(sinkX - prevLagunaColumn);
+                        deltaXToNextColumn = Math.abs(nextLagunaColumn - childX);
+                        deltaXToAndFromNextColumn = deltaXToNextColumn + Math.abs(sinkX - nextLagunaColumn);
                     }
-                } else { // childX > sinkX
-                    if (prevLagunaColumnDist <= nextLagunaColumnDist) {
-                        assert (prevLagunaColumn != Integer.MIN_VALUE);
-                        deltaX = Math.abs(childX - prevLagunaColumn) + Math.abs(sinkX - prevLagunaColumn);
+                    if (prevLagunaColumn == Integer.MIN_VALUE || prevLagunaColumn <= connection.getXMinBB()) {
+                        deltaXToPrevColumn = Integer.MAX_VALUE;
+                        deltaXToAndFromPrevColumn = Integer.MAX_VALUE;
                     } else {
-                        deltaX = Math.abs(nextLagunaColumn - childX) + Math.abs(nextLagunaColumn - sinkX);
+                        deltaXToPrevColumn = Math.abs(prevLagunaColumn - childX);
+                        deltaXToAndFromPrevColumn = deltaXToPrevColumn + Math.abs(sinkX - prevLagunaColumn);
+                    }
+                    if (deltaXToNextColumn == deltaXToPrevColumn) {
+                        // Equidistant from both columns, prefer the one closer when considering to/from the sink
+                        deltaX = Math.min(deltaXToAndFromNextColumn, deltaXToAndFromPrevColumn);
+                    } else if (deltaXToNextColumn < deltaXToPrevColumn &&
+                            deltaXToAndFromNextColumn <= deltaXToAndFromPrevColumn + maxDetourToSnapBackToPrevLagunaColumn) {
+                        // Closer to the next column and not detouring more than 4 tiles extra to/from using the prev column
+                        assert(deltaX <= deltaXToAndFromNextColumn);
+                        deltaX = deltaXToAndFromNextColumn;
+                    } else if (deltaXToPrevColumn < deltaXToNextColumn &&
+                            deltaXToAndFromPrevColumn <= deltaXToAndFromNextColumn + maxDetourToSnapBackToPrevLagunaColumn) {
+                        // Closer to the next column and not detouring more than 4 tiles extra to/from using the prev column
+                        assert(deltaX <= deltaXToAndFromPrevColumn);
+                        deltaX = deltaXToAndFromPrevColumn;
+                    } else {
+                        // Pretty much same distance to/from both columns; prefer the closer to column
+                        deltaX = (deltaXToNextColumn < deltaXToPrevColumn) ? deltaXToAndFromNextColumn
+                                                                           : deltaXToAndFromPrevColumn;
                     }
                 }
-
-                assert(deltaX >= 0);
+                assert(deltaX >= 0 && deltaX < Integer.MAX_VALUE);
             }
         }
 
         int distanceToSink = deltaX + deltaY;
         float newTotalPathCost = newPartialPathCost + state.estWlWeight * distanceToSink / sharingFactor;
         if (config.isTimingDriven()) {
-            newTotalPathCost += state.estDlyWeight * (deltaX * 0.32 + deltaY * 0.16);
+            newTotalPathCost += state.estDlyWeight * (deltaX * 0.32f + deltaY * 0.16f);
         }
-        push(state, childRnode, newPartialPathCost, newTotalPathCost);
+
+        push(state, childRnode, newPartialPathCost, newTotalPathCost, lookahead);
     }
 
     /**
@@ -1975,25 +2159,25 @@ public class RWRoute {
      * @return The sum of the congestion cost and the bias cost of rnode.
      */
     private float getNodeCost(RouteNode rnode, Connection connection, int countSameSourceUsers, float sharingFactor) {
-        boolean hasSameSourceUsers = countSameSourceUsers!= 0;
+        boolean hasSameSourceUsers = (countSameSourceUsers != 0);
         float presentCongestionCost;
 
         if (hasSameSourceUsers) {// the rnode is used by other connection(s) from the same net
-            int overoccupancy = rnode.getOccupancy() - RouteNode.capacity;
+            int occupancyWithoutThisNet = rnode.getOccupancy() - 1;
             // make the congestion cost less for the current connection
-            presentCongestionCost = 1 + overoccupancy * presentCongestionFactor;
+            presentCongestionCost = routingGraph.getPresentCongestionCost(occupancyWithoutThisNet);
         } else {
-            presentCongestionCost = rnode.getPresentCongestionCost();
+            presentCongestionCost = rnode.getPresentCongestionCost(routingGraph);
         }
 
-        float biasCost = 0;
-        if (!rnode.isTarget() && rnode.getType() != RouteNodeType.SUPER_LONG_LINE) {
-            NetWrapper net = connection.getNetWrapper();
-            biasCost = rnode.getBaseCost() / net.getConnections().size() *
-                    (Math.abs(rnode.getEndTileXCoordinate() - net.getXCenter()) + Math.abs(rnode.getEndTileYCoordinate() - net.getYCenter())) / net.getDoubleHpwl();
-        }
-
-        return rnode.getBaseCost() * rnode.getHistoricalCongestionCost() * presentCongestionCost / sharingFactor + biasCost;
+        float baseCost = rnode.getBaseCost();
+        NetWrapper net = connection.getNetWrapper();
+        float distToCenter = Math.abs(rnode.getEndTileXCoordinate() - net.getXCenter()) + Math.abs(rnode.getEndTileYCoordinate() - net.getYCenter());
+        // CRoute paper states that the bias factor cannot be more than half of the wire cost
+        // (it may exceed this here because we may not be using the minimum-sized bounding box)
+        float biasCost = baseCost / net.getConnections().size() * distToCenter / net.getDoubleHpwl();
+        float nodeCost = baseCost * rnode.getHistoricalCongestionCost() * presentCongestionCost / sharingFactor;
+        return nodeCost + Math.min(biasCost, nodeCost / 2);
     }
 
     /**
@@ -2002,8 +2186,13 @@ public class RWRoute {
      * @param childRnode A child rnode.
      * @param newPartialPathCost The upstream path cost from childRnode to the source.
      * @param newTotalPathCost Total path cost of childRnode.
+     * @param lookahead True to explore this node immediately, rather than to push it onto the queue.
      */
-    protected void push(ConnectionState state, RouteNode childRnode, float newPartialPathCost, float newTotalPathCost) {
+    protected void push(ConnectionState state,
+                        RouteNode childRnode,
+                        float newPartialPathCost,
+                        float newTotalPathCost,
+                        boolean lookahead) {
         // Pushed node must have a prev pointer, unless it is a source (with no upstream path cost)
         assert(childRnode.getPrev() != null || newPartialPathCost == 0);
         childRnode.setLowerBoundTotalPathCost(newTotalPathCost);
@@ -2011,7 +2200,12 @@ public class RWRoute {
         // Use the number-of-connections-routed-so-far as the identifier for whether a rnode
         // has been visited by this connection before
         childRnode.setVisited(state.sequence);
-        state.queue.add(childRnode);
+        if (lookahead) {
+            state.nodesPopped++;
+            exploreAndExpand(state, childRnode);
+        } else {
+            state.queue.add(childRnode);
+        }
     }
 
     /**
@@ -2033,8 +2227,12 @@ public class RWRoute {
 
         // Adds the source rnode to the queue
         RouteNode sourceRnode = connection.getSourceRnode();
-        assert(sourceRnode.getPrev() == null);
-        push(state, sourceRnode, 0, 0);
+        float newPartialPathCost = 0;
+        float newTotalPathCost = 0;
+        boolean lookahead = false;
+        push(state, sourceRnode, newPartialPathCost, newTotalPathCost, lookahead);
+
+        assert(routingGraph.isAllowedTile(connection.getSinkRnode()));
     }
 
     /**
@@ -2081,7 +2279,7 @@ public class RWRoute {
     }
 
     private void printTimingInfo() {
-        if (sortedIndirectConnections.size() > 0) {
+        if (!sortedIndirectConnections.isEmpty()) {
             timingManager.getCriticalPathInfo(maxDelayAndTimingVertex, false, routingGraph);
         }
     }
@@ -2151,7 +2349,9 @@ public class RWRoute {
             printFormattedString("Num iterations:", routeIteration);
             printFormattedString("Connections routed:", connectionsRouted.get());
             printFormattedString("Nodes pushed:", nodesPushed.get());
-            printFormattedString("Nodes popped:", nodesPopped.get());
+        }
+        printFormattedString("Nodes popped:", nodesPopped.get());
+        if (config.isVerbose()) {
             System.out.printf("------------------------------------------------------------------------------\n");
         }
 
@@ -2198,19 +2398,18 @@ public class RWRoute {
     }
 
     private static Design routeDesign(Design design, RWRouteConfig config) {
-        if (!config.isMaskNodesCrossRCLK()) {
+        if (config.isTimingDriven() && !config.isMaskNodesCrossRCLK()) {
             System.out.println("WARNING: Not masking nodes across RCLK could result in delay optimism.");
         }
 
-        return routeDesign(design, new RWRoute(design, config));
+        return routeDesign(new RWRoute(design, config));
     }
 
     /**
      * Routes a design after pre-processing.
-     * @param design The {@link Design} instance to be routed.
      * @param router A {@link RWRoute} object to be used to route the design.
      */
-    protected static Design routeDesign(Design design, RWRoute router) {
+    protected static Design routeDesign(RWRoute router) {
         router.preprocess();
 
         // Initialize router object
@@ -2242,7 +2441,7 @@ public class RWRoute {
 
         // Reads in a design and routes it
         String[] rwrouteArgs = Arrays.copyOfRange(args, 2, args.length);
-        Design input = null;
+        Design input;
         if (Interchange.isInterchangeFile(args[0])) {
             input = Interchange.readInterchangeDesign(args[0]);
         } else {

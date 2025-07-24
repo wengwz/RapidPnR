@@ -259,14 +259,14 @@ public class EDIFPort extends EDIFPropertyObject {
     public void exportEDIF(OutputStream os, EDIFWriteLegalNameCache<?> cache, boolean stable) throws IOException{
         os.write(EXPORT_CONST_INDENT);
         os.write(EXPORT_CONST_PORT_BEGIN);
-        if (width > 1) os.write(EXPORT_CONST_ARRAY_BEGIN);
         if (isBus()) {
+            os.write(EXPORT_CONST_ARRAY_BEGIN);
             exportEDIFBusName(os, cache);
         } else {
             exportEDIFName(os, cache);
         }
 
-        if (width > 1) {
+        if (isBus()) {
             os.write(' ');
             os.write(Integer.toString(width).getBytes(StandardCharsets.UTF_8));
             os.write(')');
@@ -347,6 +347,15 @@ public class EDIFPort extends EDIFPropertyObject {
         int otherLeftBracket = otherName.lastIndexOf('[');
         if (leftBracket == -1 && otherLeftBracket == -1) return true;
         return name.regionMatches(leftBracket, otherName, otherLeftBracket, len);
+    }
+
+    public String getBusRange() {
+        String name = getName();
+        int leftBracket = name.lastIndexOf('[');
+        if (leftBracket == -1) {
+            return "";
+        }
+        return name.substring(leftBracket);
     }
 }
 

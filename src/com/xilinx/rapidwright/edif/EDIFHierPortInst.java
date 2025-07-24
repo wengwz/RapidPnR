@@ -29,6 +29,7 @@ import java.util.Objects;
 
 import com.xilinx.rapidwright.design.Cell;
 import com.xilinx.rapidwright.design.Design;
+import com.xilinx.rapidwright.design.Net;
 import com.xilinx.rapidwright.design.SiteInst;
 import com.xilinx.rapidwright.design.SitePinInst;
 import com.xilinx.rapidwright.device.BELPin;
@@ -42,7 +43,7 @@ import org.jetbrains.annotations.NotNull;
  *
  * Created on: Sep 12, 2017
  */
-public class EDIFHierPortInst {
+public class EDIFHierPortInst implements Comparable<EDIFHierPortInst> {
 
     @NotNull
     private final EDIFHierCellInst hierarchicalInst;
@@ -68,6 +69,15 @@ public class EDIFHierPortInst {
     public String getHierarchicalInstName() {
         return hierarchicalInst.getFullHierarchicalInstName();
 
+    }
+
+    /**
+     * Gets the full instance, including the instance of the EDIFPortInst.
+     * 
+     * @return
+     */
+    public EDIFHierCellInst getFullHierarchicalInst() {
+        return hierarchicalInst.getChild(portInst.getCellInst());
     }
 
     /**
@@ -219,6 +229,21 @@ public class EDIFHierPortInst {
         BELPin belPin = cell.getBELPin(this);
         return new Pair<>(cell.getSiteInst(), belPin);
     }
+    
+    /**
+     * If the site wire adjacent to the belpin occupied by the port instance is
+     * populated with a physical net, this method will return it.
+     * 
+     * @param design The current design.
+     * @return The physical net if the bel pin is routed.
+     */
+    public Net getRoutedPhysicalNet(Design design) {
+        Cell cell = getPhysicalCell(design);
+        if (cell == null) return null;
+        BELPin belPin = cell.getBELPin(this);
+        SiteInst si = cell.getSiteInst();
+        return si != null ? si.getNetFromSiteWire(belPin.getSiteWireName()) : null;
+    }
 
     /**
      * Gets the list of site pins if this port is on a placed leaf cell and its' site is routed
@@ -270,5 +295,10 @@ public class EDIFHierPortInst {
 
     public EDIFCell getParentCell() {
         return hierarchicalInst.getCellType();
+    }
+
+    @Override
+    public int compareTo(EDIFHierPortInst o) {
+        return this.toString().compareTo(o.toString());
     }
 }

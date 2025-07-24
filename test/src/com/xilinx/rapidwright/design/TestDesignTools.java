@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2021-2022, Xilinx, Inc.
- * Copyright (c) 2022-2024, Advanced Micro Devices, Inc.
+ * Copyright (c) 2022-2025, Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Author: Chris Lavin, Xilinx Research Labs.
@@ -35,8 +35,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import com.xilinx.rapidwright.device.BEL;
-import com.xilinx.rapidwright.edif.EDIFHierPortInst;
+import com.xilinx.rapidwright.device.Node;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -45,6 +44,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import com.xilinx.rapidwright.design.blocks.PBlock;
 import com.xilinx.rapidwright.design.blocks.UtilizationType;
+import com.xilinx.rapidwright.device.BEL;
 import com.xilinx.rapidwright.device.BELPin;
 import com.xilinx.rapidwright.device.Device;
 import com.xilinx.rapidwright.device.PIP;
@@ -53,6 +53,7 @@ import com.xilinx.rapidwright.device.Site;
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFDirection;
 import com.xilinx.rapidwright.edif.EDIFHierCellInst;
+import com.xilinx.rapidwright.edif.EDIFHierPortInst;
 import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.edif.EDIFNetlist;
 import com.xilinx.rapidwright.edif.EDIFPort;
@@ -371,6 +372,39 @@ public class TestDesignTools {
             Assertions.assertNull(design.getCell(cellName));
         }
         for (String cellName : allOtherPlacedCells) {
+            Assertions.assertNotNull(design.getCell(cellName));
+        }
+    }
+
+    @Test
+    public void testBlackBoxCreationUnplaced() {
+        Design design = RapidWrightDCP.loadDCP("bnn.dcp");
+        String hierCellName = "bd_0_i/hls_inst/inst/dmem_V_U";
+
+        design.unplaceDesign();
+
+        List<EDIFHierCellInst> leafCells = design.getNetlist().getAllLeafDescendants(hierCellName);
+        Set<String> cellsInBlackBox = new HashSet<>();
+        for (EDIFHierCellInst inst : leafCells) {
+            String name = inst.getFullHierarchicalInstName();
+            Cell cell = design.getCell(name);
+            if (cell != null) {
+                cellsInBlackBox.add(name);
+            }
+        }
+        Set<String> allOtherCells = new HashSet<>();
+        for (Cell cell : design.getCells()) {
+            if (cellsInBlackBox.contains(cell.getName()))
+                continue;
+            allOtherCells.add(cell.getName());
+        }
+
+        DesignTools.makeBlackBox(design, hierCellName);
+        Assertions.assertTrue(design.getNetlist().getCellInstFromHierName(hierCellName).isBlackBox());
+        for (String cellName : cellsInBlackBox) {
+            Assertions.assertNull(design.getCell(cellName));
+        }
+        for (String cellName : allOtherCells) {
             Assertions.assertNotNull(design.getCell(cellName));
         }
     }
@@ -1201,7 +1235,7 @@ public class TestDesignTools {
 
             for(Cell c : cells) {
                 DesignTools.placeCell(c, d);
-                Assertions.assertFalse(c.getPinMappingsP2L().isEmpty());
+                Assertions.assertFalse(c.getUsedPhysicalPins().isEmpty());
                 Assertions.assertNotNull(c.getBEL());
                 Assertions.assertNotNull(c.getSiteInst());
             }
@@ -1317,6 +1351,16 @@ public class TestDesignTools {
         Assertions.assertNull(si4.getNetFromSiteWire("FFMUXB1_OUT1"));
         Assertions.assertNull(si4.getUsedSitePIP("FFMUXB1"));
         Assertions.assertNull(si4.getNetFromSiteWire("B_O"));
+
+        // Test false connection when logical pin is not connected
+        Cell carry5 = design.createAndPlaceCell("carry5", Unisim.CARRY8, "SLICE_X0Y5/CARRY8");
+        Cell lut5 = design.createAndPlaceCell("lut5", Unisim.LUT1, "SLICE_X0Y5/D6LUT");
+        Net net5 = design.createNet("lut5_output");
+        net5.connect(lut5, "O");
+
+        Assertions.assertEquals(net5, carry5.getSiteInst().getNetFromSiteWire("D_O"));
+        List<SitePinInst> pinsToRemove = DesignTools.unrouteCellPinSiteRouting(carry5, "S[3]");
+        Assertions.assertEquals(0, pinsToRemove.size());
     }
 
     @Test
@@ -1333,6 +1377,40 @@ public class TestDesignTools {
                 Assertions.assertTrue(spi.isOutPin() || spi.isRouted());
             }
         }
+    }
+
+    @Test
+    public void testUpdatePinsIsRoutedLoop() {
+        Design design = new Design("top", "xcvu3p");
+
+        Net net = design.createNet("net");
+        SiteInst si = design.createSiteInst("SLICE_X13Y235");
+        net.createPin("A_O", si);
+        SitePinInst sinkSpi = net.createPin("AX", si);
+
+        String nodesPath =
+                // find_routing_path -from [get_site_pins SLICE_X13Y235/A_O] -to [get_site_pins SLICE_X13Y235/AX]
+                "CLEM_X9Y235/CLE_CLE_M_SITE_0_A_O INT_X9Y235/INODE_W_1_FT1 INT_X9Y235/BOUNCE_W_0_FT1 " +
+                // find_routing_path -from [get_site_pins SLICE_X13Y235/AX] -to [get_nodes INT_X9Y235/INODE_E_1_FT1]
+                "INT_X9Y235/BOUNCE_W_0_FT1 INT_X9Y234/INT_NODE_IMUX_55_INT_OUT1 INT_X9Y234/BYPASS_W10 INT_X9Y234/INT_NODE_IMUX_40_INT_OUT0 INT_X9Y234/BYPASS_W9 INT_X9Y234/INODE_W_54_FT0 INT_X9Y235/BYPASS_W1 INT_X9Y235/INT_NODE_IMUX_39_INT_OUT1 INT_X9Y235/BYPASS_W4 INT_X9Y235/INODE_W_1_FT1";
+                // ^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate (will get skipped below)
+
+        Device device = design.getDevice();
+        List<Node> nodes = Arrays.stream(nodesPath.split(" ")).map(device::getNode).collect(Collectors.toList());
+        Node startNode = nodes.get(0);
+        for (Node endNode : nodes.subList(1, nodes.size())) {
+            if (!startNode.equals(endNode)) {
+                PIP pip = PIP.getArbitraryPIP(startNode, endNode);
+                net.addPIP(pip);
+            } else {
+                // Skip duplicated nodes
+            }
+            startNode = endNode;
+        }
+
+        int numUnroutedPins = DesignTools.updatePinsIsRouted(net);
+        Assertions.assertEquals(0, numUnroutedPins);
+        Assertions.assertTrue(sinkSpi.isRouted());
     }
 
     @Test
@@ -1446,9 +1524,66 @@ public class TestDesignTools {
         {
             DesignTools.createMissingSitePinInsts(design, design.getNet("clk"));
             SitePinInst spi = si.getSitePinInst("CLK2");
-            Assertions.assertEquals("[EFF.CLK, EFF2.CLK, FFF.CLK, FFF2.CLK, GFF.CLK, GFF2.CLK, HFF.CLK, HFF2.CLK]",
+            Assertions.assertNull(si.getCell("EFF2"));
+            Assertions.assertEquals("[EFF.CLK, FFF.CLK, FFF2.CLK, GFF.CLK, GFF2.CLK, HFF.CLK, HFF2.CLK]",
                     DesignTools.getConnectedBELPins(spi).stream().map(BELPin::toString).sorted().collect(Collectors.toList()).toString());
         }
+    }
+
+    @Test
+    public void testGetConnectedCellsVersal() {
+        Design design = RapidWrightDCP.loadDCP("picoblaze_2022.2.dcp");
+        SiteInst si = design.getSiteInstFromSiteName("SLICE_X140Y3");
+        {
+            SitePinInst spi = si.getSitePinInst("F6");
+            Assertions.assertEquals("[processor/address_loop[5].upper_pc.high_int_vector.pc_lut(BEL: F6LUT)]",
+                    DesignTools.getConnectedCells(spi).stream().map(Cell::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        {
+            SitePinInst spi = si.getSitePinInst("D3");
+            Assertions.assertEquals("[processor/init_zero_muxcy_CARRY4_CARRY8_LUT6CY_3/LUTCY1_INST(BEL: D5LUT), processor/init_zero_muxcy_CARRY4_CARRY8_LUT6CY_3/LUTCY2_INST(BEL: D6LUT)]",
+                    DesignTools.getConnectedCells(spi).stream().map(Cell::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        {
+            SitePinInst spi = si.getSitePinInst("EX");
+            Assertions.assertEquals("[processor/carry_flag_flop(BEL: EFF)]",
+                    DesignTools.getConnectedCells(spi).stream().map(Cell::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        {
+            SitePinInst spi = si.getSitePinInst("CKEN2");
+            Assertions.assertEquals("[processor/zero_flag_flop(BEL: DFF2)]",
+                    DesignTools.getConnectedCells(spi).stream().map(Cell::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        // This design has no intra-site routing for CLK so this test
+        // does not check for connected cells as done in other tests
+    }
+
+    @Test
+    public void testGetConnectedBELPinsVersal() {
+        Design design = RapidWrightDCP.loadDCP("picoblaze_2022.2.dcp");
+        SiteInst si = design.getSiteInstFromSiteName("SLICE_X140Y3");
+        {
+            SitePinInst spi = si.getSitePinInst("F6");
+            Assertions.assertEquals("[F6LUT.A6]",
+                    DesignTools.getConnectedBELPins(spi).stream().map(BELPin::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        {
+            SitePinInst spi = si.getSitePinInst("D3");
+            Assertions.assertEquals("[D5LUT.A3, D6LUT.A3]",
+                    DesignTools.getConnectedBELPins(spi).stream().map(BELPin::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        {
+            SitePinInst spi = si.getSitePinInst("EX");
+            Assertions.assertEquals("[EFF.D]",
+                    DesignTools.getConnectedBELPins(spi).stream().map(BELPin::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        {
+            SitePinInst spi = si.getSitePinInst("CKEN2");
+            Assertions.assertEquals("[DFF2.CE]",
+                    DesignTools.getConnectedBELPins(spi).stream().map(BELPin::toString).sorted().collect(Collectors.toList()).toString());
+        }
+        // This design has no intra-site routing for CLK so this test
+        // does not check for connected cells as done in other tests
     }
 
     @ParameterizedTest
@@ -1476,5 +1611,19 @@ public class TestDesignTools {
         Net net = d.getNet(ehpi.getHierarchicalNetName());
         String sitePinName = DesignTools.getRoutedSitePin(cell, net, ehpi.getPortInst().getName());
         Assertions.assertEquals(expected, sitePinName == null ? "null" : sitePinName);
+    }
+
+    @Test
+    public void testUnrouteCellPinSiteRoutingBRAMClkPins() {
+        Design d = RapidWrightDCP.loadDCP("microblazeAndILA_3pblocks.dcp");
+        Cell c = d.getCell(
+                "base_mb_i/microblaze_0_local_memory/lmb_bram/U0/inst_blk_mem_gen/gnbram.gnative_mem_map_bmg.native_mem_map_blk_mem_gen/valid.cstr/ramloop[5].ram.r/prim_noinit.ram/DEVICE_8SERIES.WITH_BMM_INFO.TRUE_DP.SIMPLE_PRIM36.SERIES8_TDP_SP36_NO_ECC_ATTR.ram");
+
+        List<SitePinInst> unrouted = DesignTools.unrouteCellPinSiteRouting(c, "CLKARDCLK");
+        Assertions.assertEquals(2, unrouted.size());
+        for (SitePinInst p : unrouted) {
+            Assertions.assertTrue(p.getName().equals("CLKAU_X") || p.getName().equals("CLKAL_X"));
+        }
+
     }
 }

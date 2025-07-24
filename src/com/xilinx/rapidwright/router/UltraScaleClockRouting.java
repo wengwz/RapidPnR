@@ -1,7 +1,7 @@
 /*
  *
  * Copyright (c) 2018-2022, Xilinx, Inc.
- * Copyright (c) 2022-2023, Advanced Micro Devices, Inc.
+ * Copyright (c) 2022-2025, Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Author: Chris Lavin, Xilinx Research Labs.
@@ -437,7 +437,7 @@ public class UltraScaleClockRouting {
                     q.add(rn);
                 }
             }
-            throw new RuntimeException("ERROR: Couldn't route to distribution line in clock region " + lcb);
+            throw new RuntimeException("ERROR: Couldn't route to leaf clock buffer " + lcb);
         }
         clk.getPIPs().addAll(allPIPs);
     }

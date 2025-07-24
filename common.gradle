@@ -2,8 +2,10 @@ apply plugin: 'application'
 apply plugin: 'java-library'
 apply plugin: "java-test-fixtures"
 
-sourceCompatibility = 11
-targetCompatibility = 11
+java {
+     sourceCompatibility = JavaVersion.VERSION_1_8
+     targetCompatibility = JavaVersion.VERSION_1_8
+}
 
 repositories {
     if (project.hasProperty('additionalMavenRepo')) {
@@ -54,10 +56,14 @@ dependencies {
 }
 //Kryo needs to access sun.nio.ch.DirectBuffer. This is forbidden by default in Java 16 and up. Check if we need to add a jvm arg.
 if (org.gradle.api.JavaVersion.current().isJava10Compatible()) {
-	applicationDefaultJvmArgs = ["--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"]
+   application {
+       applicationDefaultJvmArgs = ["--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"]
+   }
 }
 if(project.hasProperty('limitToSingleProc') && limitToSingleProc.equals("single-threaded")) {
+   application {
 	applicationDefaultJvmArgs << "-XX:ActiveProcessorCount=1"
+   }
 }
 
 
@@ -67,14 +73,11 @@ configurations.testFixturesImplementation.canBeResolved = true
 configurations.api.canBeResolved = true
 
 tasks.withType(Test) {
-  if (System.getenv("GITHUB_ACTION")) {
-    maxHeapSize = "5G"
-  } else {
-    maxHeapSize = "10G"
+  maxHeapSize = "10G"
+  application {
+      // Propagate JVM settings to test JVM
+      jvmArgs applicationDefaultJvmArgs
   }
-  //Propagate JVM settings to test JVM
-  jvmArgs applicationDefaultJvmArgs
-
   environment 'RAPIDWRIGHT_PATH', gradle.ext.rapidwrightDir
 
   //We need to rerun tests when the data files change
@@ -131,7 +134,7 @@ tasks.withType(Test) {
 }
 
 task testJar(type: Jar) {
-    classifier = 'tests'
+    archiveClassifier = 'tests'
     from sourceSets.test.output
     dependsOn project.tasks.findByName('testFixturesJar')
     dependsOn project.tasks.findByName('jar')

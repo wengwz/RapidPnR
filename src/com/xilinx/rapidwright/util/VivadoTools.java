@@ -22,14 +22,15 @@
 
 package com.xilinx.rapidwright.util;
 
-import com.xilinx.rapidwright.design.Design;
-import com.xilinx.rapidwright.edif.EDIFTools;
-
 import java.io.File;
 import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+
+import com.xilinx.rapidwright.design.Design;
+import com.xilinx.rapidwright.edif.EDIFTools;
 
 /**
  * Utility methods to provide access to vivado and parse logs
@@ -115,6 +116,11 @@ public class VivadoTools {
                 + tclScript.toString();
         Integer exitCode = FileTools.runCommand(vivadoCmd, verbose, environ, runDir);
         if (exitCode != 0) {
+            if (Files.exists(outputLog)) {
+                for (String l : FileTools.getLinesFromTextFile(outputLog.toString())) {
+                    System.out.println("FAILED OUTPUT> " + l);
+                }
+            }
             throw new RuntimeException("Vivado exited with code: " + exitCode);
         }
         return FileTools.getLinesFromTextFile(outputLog.toString());
@@ -173,11 +179,32 @@ public class VivadoTools {
      * @param hasEncryptedIP Flag indicating if the provided DCP contains encrypted
      *                       IP and was written by RapidWright such that it needs to
      *                       be loaded with a Tcl script.
-     * @param tclPremable    String of Tcl commands to run before write_bitstream
+     * @param tclPreamble    String of Tcl commands to run before write_bitstream
      *                       (null for no preamble).
      * @return The output of Vivado as a list of Strings
      */
-    public static List<String> writeBitstream(Path dcp, Path bitFile, boolean hasEncryptedIP, String tclPremable) {
+    public static List<String> writeBitstream(Path dcp, Path bitFile, boolean hasEncryptedIP,
+            String tclPreamble) {
+        return writeBitstream(dcp, bitFile, hasEncryptedIP, tclPreamble);
+    }
+
+    /**
+     * Run Vivado's `write_bitstream` on the provided DCP file to generate a bit
+     * file at the specified location.
+     * 
+     * @param dcp            The DCP file from which to generate a bitstream.
+     * @param bitFile        The location of the bit file to generate
+     * @param hasEncryptedIP Flag indicating if the provided DCP contains encrypted
+     *                       IP and was written by RapidWright such that it needs to
+     *                       be loaded with a Tcl script.
+     * @param tclPreamble    String of Tcl commands to run before write_bitstream
+     *                       (null for no preamble).
+     * @param rmCell         The name of the reconfigurable module cell if this is a
+     *                       DFX bitstream.
+     * @return The output of Vivado as a list of Strings
+     */
+    public static List<String> writeBitstream(Path dcp, Path bitFile, boolean hasEncryptedIP,
+            String tclPreamble, String rmCell) {
         final Path workdir = FileSystems.getDefault()
                 .getPath("vivadoToolsWorkdir" + FileTools.getUniqueProcessAndHostID());
         File workdirHandle = new File(workdir.toString());
@@ -186,11 +213,16 @@ public class VivadoTools {
         final Path outputLog = workdir.resolve("outputLog.log");
         StringBuilder sb = new StringBuilder();
         sb.append(createTclDCPLoadCommand(dcp, hasEncryptedIP));
-        if (tclPremable != null) {
-            sb.append(tclPremable);
+        if (tclPreamble != null) {
+            sb.append(tclPreamble);
             sb.append("; ");
         }
-        sb.append("write_bitstream " + bitFile.toString());
+        sb.append("write_bitstream -force ");
+        if (rmCell != null) {
+            sb.append("-cell " + rmCell + " ");
+        }
+
+        sb.append(bitFile.toString());
         List<String> log = VivadoTools.runTcl(outputLog, sb.toString(), true);
 
         FileTools.deleteFolder(workdir.toString());
@@ -210,7 +242,7 @@ public class VivadoTools {
      * @return The output of Vivado as a list of Strings
      */
     public static List<String> writeBitstream(Path dcp, Path bitFile, boolean hasEncryptedIP) {
-        return writeBitstream(dcp, bitFile, hasEncryptedIP, null);
+        return writeBitstream(dcp, bitFile, hasEncryptedIP, null, null);
     }
 
     /**

@@ -83,8 +83,9 @@ public class Connection implements Comparable<Connection>{
 
     /** To indicate if the route delay of a connection has been patched up, when there are consecutive long nodes */
     private boolean dlyPatched;
-    /** true to indicate that a connection cross SLRs */
-    private final boolean crossSLR;
+    /** true to indicate that a connection cross SLRs in given direction */
+    private boolean crossSLRnorth;
+    private boolean crossSLRsouth;
     /** List of nodes assigned to a connection to form the path for generating PIPs */
     private List<Node> nodes;
 
@@ -96,10 +97,8 @@ public class Connection implements Comparable<Connection>{
         rnodes = new ArrayList<>();
         this.netWrapper = netWrapper;
         netWrapper.addConnection(this);
-        crossSLR = !source.getTile().getSLR().equals(sink.getTile().getSLR());
-        if (crossSLR && source.getSiteInst().getDesign().getSeries() == Series.Versal) {
-            throw new RuntimeException("ERROR: Cross-SLR connections not yet supported on Versal.");
-        }
+        crossSLRnorth = false;
+        crossSLRsouth = false;
     }
 
     /**
@@ -216,19 +215,6 @@ public class Connection implements Comparable<Connection>{
     }
 
     /**
-     * Checks if a connection is routed through any rnodes that have multiple drivers.
-     * @return
-     */
-    public boolean useRnodesWithMultiDrivers() {
-        for (RouteNode rn : getRnodes()) {
-            if (rn.hasMultiDrivers()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
      * Add the give RouteNode to the list of those used by this Connection.
      * Expand the bounding box accordingly, since this node could describe an
      * existing routing path computed using a different bounding box.
@@ -293,10 +279,32 @@ public class Connection implements Comparable<Connection>{
 
     public void setSinkRnode(RouteNode sinkRnode) {
         this.sinkRnode = sinkRnode;
+
+        assert(sourceRnode != null);
+        if (!sourceRnode.getTile().getSLR().equals(sinkRnode.getTile().getSLR())) {
+            if (source.getSiteInst().getDesign().getSeries() == Series.Versal) {
+                throw new RuntimeException("ERROR: Cross-SLR connections not yet supported on Versal.");
+            }
+
+            if (sourceRnode.getTile().getTileYCoordinate() < sinkRnode.getTile().getTileYCoordinate()) {
+                crossSLRnorth = true;
+                assert(!crossSLRsouth);
+            } else {
+                assert(!crossSLRnorth);
+                crossSLRsouth = true;
+            }
+        } else {
+            assert(!crossSLRnorth);
+            assert(!crossSLRsouth);
+        }
     }
 
     public List<RouteNode> getAltSinkRnodes() {
         return altSinkRnodes == null ? Collections.emptyList() : altSinkRnodes;
+    }
+
+    public boolean hasAltSinks() {
+        return altSinkRnodes != null && !altSinkRnodes.isEmpty();
     }
 
     public void addAltSinkRnode(RouteNode sinkRnode) {
@@ -305,9 +313,8 @@ public class Connection implements Comparable<Connection>{
         } else {
             assert(!altSinkRnodes.contains(sinkRnode));
         }
-        assert(sinkRnode.getType() == RouteNodeType.PINFEED_I ||
-               // Can be a WIRE if node is not exclusive a sink
-               sinkRnode.getType() == RouteNodeType.WIRE);
+        // Alternate sinks by their nature cannot be exclusive
+        assert(!sinkRnode.getType().isAnyExclusiveSink());
         altSinkRnodes.add(sinkRnode);
     }
 
@@ -349,6 +356,10 @@ public class Connection implements Comparable<Connection>{
 
     public NetWrapper getNetWrapper() {
         return this.netWrapper;
+    }
+
+    public Net getNet() {
+        return netWrapper.getNet();
     }
 
     public SitePinInst getSource() {
@@ -405,7 +416,15 @@ public class Connection implements Comparable<Connection>{
     }
 
     public boolean isCrossSLR() {
-        return crossSLR;
+        return crossSLRnorth || crossSLRsouth;
+    }
+
+    public boolean isCrossSLRnorth() {
+        return crossSLRnorth;
+    }
+
+    public boolean isCrossSLRsouth() {
+        return crossSLRsouth;
     }
 
     public List<Node> getNodes() {
@@ -469,28 +488,13 @@ public class Connection implements Comparable<Connection>{
     }
 
     public void setAllTargets(RWRoute.ConnectionState state) {
-        if (sinkRnode.countConnectionsOfUser(netWrapper) == 0 ||
-            sinkRnode.getIntentCode() == IntentCode.NODE_PINBOUNCE) {
-            // Since this connection will have been ripped up, only mark a node
-            // as a target if it's not already used by this net.
-            // This prevents -- for the case where the same net needs to be routed
-            // to the same LUT more than once -- the illegal case of the same
-            // physical pin servicing more than one logical pin
-            sinkRnode.markTarget(state);
-        } else {
-            assert(altSinkRnodes != null && !altSinkRnodes.isEmpty());
-        }
+        sinkRnode.markTarget(state);
         if (altSinkRnodes != null) {
             for (RouteNode rnode : altSinkRnodes) {
-                // Same condition as above: only allow this as an alternate sink
-                // if it's not already in use by the current net to prevent the case
-                // where the same physical pin services more than one logical pin
-                if (rnode.countConnectionsOfUser(netWrapper) == 0 ||
-                    // Except if it is not a PINFEED_I
-                    rnode.getType() != RouteNodeType.PINFEED_I) {
-                    assert(rnode.getIntentCode() != IntentCode.NODE_PINBOUNCE);
-                    rnode.markTarget(state);
-                }
+                assert(rnode.countConnectionsOfUser(netWrapper) == 0);
+                assert(!rnode.getType().isAnyExclusiveSink());
+                assert(rnode.getIntentCode() != IntentCode.NODE_PINBOUNCE);
+                rnode.markTarget(state);
             }
         }
     }
@@ -514,5 +518,13 @@ public class Connection implements Comparable<Connection>{
 
         assert(altSourceRnode != null);
         return new Pair<>(altSource, altSourceRnode);
+    }
+
+    public boolean isRouted() {
+        return sink.isRouted();
+    }
+
+    public void setRouted(boolean isRouted) {
+        sink.setRouted(isRouted);
     }
 }

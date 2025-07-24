@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024, Advanced Micro Devices, Inc.
+ * Copyright (c) 2023-2025, Advanced Micro Devices, Inc.
  * All rights reserved.
  *
  * Author: Eddie Hung, Advanced Micro Devices, Inc.
@@ -31,6 +31,8 @@ import com.xilinx.rapidwright.design.Unisim;
 import com.xilinx.rapidwright.design.tools.LUTTools;
 import com.xilinx.rapidwright.device.Device;
 import com.xilinx.rapidwright.device.Node;
+import com.xilinx.rapidwright.edif.EDIFCellInst;
+import com.xilinx.rapidwright.edif.EDIFPortInst;
 import com.xilinx.rapidwright.edif.EDIFTools;
 import com.xilinx.rapidwright.support.RapidWrightDCP;
 import com.xilinx.rapidwright.support.rwroute.RouterHelperSupport;
@@ -59,6 +61,10 @@ public class TestRouterHelper {
             "xcvu3p,SLICE_X0Y0,A_O,CLEL_R_X0Y0/CLE_CLE_L_SITE_0_A_O",
             "xcvu3p,GTYE4_CHANNEL_X0Y12,TXOUTCLK_INT,null",
             "xcvu3p,IOB_X1Y95,I,INT_INTF_L_IO_X72Y109/LOGIC_OUTS_R23",
+            "xcvu3p,IOB_X1Y80,I,INT_INTF_L_IO_X72Y92/LOGIC_OUTS_R22",
+            "xcvu3p,IOB_X1Y179,I,INT_INTF_L_CMT_X72Y208/LOGIC_OUTS_R18",
+            "xcvu3p,IOB_X1Y75,I,INT_INTF_L_CMT_X72Y88/LOGIC_OUTS_R18",
+            "xcvu3p,IOB_X1Y184,I,INT_INTF_L_IO_X72Y212/LOGIC_OUTS_R22",
             "xcvu3p,MMCM_X0Y0,LOCKED,INT_INTF_L_IO_X36Y54/LOGIC_OUTS_R0",
             "xcvp1002,MMCM_X2Y0,LOCKED,BLI_CLE_BOT_CORE_X27Y0/LOGIC_OUTS_D23"
     })
@@ -72,6 +78,7 @@ public class TestRouterHelper {
     @ParameterizedTest
     @CsvSource({
             "xcvu3p,MMCM_X0Y0,PSEN,INT_X36Y56/IMUX_W0",
+            "xcvu3p,BUFGCE_X0Y58,CLK_IN,INT_X36Y151/IMUX_W34",
             "xcvp1002,MMCM_X2Y0,PSEN,INT_X27Y0/IMUX_B_W24"
     })
     public void testProjectInputPinToINTNode(String partName, String siteName, String pinName, String nodeAsString) {
@@ -235,12 +242,16 @@ public class TestRouterHelper {
         Assertions.assertEquals("O=!I0", LUTTools.getLUTEquation(cell));
 
         Net gndNet = design.getGndNet();
-        gndNet.createPin("A6", cell.getSiteInst());
+        SitePinInst spi = gndNet.connect(cell, "I0");
+
+        EDIFCellInst eci = cell.getEDIFCellInst();
+        EDIFPortInst epi = eci.getPortInst("I0");
+        Assertions.assertTrue(epi.getNet().isGND());
 
         // Check A6 was inverted, and it was moved off gndNet
         Set<SitePinInst> invertedPins = RouterHelper.invertPossibleGndPinsToVccPins(design, gndNet.getPins(), invertLutInputs);
         if (invertLutInputs) {
-            Assertions.assertEquals("[IN SLICE_X0Y0.A6]", invertedPins.toString());
+            Assertions.assertEquals("[" + spi + "]", invertedPins.toString());
         } else {
             Assertions.assertTrue(invertedPins.isEmpty());
         }
@@ -248,22 +259,27 @@ public class TestRouterHelper {
 
         Net targetNet = invertLutInputs ? design.getVccNet() : design.getGndNet();
         Net sourceNet = !invertLutInputs ? design.getVccNet() : design.getGndNet();
-        Assertions.assertEquals("[IN SLICE_X0Y0.A6]", targetNet.getPins().toString());
+        Assertions.assertEquals("[" + spi + "]", targetNet.getPins().toString());
         Assertions.assertTrue(sourceNet.getPins().isEmpty());
         if (invertLutInputs) {
             // Must have moved onto vccNet, and the LUT mask inverted
             Assertions.assertEquals("O=I0", LUTTools.getLUTEquation(cell));
+
+            // Check logical connection too
+            Assertions.assertTrue(epi.getNet().isVCC());
 
             // Now undo this optimization by going from VCC pin back to GND pin
             RouterHelperSupport.invertVccLutPinsToGndPins(design, invertedPins);
 
             // Check that pin is back on the original VCC net
             Assertions.assertTrue(targetNet.getPins().isEmpty());
-            Assertions.assertEquals("[IN SLICE_X0Y0.A6]", sourceNet.getPins().toString());
+            Assertions.assertEquals("[" + spi + "]", sourceNet.getPins().toString());
         }
 
         // Check that LUT equation is back to normal
         Assertions.assertEquals("O=!I0", LUTTools.getLUTEquation(cell));
+        Assertions.assertTrue(spi.getNet().isGNDNet());
+        Assertions.assertTrue(epi.getNet().isGND());
     }
 
     @ParameterizedTest

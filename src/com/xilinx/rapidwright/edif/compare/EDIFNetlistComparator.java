@@ -85,6 +85,24 @@ public class EDIFNetlistComparator {
         diffCount = 0;
     }
 
+    /**
+     * Gets the total number of differences encountered since the last call of
+     * {@link #compareNetlists(EDIFNetlist, EDIFNetlist)}.
+     *
+     * @return Total number of design differences found.
+     */
+    public int getDiffCount() {
+        return diffCount;
+    }
+
+    public Map<EDIFDiffType, List<EDIFDiff>> getDiffMap() {
+        return diffMap;
+    }
+
+    public List<EDIFDiff> getDiffList(EDIFDiffType type) {
+        return diffMap.getOrDefault(type, Collections.emptyList());
+    }
+
     private static EDIFCell getParentCell(EDIFPropertyObject o) {
         if (o instanceof EDIFNet) {
             return ((EDIFNet) o).getParentCell();
@@ -302,6 +320,7 @@ public class EDIFNetlistComparator {
 
     public int compareNetlists(EDIFNetlist gold, EDIFNetlist test) {
         diffMap = new LinkedHashMap<>();
+        diffCount = 0;
 
         Map<String, EDIFLibrary> testLibs = new HashMap<>(test.getLibrariesMap());
         for (Entry<String, EDIFLibrary> e : gold.getLibrariesMap().entrySet()) {
@@ -321,6 +340,7 @@ public class EDIFNetlistComparator {
                 EDIFCell testCell = testCells.remove(e2.getKey());
                 if (testCell == null) {
                     addDiff(EDIFDiffType.CELL_MISSING, e2.getValue(), testCell, null, goldLib, "");
+                    continue;
                 }
                 EDIFCell goldCell = e2.getValue();
                 checkCell(goldCell, testCell);
