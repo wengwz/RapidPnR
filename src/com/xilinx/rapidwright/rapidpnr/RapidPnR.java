@@ -8,16 +8,21 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Predicate;
+import java.util.logging.Level;
 
+import com.xilinx.rapidwright.design.Design;
 import com.xilinx.rapidwright.edif.EDIFCell;
 import com.xilinx.rapidwright.edif.EDIFNet;
 import com.xilinx.rapidwright.rapidpnr.utils.Coordinate2D;
+import com.xilinx.rapidwright.rapidpnr.utils.DirectoryManager;
+import com.xilinx.rapidwright.rapidpnr.utils.HierarchicalLogger;
 import com.xilinx.rapidwright.rapidpnr.utils.NetlistUtils;
 import com.xilinx.rapidwright.util.RuntimeTracker;
+import com.xilinx.rapidwright.util.RuntimeTrackerTree;
 
 
-public class RapidPnR extends AbstractApplication {
-    
+public class RapidPnR {
+
     public enum RapidPnRStep {
         READ_DESIGN,
         DATABASE_SETUP,
@@ -36,11 +41,71 @@ public class RapidPnR extends AbstractApplication {
         }
     };
 
+    protected DirectoryManager dirManager;
+    protected RuntimeTrackerTree rootTimer;
+    protected HierarchicalLogger logger;
+
+    protected DesignParams designParams;
+    protected Design inputDesign;
+    protected NetlistDatabase netlistDatabase;
+
     private AbstractNetlist abstractNetlist;
     private List<Coordinate2D> abstractNodeLoc;
 
     public RapidPnR(String jsonFilePath, Boolean enableLogger) {
-        super(jsonFilePath, enableLogger);
+        // read design parameters from json file
+        Path jsonPath = Path.of(jsonFilePath).toAbsolutePath();
+        designParams = new DesignParams(jsonPath);
+
+        // setup directory manager
+        dirManager = new DirectoryManager(designParams.getWorkDir());
+
+        // setup logger
+        setupLogger(enableLogger);
+
+        // setup runtime tracker
+        rootTimer = new RuntimeTrackerTree("RapidPnR", false);
+    }
+
+    protected void setupLogger(Boolean enableLogger) {
+        Path logFilePath = dirManager.getRootDir().resolve("rapidPnR.log");
+
+        if (enableLogger) {
+            Level logLevel = designParams.isVerbose() ? Level.FINE : Level.INFO;
+            logger = HierarchicalLogger.createLogger("application", logFilePath, true, logLevel);
+        } else {
+            logger = HierarchicalLogger.createPseduoLogger("application");
+        }
+
+        logger.info("Setup hierarchical logger for RapidPnR successfully");
+    }
+
+    public RuntimeTracker createSubTimer(String name) {
+        return rootTimer.createRuntimeTracker(name, rootTimer.getRootRuntimeTracker());
+    }
+
+    protected void readInputDesign() {
+        logger.info("Reading input design checkpoint: " + designParams.getInputDcpPath().toString());
+
+        inputDesign = Design.readCheckpoint(designParams.getInputDcpPath().toString());
+
+        logger.info("Read input design checkpoint successfully");
+    }
+
+    public void setupNetlistDatabase() {
+        RuntimeTracker timer = createSubTimer("Setup NetlistDB");
+        timer.start();
+
+        logger.infoHeader("Setup Netlist Database");
+        netlistDatabase = new NetlistDatabase(logger, inputDesign, designParams);
+        
+        logger.info("Information of netlist database:");
+        logger.newSubStep();
+        netlistDatabase.printCellLibraryInfo();
+        netlistDatabase.printNetlistInfo();
+        logger.endSubStep();
+
+        timer.stop();
     }
 
     private void runNetlistAbstraction() {
@@ -48,6 +113,7 @@ public class RapidPnR extends AbstractApplication {
         timer.start();
         logger.infoHeader("Netlist Abstraction");
         int abstractLevel = designParams.getAbstractLevel();
+        
         Predicate<EDIFNet> netFilter;
         if (abstractLevel == 7) {
             netFilter = EdgeBasedClustering.FFNetFilter;
@@ -67,10 +133,8 @@ public class RapidPnR extends AbstractApplication {
         timer.start();
         logger.infoHeader("Island Placement");
         AbstractIslandPlacer islandPlacer;
-        //AbstractIslandPlacer islandPlacer = new IslandPlacer(logger, dirManager, designParams);
-        //islandPlacer = new IslandPlacer2(logger, dirManager, designParams);
-        islandPlacer = new IslandPlacer3(logger, dirManager, designParams);
-        // islandPlacer = new MultilevelIslandPlacer(logger, dirManager, designParams);
+
+        islandPlacer = new IslandPlacer(logger, dirManager, designParams);
         abstractNodeLoc = islandPlacer.run(abstractNetlist);
         timer.stop();
     }
@@ -81,11 +145,10 @@ public class RapidPnR extends AbstractApplication {
         timer.start();
         AbstractPhysicalImpl physicalImpl;
 
+        physicalImpl = new FastParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
         //physicalImpl = new CompletePnR(logger, dirManager, designParams, netlistDatabase, true);
         //physicalImpl = new IncrementalIslandPnR(logger, dirManager, designParams, netlistDatabase);
         //physicalImpl = new ParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
-        physicalImpl = new FastParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
-        //physicalImpl = new FasterParallelIslandPnR(logger, dirManager, designParams, netlistDatabase);
         
         physicalImpl.run(abstractNetlist, abstractNodeLoc);
         timer.stop();
@@ -223,8 +286,6 @@ public class RapidPnR extends AbstractApplication {
         // String jsonFilePath = "test/rapidpnr/config/nvdla-3.json";
 
         RapidPnR rapidPnR = new RapidPnR(jsonFilePath, true);
-        //rapidPnR.run(RapidPnRStep.NETLIST_ABSTRACTION);
-        //rapidPnR.run(RapidPnRStep.ISLAND_PLACEMENT);
         rapidPnR.run(RapidPnRStep.PHYSICAL_IMPLEMENTATION);
 
         // List<String> jsonFiles = List.of(
@@ -245,5 +306,6 @@ public class RapidPnR extends AbstractApplication {
         // Path outputPath = Path.of("test/rapidpnr/results/netlist-abs.txt");
         // reportNetlistAbstractionInBatch(outputPath, jsonFiles);
     }
+
 
 }

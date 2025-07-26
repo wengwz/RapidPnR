@@ -146,14 +146,14 @@ public class NetlistUtils {
 
     static {
         nonPrimUnisimCellUtils = new HashMap<>();
-        nonPrimUnisimCellUtils.put("RAM32M", new HashMap<>() {
+        nonPrimUnisimCellUtils.put("RAM32M", new HashMap<String, Integer>() {
             {
                 put("RAMD32", 3);
                 put("RAMS32", 1);
             }
         });
 
-        nonPrimUnisimCellUtils.put("RAM32M16", new HashMap<>() {
+        nonPrimUnisimCellUtils.put("RAM32M16", new HashMap<String, Integer>() {
             {
                 put("RAMD32", 7);
                 put("RAMS32", 1);

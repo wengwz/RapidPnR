@@ -19,6 +19,7 @@ import com.xilinx.rapidwright.rapidpnr.utils.VivadoTclUtils.TclCmdFile;
 public class TritonPartitionWrapper extends AbstractPartitioner {
     public static class Config extends AbstractConfig {
         public Path workDir;
+        public String openroadCmd;
 
         public Config() {
             workDir = Path.of("triton_part");
@@ -71,7 +72,7 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
         JobQueue jobQueue = new JobQueue();
         Job partitionJob = JobQueue.createJob();
         partitionJob.setRunDir(config.workDir.toString());
-        partitionJob.setCommand(dockerRunCommand());
+        partitionJob.setCommand(runCommand());
         jobQueue.addJob(partitionJob);
 
         // execution
@@ -168,6 +169,14 @@ public class TritonPartitionWrapper extends AbstractPartitioner {
         String dockerOptions = "run --rm -v `pwd`:/workspace -w /workspace";
         String dockerOperation = OPENROAD_CMD + " " + TCL_FILE_NAME;
         return dockerCommand + " " + dockerOptions + " " + imageName + " " + dockerOperation;
+    }
+
+    private String runCommand() {
+        if (config.openroadCmd != null) {
+            return config.openroadCmd + " " + TCL_FILE_NAME;
+        } else {
+            return dockerRunCommand();
+        }
     }
 
     private boolean checkAndUpdatePartResult(List<Integer> partResult) {

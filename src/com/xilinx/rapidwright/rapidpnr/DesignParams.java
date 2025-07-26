@@ -40,6 +40,7 @@ public class DesignParams {
 
     private Boolean verbose = true;
 
+    private String openroadCmd;
     private Path inputDcpPath;
     private Path workDir;
 
@@ -93,6 +94,7 @@ public class DesignParams {
         public String workDir;
         public String vivadoCmd;
         public Integer vivadoMaxThreadNum;
+        public String openroadCmd;
 
         public String layoutInfoJsonPath;
 
@@ -187,6 +189,8 @@ public class DesignParams {
             if (params.vivadoMaxThreadNum != null) {
                 VivadoProject.setVivadoMaxThread(params.vivadoMaxThreadNum);
             }
+
+            this.openroadCmd = params.openroadCmd;
 
             // Layout Parameters
             // assert params.gridDimension != null: "gridDimension not found in json file";
@@ -381,6 +385,10 @@ public class DesignParams {
 
     public Path getWorkDir() {
         return workDir;
+    }
+
+    public String getOpenroadCmd() {
+        return openroadCmd;
     }
 
     public int getAbstractLevel() {
